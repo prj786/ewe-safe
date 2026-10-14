@@ -1,0 +1,14 @@
+# Safe, ewe's password manager: the socket. The daemon starts on the first
+# connection (the Super+P picker, the Safe app, `ewe-safe`) and keeps the
+# safe unlocked across shell restarts (PLAN.md §4, docs/PROTOCOL.md).
+[Unit]
+Description=Safe, ewe's password manager (socket)
+Documentation=https://github.com/prj786/ewe-safe
+
+[Socket]
+ListenStream=%t/ewe-safe.sock
+SocketMode=0600
+DirectoryMode=0700
+
+[Install]
+WantedBy=sockets.target

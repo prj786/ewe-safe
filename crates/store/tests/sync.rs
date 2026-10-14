@@ -46,6 +46,26 @@ fn create_load_save_round_trip() {
 }
 
 #[test]
+fn a_local_save_waits_for_the_next_poll() {
+    let mock = Mock::start();
+    let d = scratch("save-local");
+    let mut a = machine(&mock, d.join("a"), "a");
+    let mut sa = new_safe();
+    a.sync.create(&mut sa, &key()).expect("create");
+    let puts = mock.count("PUT");
+    sa.add(&login("Later", "x")).expect("add");
+    a.sync.save_local(&mut sa, &key()).expect("save_local");
+    assert_eq!(mock.count("PUT"), puts, "nothing went to the place yet");
+    assert_eq!(a.sync.status().state, "pending");
+    let polled = a.sync.poll(Some((&mut sa, &key()))).expect("poll");
+    assert!(polled.uploaded);
+    assert_eq!(a.sync.status().state, "in-sync");
+    let mut b = machine(&mock, d.join("b"), "b");
+    let (sb, _) = b.sync.load(&key()).expect("load");
+    assert_eq!(titles(&sb), ["Later"]);
+}
+
+#[test]
 fn a_stale_save_merges_and_keeps_both_edits() {
     let mock = Mock::start();
     let d = scratch("stale");

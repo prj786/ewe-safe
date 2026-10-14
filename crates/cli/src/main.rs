@@ -1,8 +1,490 @@
-//! `ewe-safe`: JSON verbs over the daemon's socket (PLAN.md §11). Not built yet.
+//! `ewe-safe`: Safe's verbs, one JSON object each, exit 0 (house rule 5;
+//! docs/PROTOCOL.md). Secrets come from the terminal (no echo) or from
+//! stdin lines, never from the command line. Two exceptions to the JSON:
+//! `reveal` without `--json` prints the bare value (nothing and exit 1 when
+//! there is none), and `unlock --ask` opens a prompt window and waits.
 
-fn main() {
-    println!(
-        "{{\"ok\":false,\"error\":\"not-built\",\"version\":\"{}\"}}",
-        safe_core::VERSION
-    );
+mod client;
+
+use std::collections::HashSet;
+use std::io::{IsTerminal, Read};
+use std::process::{Command, ExitCode, Stdio};
+use std::time::{Duration, Instant};
+
+use safe_core::generator;
+use serde_json::{Map, Value, json};
+use zeroize::Zeroizing;
+
+/// Verbs that answer from memory.
+const FAST: Duration = Duration::from_secs(30);
+/// Verbs that derive a key or talk to the place (the place's own timeout is
+/// two minutes).
+const SLOW: Duration = Duration::from_secs(300);
+/// How long `unlock --ask` waits for the prompt.
+const ASK_WAIT: Duration = Duration::from_secs(300);
+
+const VALUES: &[&str] = &[
+    "place",
+    "location",
+    "url",
+    "user",
+    "kind",
+    "tag",
+    "title",
+    "username",
+    "app",
+    "folder",
+    "length",
+    "words",
+    "class",
+    "query",
+    "limit",
+    "field",
+    "clear-after",
+    "remove-app",
+    "remove-tag",
+];
+const FLAGS: &[&str] = &[
+    "json",
+    "ask",
+    "generate",
+    "deleted",
+    "reveal-notes",
+    "no-symbols",
+    "no-digits",
+    "clear-url",
+    "password-stdin",
+    "notes-stdin",
+];
+/// Read here, never sent.
+const LOCAL_FLAGS: &[&str] = &["json", "ask", "password-stdin", "notes-stdin"];
+const NUMBERS: &[&str] = &["length", "words", "limit", "clear-after"];
+/// Repeatable in `add` and `edit`.
+const LISTS: &[&str] = &["url", "app", "tag", "remove-app", "remove-tag"];
+const WITH_ID: &[&str] = &["show", "reveal", "copy", "edit", "rm", "restore"];
+const VERBS: &[&str] = &[
+    "status", "summary", "init", "open", "unlock", "lock", "list", "search", "match", "show",
+    "reveal", "copy", "add", "edit", "rm", "restore", "generate", "sync", "place", "passwd",
+    "ping", "version",
+];
+
+struct Parsed {
+    verb: String,
+    args: Map<String, Value>,
+    local: HashSet<String>,
+}
+
+fn bad(message: impl Into<String>) -> Value {
+    json!({"ok": false, "error": "bad-request", "message": message.into()})
+}
+
+fn parse(argv: &[String]) -> Result<Parsed, Value> {
+    let verb = argv.first().cloned().unwrap_or_default();
+    if !VERBS.contains(&verb.as_str()) {
+        let mut v = bad(if verb.is_empty() {
+            "Usage: ewe-safe <verb> [options] (docs/PROTOCOL.md)".to_string()
+        } else {
+            format!("There is no verb {verb:?}.")
+        });
+        v["verbs"] = json!(VERBS);
+        return Err(v);
+    }
+    let lists = verb == "add" || verb == "edit";
+    let mut args = Map::new();
+    let mut local = HashSet::new();
+    let mut positional: Vec<String> = Vec::new();
+    let mut i = 1;
+    while i < argv.len() {
+        let a = &argv[i];
+        i += 1;
+        let Some(opt) = a.strip_prefix("--") else {
+            positional.push(a.clone());
+            continue;
+        };
+        let (name, inline) = match opt.split_once('=') {
+            Some((n, v)) => (n.to_string(), Some(v.to_string())),
+            None => (opt.to_string(), None),
+        };
+        if FLAGS.contains(&name.as_str()) {
+            if LOCAL_FLAGS.contains(&name.as_str()) {
+                local.insert(name);
+            } else {
+                args.insert(name.replace('-', "_"), json!(true));
+            }
+            continue;
+        }
+        if !VALUES.contains(&name.as_str()) {
+            return Err(bad(format!("{verb} has no option --{name}")));
+        }
+        let value = match inline {
+            Some(v) => v,
+            None if i < argv.len() => {
+                i += 1;
+                argv[i - 1].clone()
+            }
+            None => return Err(bad(format!("--{name} needs a value"))),
+        };
+        let key = name.replace('-', "_");
+        let v = if NUMBERS.contains(&name.as_str()) {
+            match value.parse::<u64>() {
+                Ok(n) => json!(n),
+                Err(_) => return Err(bad(format!("--{name} needs a whole number"))),
+            }
+        } else {
+            json!(value)
+        };
+        if lists && LISTS.contains(&name.as_str()) {
+            let entry = args.entry(key).or_insert_with(|| json!([]));
+            if let Value::Array(a) = entry {
+                a.push(v);
+            }
+        } else {
+            args.insert(key, v);
+        }
+    }
+    if WITH_ID.contains(&verb.as_str()) {
+        match positional.first() {
+            Some(id) => {
+                args.insert("id".into(), json!(id));
+            }
+            None => return Err(bad(format!("{verb} needs an item id"))),
+        }
+    } else if verb == "search" {
+        args.insert("text".into(), json!(positional.join(" ")));
+    } else if let Some(p) = positional.first() {
+        return Err(bad(format!("{verb} takes no {p:?}")));
+    }
+    Ok(Parsed { verb, args, local })
+}
+
+fn tty() -> bool {
+    std::io::stdin().is_terminal()
+}
+
+/// One secret: from the terminal without echo, else the next stdin line.
+fn secret(prompt: &str) -> Result<Zeroizing<String>, Value> {
+    if tty() {
+        return rpassword::prompt_password(prompt)
+            .map(Zeroizing::new)
+            .map_err(|e| bad(format!("can't read the password: {e}")));
+    }
+    let mut line = Zeroizing::new(String::new());
+    std::io::stdin()
+        .read_line(&mut line)
+        .map_err(|e| bad(format!("can't read the password: {e}")))?;
+    let trimmed = Zeroizing::new(line.trim_end_matches(['\n', '\r']).to_string());
+    Ok(trimmed)
+}
+
+/// A new password, typed twice.
+fn new_secret(what: &str) -> Result<Zeroizing<String>, Value> {
+    let a = secret(&format!("New {what}: "))?;
+    let b = secret(&format!("The {what} again: "))?;
+    if *a != *b {
+        return Err(bad("The two passwords differ."));
+    }
+    Ok(a)
+}
+
+fn put_secret(args: &mut Map<String, Value>, key: &str, value: &Zeroizing<String>) {
+    args.insert(key.to_string(), json!(value.as_str()));
+}
+
+fn ok(v: &Value) -> bool {
+    v.get("ok").and_then(Value::as_bool) == Some(true)
+}
+
+fn run(argv: &[String]) -> (Value, ExitCode) {
+    let mut p = match parse(argv) {
+        Ok(p) => p,
+        Err(v) => return (v, ExitCode::SUCCESS),
+    };
+    let done = |v: Value| (v, ExitCode::SUCCESS);
+    match p.verb.as_str() {
+        "generate" => done(generate(&p.args)),
+        "init" => match new_secret("master password") {
+            Ok(pw) => {
+                put_secret(&mut p.args, "password", &pw);
+                done(client::call("init", Value::Object(p.args), SLOW))
+            }
+            Err(v) => done(v),
+        },
+        "open" => match secret("Master password for Safe: ") {
+            Ok(pw) => {
+                put_secret(&mut p.args, "password", &pw);
+                done(client::call("open", Value::Object(p.args), SLOW))
+            }
+            Err(v) => done(v),
+        },
+        "unlock" if p.local.contains("ask") => done(unlock_ask()),
+        "unlock" => done(unlock(p.args)),
+        "passwd" => done(passwd(p.args)),
+        "add" | "edit" => {
+            if p.local.contains("password-stdin") {
+                match secret("Password: ") {
+                    Ok(pw) => put_secret(&mut p.args, "password_value", &pw),
+                    Err(v) => return done(v),
+                }
+            }
+            if p.local.contains("notes-stdin") {
+                let mut notes = Zeroizing::new(String::new());
+                if let Err(e) = std::io::stdin().read_to_string(&mut notes) {
+                    return done(bad(format!("can't read the notes: {e}")));
+                }
+                put_secret(&mut p.args, "notes", &notes);
+            }
+            done(client::call(&p.verb, Value::Object(p.args), SLOW))
+        }
+        "copy" => {
+            if let Ok(d) = std::env::var("WAYLAND_DISPLAY") {
+                p.args.insert("wayland_display".into(), json!(d));
+            }
+            done(client::call("copy", Value::Object(p.args), FAST))
+        }
+        "reveal" => {
+            let v = client::call("reveal", Value::Object(p.args), FAST);
+            if p.local.contains("json") {
+                return done(v);
+            }
+            match v.get("value").and_then(Value::as_str) {
+                Some(value) if ok(&v) => {
+                    println!("{value}");
+                    (Value::Null, ExitCode::SUCCESS)
+                }
+                _ => (Value::Null, ExitCode::from(1)),
+            }
+        }
+        "sync" | "rm" | "restore" => done(client::call(&p.verb, Value::Object(p.args), SLOW)),
+        verb => done(client::call(verb, Value::Object(p.args), FAST)),
+    }
+}
+
+fn generate(a: &Map<String, Value>) -> Value {
+    let num = |k: &str| a.get(k).and_then(Value::as_u64).map(|n| n as usize);
+    let flag = |k: &str| a.get(k).and_then(Value::as_bool).unwrap_or(false);
+    let made = match num("words") {
+        Some(w) => generator::passphrase(w, "-").map(|v| (v, generator::passphrase_bits(w))),
+        None => {
+            let len = num("length").unwrap_or(20);
+            let (symbols, digits) = (!flag("no_symbols"), !flag("no_digits"));
+            generator::password_with(len, symbols, digits)
+                .map(|v| (v, generator::password_bits_with(len, symbols, digits)))
+        }
+    };
+    match made {
+        Ok((value, bits)) => json!({"ok": true, "value": value.as_str(), "bits": bits.round()}),
+        Err(e) => bad(e.to_string()),
+    }
+}
+
+/// From a terminal, three tries; from stdin, one.
+fn unlock(args: Map<String, Value>) -> Value {
+    let tries = if tty() { 3 } else { 1 };
+    let mut last = Value::Null;
+    for n in 0..tries {
+        let pw = match secret("Master password for Safe: ") {
+            Ok(pw) => pw,
+            Err(v) => return v,
+        };
+        let mut a = args.clone();
+        put_secret(&mut a, "password", &pw);
+        last = client::call("unlock", Value::Object(a), SLOW);
+        let wrong = last.get("error").and_then(Value::as_str) == Some("wrong-key");
+        if !wrong || n + 1 == tries {
+            break;
+        }
+        eprintln!("That password doesn't open the safe. Try again.");
+    }
+    last
+}
+
+fn passwd(mut args: Map<String, Value>) -> Value {
+    let st = client::call("status", json!({}), FAST);
+    if !ok(&st) {
+        return st;
+    }
+    if st.get("locked").and_then(Value::as_bool) == Some(true) {
+        match secret("Current master password: ") {
+            Ok(pw) => put_secret(&mut args, "password", &pw),
+            Err(v) => return v,
+        }
+    }
+    match new_secret("master password") {
+        Ok(pw) => put_secret(&mut args, "new_password", &pw),
+        Err(v) => return v,
+    }
+    client::call("passwd", Value::Object(args), SLOW)
+}
+
+/// `unlock --ask` (the Passwords plugin's Enter): open a small prompt
+/// window and wait until the safe is unlocked or the window is gone. Phase
+/// 1's bridge until the Safe window and the login unlock exist.
+fn unlock_ask() -> Value {
+    let st = client::call("status", json!({}), FAST);
+    if !ok(&st) {
+        return st;
+    }
+    if st.get("set_up").and_then(Value::as_bool) != Some(true) {
+        return json!({
+            "ok": false,
+            "error": "not-set-up",
+            "message": "There is no safe on this computer yet.",
+            "hint": "ewe-safe init --place nextcloud, or ewe-safe open --place nextcloud",
+        });
+    }
+    if st.get("locked").and_then(Value::as_bool) == Some(false) {
+        return json!({"ok": true, "items": st.get("items")});
+    }
+    let mut prompt = match std::env::var("EWE_SAFE_ASK_CMD") {
+        // a test (or a user) names the prompt; it runs `ewe-safe unlock`
+        Ok(cmd) => {
+            let mut c = Command::new("sh");
+            c.arg("-c").arg(cmd);
+            c
+        }
+        Err(_) => {
+            let me = std::env::current_exe()
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_else(|_| "ewe-safe".into());
+            let mut c = Command::new("kitty");
+            c.args([
+                "--class",
+                "ewe-safe-unlock",
+                "--title",
+                "Unlock Safe",
+                "-e",
+                &me,
+                "unlock",
+            ]);
+            c
+        }
+    };
+    // this command's stdout is its one JSON answer: the prompt's is its own
+    let spawned = prompt
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn();
+    let mut child = match spawned {
+        Ok(c) => c,
+        Err(e) => {
+            return json!({
+                "ok": false,
+                "error": "internal",
+                "message": format!("Couldn't open the unlock prompt ({e})."),
+                "hint": "ewe-safe unlock in a terminal",
+            });
+        }
+    };
+    let start = Instant::now();
+    let unlocked = || {
+        let st = client::call("status", json!({}), FAST);
+        (st.get("locked").and_then(Value::as_bool) == Some(false)).then(|| st.get("items").cloned())
+    };
+    loop {
+        std::thread::sleep(Duration::from_millis(250));
+        if let Some(items) = unlocked() {
+            return json!({"ok": true, "items": items});
+        }
+        if let Ok(Some(_)) = child.try_wait() {
+            if let Some(items) = unlocked() {
+                return json!({"ok": true, "items": items});
+            }
+            return json!({
+                "ok": false,
+                "error": "cancelled",
+                "message": "Safe is still locked: the prompt was closed.",
+            });
+        }
+        if start.elapsed() > ASK_WAIT {
+            let _ = child.kill();
+            let _ = child.wait();
+            return json!({
+                "ok": false,
+                "error": "cancelled",
+                "message": "Safe is still locked: the prompt timed out.",
+            });
+        }
+    }
+}
+
+fn main() -> ExitCode {
+    let argv: Vec<String> = std::env::args().skip(1).collect();
+    let (v, code) = run(&argv);
+    if !v.is_null() {
+        println!("{v}");
+    }
+    code
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn p(args: &[&str]) -> Result<Parsed, Value> {
+        parse(&args.iter().map(|s| s.to_string()).collect::<Vec<_>>())
+    }
+
+    #[test]
+    fn options_become_protocol_args() {
+        let x = p(&[
+            "match",
+            "--class",
+            "discord",
+            "--title=Chat",
+            "--limit",
+            "8",
+        ])
+        .unwrap();
+        assert_eq!(x.args["class"], "discord");
+        assert_eq!(x.args["title"], "Chat");
+        assert_eq!(x.args["limit"], 8);
+        let x = p(&[
+            "add",
+            "--title",
+            "T",
+            "--url",
+            "a",
+            "--url",
+            "b",
+            "--generate",
+        ])
+        .unwrap();
+        assert_eq!(x.args["url"], json!(["a", "b"]));
+        assert_eq!(x.args["generate"], true);
+        let x = p(&["copy", "4f9c", "--clear-after", "10"]).unwrap();
+        assert_eq!(x.args["id"], "4f9c");
+        assert_eq!(x.args["clear_after"], 10);
+        let x = p(&["reveal", "id", "--field", "otp", "--json"]).unwrap();
+        assert!(x.local.contains("json") && !x.args.contains_key("json"));
+        let x = p(&["search", "git", "hub"]).unwrap();
+        assert_eq!(x.args["text"], "git hub");
+    }
+
+    #[test]
+    fn mistakes_are_bad_requests() {
+        for argv in [
+            &["nope"][..],
+            &["show"],
+            &["list", "--colour", "x"],
+            &["match", "--limit", "many"],
+            &["lock", "extra"],
+            &["match", "--class"],
+        ] {
+            let e = p(argv).err().expect("an error");
+            assert_eq!(e["error"], "bad-request", "{argv:?}");
+        }
+    }
+
+    #[test]
+    fn generate_needs_no_daemon() {
+        let v = generate(&Map::new());
+        assert_eq!(v["value"].as_str().unwrap().len(), 20);
+        let mut a = Map::new();
+        a.insert("words".into(), json!(4));
+        assert_eq!(
+            generate(&a)["value"].as_str().unwrap().split('-').count(),
+            4
+        );
+    }
 }

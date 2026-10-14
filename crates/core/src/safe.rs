@@ -97,6 +97,9 @@ fn entry_id(id: &str) -> Result<EntryId, Error> {
         .map_err(|_| Error::NotFound(id.to_string()))
 }
 
+/// Cloning copies the whole database, secrets included; the daemon clones
+/// to talk to a place without holding up readers.
+#[derive(Clone)]
 pub struct Safe {
     db: Database,
     guard: Report,
@@ -332,10 +335,18 @@ impl Safe {
 
     /// Add an item at the top level; returns its id.
     pub fn add(&mut self, draft: &Draft) -> Result<String, Error> {
+        self.add_in(draft, "")
+    }
+
+    /// Add an item in a folder ("Work/Mail"; "" is the top), making the
+    /// folders that are missing; returns its id.
+    pub fn add_in(&mut self, draft: &Draft, folder: &str) -> Result<String, Error> {
         self.writable()?;
+        let at = self.folder(folder)?;
         let id = self
             .db
-            .root_mut()
+            .group_mut(at)
+            .ok_or_else(|| Error::NotFound(folder.to_string()))?
             .add_entry()
             .edit(|e| {
                 item::apply(e, draft);
@@ -343,6 +354,52 @@ impl Safe {
             })
             .id();
         Ok(id.to_string())
+    }
+
+    /// Move an item to a folder ("" is the top), making it if missing. A move
+    /// is not an edit: no history version.
+    pub fn move_to(&mut self, id: &str, folder: &str) -> Result<(), Error> {
+        self.writable()?;
+        let eid = entry_id(id)?;
+        let parent = self
+            .db
+            .entry(eid)
+            .ok_or_else(|| Error::NotFound(id.to_string()))?
+            .parent()
+            .id();
+        if self.in_recycle_bin(parent) {
+            return Err(Error::NotFound(id.to_string()));
+        }
+        let at = self.folder(folder)?;
+        if parent == at {
+            return Ok(());
+        }
+        self.relocate(eid, at)
+    }
+
+    /// The folder at `path`, made if missing. Names compare without case, as
+    /// KeePass apps do; the recycle bin is never a folder.
+    fn folder(&mut self, path: &str) -> Result<GroupId, Error> {
+        let bin = self.db.recycle_bin().map(|g| g.id());
+        let mut at = self.db.root().id();
+        for name in path.split('/').map(str::trim).filter(|n| !n.is_empty()) {
+            let found = self.db.group(at).and_then(|g| {
+                g.groups()
+                    .find(|c| Some(c.id()) != bin && c.name.eq_ignore_ascii_case(name))
+                    .map(|c| c.id())
+            });
+            at = match found {
+                Some(id) => id,
+                None => self
+                    .db
+                    .group_mut(at)
+                    .ok_or_else(|| Error::NotFound(path.to_string()))?
+                    .add_group()
+                    .edit(|g| g.name = name.to_string())
+                    .id(),
+            };
+        }
+        Ok(at)
     }
 
     /// Replace an item's Safe fields; the previous version goes to history.
@@ -710,6 +767,26 @@ mod tests {
             .filter_map(|h| h.get(fields::PASSWORD))
             .collect();
         assert_eq!(kept, ["3", "4", "5"], "oldest first, newest kept");
+    }
+
+    #[test]
+    fn folders() {
+        let mut s = Safe::create("x", cheap());
+        let a = s.add_in(&login("Mail", "x"), "Work/Mail").expect("add");
+        let b = s.add_in(&login("Chat", "x"), "work").expect("add");
+        assert_eq!(s.summary(&a).expect("a").folder, "Work/Mail");
+        assert_eq!(
+            s.summary(&b).expect("b").folder,
+            "Work",
+            "found without case"
+        );
+        s.move_to(&a, "").expect("move");
+        assert_eq!(s.summary(&a).expect("a").folder, "");
+        s.trash(&b).expect("trash");
+        assert!(
+            s.move_to(&b, "Work").is_err(),
+            "an item in the bin doesn't move"
+        );
     }
 
     #[test]
