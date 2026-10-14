@@ -4,22 +4,17 @@
 //! `reveal` without `--json` prints the bare value (nothing and exit 1 when
 //! there is none), and `unlock --ask` opens a prompt window and waits.
 
-mod client;
-
 use std::collections::HashSet;
 use std::io::{IsTerminal, Read};
 use std::process::{Command, ExitCode, Stdio};
 use std::time::{Duration, Instant};
 
+use safe_client as client;
+use safe_client::{FAST, SLOW};
 use safe_core::generator;
 use serde_json::{Map, Value, json};
 use zeroize::Zeroizing;
 
-/// Verbs that answer from memory.
-const FAST: Duration = Duration::from_secs(30);
-/// Verbs that derive a key or talk to the place (the place's own timeout is
-/// two minutes).
-const SLOW: Duration = Duration::from_secs(300);
 /// How long `unlock --ask` waits for the prompt.
 const ASK_WAIT: Duration = Duration::from_secs(300);
 

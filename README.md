@@ -22,6 +22,8 @@ and **your ewe account's Nextcloud**.
 | `crates/store` (`safe_store`) | the places — This computer and WebDAV (Nextcloud through `ewe-cloud`) — and the sync engine: cache, backups, save → stale → merge → retry, offline pending, rollback warning ([docs/PLACES.md](docs/PLACES.md)) |
 | `crates/daemon` (`ewe-safed`) | holds the unlocked safe: the socket (systemd activation or its own, `0600`, `SO_PEERCRED`), the verbs, locking with the screen, before sleep and when unused, the clipboard, the periodic exchange |
 | `crates/cli` (`ewe-safe`) | the verbs as JSON ([docs/PROTOCOL.md](docs/PROTOCOL.md)); secrets from a terminal or stdin, never argv |
+| `crates/client` (`safe_client`) | the one client of the protocol: request/reply on the socket (`SO_PEERCRED` checked), the event stream, secrets wiped from a request once it's sent; used by the CLI and the window |
+| `app/` | the Safe window (Tauri v2 + Svelte 5), phase 2: so far only its plumbing — one command per protocol verb, the daemon's events, a Svelte store and a dev mock; the screens wait for the mockup's sign-off. Its own Cargo project (`app/src-tauri`), outside this workspace, so `cargo test` here never needs webkit2gtk |
 | `crates/testkit` | test support only: a mock WebDAV server and a switchable proxy |
 | `packaging/` | `ewe-safe.socket` + `ewe-safe.service` (user units) |
 
@@ -48,6 +50,17 @@ with `Super+P`; a locked safe opens a small unlock prompt.
     tests/fidelity/run.sh           # the fidelity gate: nothing another app wrote is lost
     cargo run --release -p safe-core --example merge-spike
     cargo run --release -p safe-core --example kdf-timing
+
+The window (`app/`, needs webkit2gtk-4.1 and Node):
+
+    cd app && npm install
+    npm run dev                     # the page alone; open http://localhost:5176/?mock=1
+    npm run tauri dev               # the window against the running ewe-safed
+    npm run tauri build -- --debug --no-bundle
+
+`?mock=1` serves a fake Safe built from PROTOCOL.md's shapes (master
+password `mock`; `&locked=0`, `&setup=0`, `&daemon=0`, `&empty=1`). The
+window honours `EWE_SAFE_SOCKET` too, so it can talk to a sandboxed daemon.
 
 The end-to-end tests run the real `ewe-safe` and `ewe-safed` in sandboxes
 (their own XDG directories, a fake `ewe-conf`, `ewe-cloud` and clipboard, a

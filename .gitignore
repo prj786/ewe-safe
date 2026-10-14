@@ -5,3 +5,8 @@ __pycache__/
 /tests/corpus/.src/
 # fidelity harness output
 /tests/fidelity/out/
+# the window (app/): npm and Tauri output
+/app/node_modules/
+/app/dist/
+/app/src-tauri/target/
+/app/src-tauri/gen/

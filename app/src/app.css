@@ -1,0 +1,12 @@
+/* The Ewe design system, version 3: the token layer, copied verbatim from
+   ewe/design/tokens.css. The screens bring Tailwind and the component
+   classes (the ewe-sync shape); the plumbing page uses tokens only. */
+@import "./tokens.css";
+
+body {
+  margin: 0;
+  background: var(--surface-base);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: var(--font-size-md);
+}

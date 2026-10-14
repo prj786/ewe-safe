@@ -27,3 +27,35 @@ jobs:
       - run: cargo build --locked
       # the go/no-go gate: files other KeePass apps wrote survive our save
       - run: tests/fidelity/run.sh
+
+  # The window: its own Cargo project (app/src-tauri). Tauri links the
+  # webkit/gtk stack even to type-check — Linux build dependencies only, the
+  # app targets Arch.
+  app:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: System dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev librsvg2-dev libxdo-dev libssl-dev build-essential file
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Frontend
+        working-directory: app
+        run: |
+          npm ci
+          npm run build
+      - name: Rust
+        working-directory: app/src-tauri
+        run: |
+          cargo fmt --check
+          cargo clippy --all-targets --locked -- -D warnings
+          cargo test --locked
