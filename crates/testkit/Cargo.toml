@@ -1,0 +1,14 @@
+[package]
+name = "safe-testkit"
+description = "ewe-safe's test support: a mock WebDAV server (never shipped)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lib]
+name = "safe_testkit"
+
+[dependencies]
+base64 = "0.23"

@@ -8,26 +8,55 @@ where you choose: this computer, your own Nextcloud (the ewe account), any
 WebDAV server, a synced folder, or, if you want, Dropbox or Google Drive.
 `Super+P` fills a login into any window.
 
-**Status: phase 1, under construction. Nothing here is usable yet.** The
-design is in [PLAN.md](PLAN.md) (the RFC-008 draft). Phase 0's go/no-go
-spike is [docs/SPIKE-0.md](docs/SPIKE-0.md): GO, with five conditions.
+**Status: phase 1 — usable from a terminal and `Super+P`, not packaged or
+released yet; no Safe window yet.** The design is in [PLAN.md](PLAN.md)
+(RFC-008). Phase 0's go/no-go spike is [docs/SPIKE-0.md](docs/SPIKE-0.md):
+GO, with five conditions. This version opens two places: **This computer**
+and **your ewe account's Nextcloud**.
 
 ## What exists
 
 | crate | what |
 |---|---|
-| `crates/core` (`safe_core`) | the safe itself, with no network: open, edit and write a KDBX file (history-tracked edits, recycle bin, recorded deletions); the write guard that keeps files keepass-rs can't write back read-only; verify-by-reread; search; the password and passphrase generator (EFF long list); one-time codes; atomic writes; Argon2id calibration |
-| `crates/store` (`safe_store`) | the places a safe can live: a stub |
-| `crates/daemon` (`ewe-safed`) | holds the unlocked safe: a stub |
-| `crates/cli` (`ewe-safe`) | JSON verbs over the daemon's socket: a stub |
+| `crates/core` (`safe_core`) | the safe itself, with no network: open, edit and write a KDBX file (history-tracked edits, folders, recycle bin, recorded deletions); the write guard that keeps files keepass-rs can't write back read-only; verify-by-reread; Safe's own merge; search and the fill picker's ranking; the password and passphrase generator (EFF long list); one-time codes; atomic writes; Argon2id calibration |
+| `crates/store` (`safe_store`) | the places — This computer and WebDAV (Nextcloud through `ewe-cloud`) — and the sync engine: cache, backups, save → stale → merge → retry, offline pending, rollback warning ([docs/PLACES.md](docs/PLACES.md)) |
+| `crates/daemon` (`ewe-safed`) | holds the unlocked safe: the socket (systemd activation or its own, `0600`, `SO_PEERCRED`), the verbs, locking with the screen, before sleep and when unused, the clipboard, the periodic exchange |
+| `crates/cli` (`ewe-safe`) | the verbs as JSON ([docs/PROTOCOL.md](docs/PROTOCOL.md)); secrets from a terminal or stdin, never argv |
+| `crates/testkit` | test support only: a mock WebDAV server and a switchable proxy |
+| `packaging/` | `ewe-safe.socket` + `ewe-safe.service` (user units) |
+
+## Use it (until it's packaged)
+
+    cargo build --release
+    install -Dm755 target/release/ewe-safe target/release/ewe-safed -t ~/.local/bin
+    sed 's#/usr/bin/#%h/.local/bin/#' packaging/ewe-safe.service > ~/.config/systemd/user/ewe-safe.service
+    cp packaging/ewe-safe.socket ~/.config/systemd/user/
+    systemctl --user daemon-reload && systemctl --user enable --now ewe-safe.socket
+
+    ewe-safe init --place nextcloud      # or --place local; asks for the master password twice
+    ewe-safe add --title GitHub --username sam --url https://github.com --generate
+    ewe-safe match --class firefox --title "GitHub"
+    ewe-safe reveal <id> --field password
+
+The Passwords plugin (`ewe.passwords` 1.2.0, provider `ewe`) fills from it
+with `Super+P`; a locked safe opens a small unlock prompt.
 
 ## Develop
 
-    cargo test                      # unit tests (the corpus test skips until fetched)
+    cargo test                      # everything, including the binaries end to end
     tests/corpus/fetch.sh           # other apps' KDBX test files, pinned (needs pykeepass)
     tests/fidelity/run.sh           # the fidelity gate: nothing another app wrote is lost
     cargo run --release -p safe-core --example merge-spike
     cargo run --release -p safe-core --example kdf-timing
+
+The end-to-end tests run the real `ewe-safe` and `ewe-safed` in sandboxes
+(their own XDG directories, a fake `ewe-conf`, `ewe-cloud` and clipboard, a
+mock WebDAV server); the logind test uses a private D-Bus with a stand-in
+logind. Nothing touches the live keyring, ewe.conf or account. The daemon's
+test switches: `EWE_SAFE_KDF_ITERATIONS` (cheap keys),
+`EWE_SAFE_INSECURE_LOOPBACK=1` (plain http to 127.0.0.1),
+`EWE_SAFE_NO_LOGIND`, `EWE_SAFE_LOGIND_BUS`, `EWE_SAFE_IDLE_SECONDS`,
+`EWE_SAFE_SYNC_SECONDS`; the CLI's: `EWE_SAFE_ASK_CMD` (the unlock prompt).
 
 Never enable quick-xml's `overlapped-lists` feature anywhere in the tree: it
 corrupts every password keepass-rs reads (SPIKE-0, F2). CI checks for it.

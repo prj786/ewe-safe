@@ -71,6 +71,127 @@ pub fn rank<'a>(items: impl IntoIterator<Item = &'a Summary>, query: &str) -> Ve
     hits.into_iter().map(|(_, s)| s).collect()
 }
 
+/// One login for the fill picker, with why it ranks where it does.
+pub struct Match<'a> {
+    pub item: &'a Summary,
+    pub score: u32,
+    pub reason: &'static str,
+}
+
+/// A website's host without `www.`, and its name ("https://www.discord.com/x"
+/// → ("discord.com", "discord"); "bank.co.uk" → "bank").
+pub fn host_name(url: &str) -> (String, String) {
+    let mut h = host(url);
+    if let Some(rest) = h.strip_prefix("www.") {
+        h = rest.to_string();
+    }
+    let parts: Vec<&str> = h.split('.').collect();
+    let n = parts.len();
+    let name = if n >= 3
+        && ["co", "com", "org", "net", "ac", "gov"].contains(&parts[n - 2])
+        && parts[n - 1].len() == 2
+    {
+        parts[n - 3]
+    } else if n >= 2 {
+        parts[n - 2]
+    } else {
+        parts[0]
+    };
+    let name = name.to_string();
+    (h, name)
+}
+
+/// The fill picker's ranking (the Passwords plugin's own scoring, moved into
+/// Safe): logins for the focused window (`class`, `title`) or a page (`url`),
+/// best first, then by title. A login nothing points at stays with score 0,
+/// so the picker's search still finds it. `query` keeps only logins whose
+/// title, username or host contain it. Notes are never candidates.
+pub fn match_logins<'a>(
+    items: impl IntoIterator<Item = &'a Summary>,
+    class: &str,
+    title: &str,
+    url: &str,
+    query: &str,
+) -> Vec<Match<'a>> {
+    let wc = class.trim().to_lowercase();
+    let wt = title.trim().to_lowercase();
+    let q = query.trim().to_lowercase();
+    let page = if url.trim().is_empty() {
+        String::new()
+    } else {
+        host_name(url).0
+    };
+    let both = format!("{wc} {wt}");
+    let words: Vec<&str> = both
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|w| w.len() >= 4 && !["window", "login", "sign"].contains(w))
+        .collect();
+    let mut out: Vec<Match<'a>> = Vec::new();
+    for s in items {
+        if s.kind != crate::item::Kind::Login {
+            continue;
+        }
+        let tl = s.title.to_lowercase();
+        let (mut score, mut reason) = (0u32, "");
+        let mut bump = |n: u32, why: &'static str| {
+            if n > score {
+                score = n;
+                reason = why;
+            }
+        };
+        if !wc.is_empty() && s.apps.iter().any(|a| a.to_lowercase() == wc) {
+            bump(50, "pinned to this app");
+        }
+        let mut first_host = String::new();
+        for w in &s.websites {
+            let (h, name) = host_name(w);
+            if first_host.is_empty() {
+                first_host = h.clone();
+            }
+            if !page.is_empty() && !h.is_empty() {
+                if h == page {
+                    bump(60, "same site");
+                } else if page.ends_with(&format!(".{h}")) || h.ends_with(&format!(".{page}")) {
+                    bump(45, "same site family");
+                }
+            }
+            if name.len() >= 3 {
+                if !wc.is_empty() && wc.contains(&name) {
+                    bump(30, "site matches the app");
+                } else if !wt.is_empty() && wt.contains(&name) {
+                    bump(20, "site matches the window title");
+                }
+            }
+        }
+        if wc.len() >= 3 && !tl.is_empty() && (tl.contains(&wc) || wc.contains(&tl)) {
+            bump(25, "title matches the app");
+        } else if !tl.is_empty() && words.iter().any(|w| tl.contains(w)) {
+            bump(10, "title matches the window");
+        }
+        if !q.is_empty() {
+            let hay = format!("{tl} {} {first_host}", s.username.to_lowercase());
+            if !hay.contains(&q) {
+                continue;
+            }
+            score += 5;
+        }
+        out.push(Match {
+            item: s,
+            score,
+            reason,
+        });
+    }
+    out.sort_by(|a, b| {
+        b.score.cmp(&a.score).then_with(|| {
+            a.item
+                .title
+                .to_lowercase()
+                .cmp(&b.item.title.to_lowercase())
+        })
+    });
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -94,6 +215,73 @@ mod tests {
             has_otp: false,
             modified: None,
         }
+    }
+
+    fn app(mut s: Summary, class: &str) -> Summary {
+        s.apps.push(class.into());
+        s
+    }
+
+    fn picked<'a>(m: &'a [Match<'a>]) -> Vec<(&'a str, u32)> {
+        m.iter().map(|m| (m.item.title.as_str(), m.score)).collect()
+    }
+
+    #[test]
+    fn host_names() {
+        assert_eq!(
+            host_name("https://www.discord.com/login"),
+            ("discord.com".into(), "discord".into())
+        );
+        assert_eq!(
+            host_name("bank.co.uk"),
+            ("bank.co.uk".into(), "bank".into())
+        );
+        assert_eq!(
+            host_name("localhost"),
+            ("localhost".into(), "localhost".into())
+        );
+    }
+
+    #[test]
+    fn the_picker_ranks_pins_then_sites_then_titles() {
+        let all = [
+            item("Zoom", "z", "", &[]),
+            app(item("Work chat", "w", "", &[]), "discord"),
+            item("Discord", "d", "https://discord.com", &[]),
+            item("Other", "o", "https://example.org", &[]),
+        ];
+        let m = match_logins(&all, "discord", "Discord - General", "", "");
+        assert_eq!(
+            picked(&m),
+            vec![
+                ("Work chat", 50),
+                ("Discord", 30),
+                ("Other", 0),
+                ("Zoom", 0)
+            ]
+        );
+        assert_eq!(m[0].reason, "pinned to this app");
+    }
+
+    #[test]
+    fn a_page_matches_its_site_and_the_query_filters() {
+        let all = [
+            item("GitHub", "sam", "https://github.com", &[]),
+            item("GitHub Enterprise", "sam", "https://git.work.example", &[]),
+            item("Docs", "sam", "https://docs.github.com", &[]),
+        ];
+        let m = match_logins(&all, "", "", "https://github.com/login", "");
+        assert_eq!(picked(&m)[0], ("GitHub", 60));
+        assert_eq!(picked(&m)[1], ("Docs", 45));
+        let m = match_logins(&all, "", "", "", "enterprise");
+        assert_eq!(picked(&m), vec![("GitHub Enterprise", 5)]);
+    }
+
+    #[test]
+    fn notes_are_never_candidates() {
+        let mut note = item("Discord recovery codes", "", "", &[]);
+        note.kind = Kind::Note;
+        assert!(match_logins(&[note], "discord", "", "", "").is_empty());
     }
 
     #[test]

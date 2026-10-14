@@ -1,0 +1,33 @@
+# Safe, ewe's password manager: the daemon that holds the unlocked safe.
+# Started by ewe-safe.socket; stopping it (logout) locks the safe.
+[Unit]
+Description=Safe, ewe's password manager
+Documentation=https://github.com/prj786/ewe-safe
+Requires=ewe-safe.socket
+After=ewe-safe.socket
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/ewe-safed
+Restart=on-failure
+RestartSec=2
+
+# No core dumps of a process that holds secrets (the daemon also makes
+# itself undumpable). PLAN.md §8.
+LimitCORE=0
+NoNewPrivileges=yes
+PrivateTmp=yes
+# The safe's state and the default This-computer safe live under $HOME, and
+# a synced-folder place can be anywhere in it: home stays writable.
+ProtectSystem=strict
+ReadWritePaths=%h %t
+ProtectHome=no
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+MemoryDenyWriteExecute=yes
+LockPersonality=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+SystemCallArchitectures=native
+
+[Install]
+Also=ewe-safe.socket

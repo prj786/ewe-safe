@@ -403,12 +403,24 @@ impl Syncer {
 
     /// Save the safe: the cache now, the place if it can be reached.
     pub fn save(&mut self, safe: &mut Safe, key: &DatabaseKey) -> Result<Saved, Error> {
+        let bytes = self.write_local(safe, key)?;
+        self.push(safe, key, bytes)
+    }
+
+    /// Save the safe on this machine only: the cache, verified and marked
+    /// pending. The next [`Syncer::poll`] takes it to the place — the daemon
+    /// answers an edit after this, so a slow place never holds the user up.
+    pub fn save_local(&mut self, safe: &mut Safe, key: &DatabaseKey) -> Result<(), Error> {
+        self.write_local(safe, key).map(|_| ())
+    }
+
+    fn write_local(&mut self, safe: &mut Safe, key: &DatabaseKey) -> Result<Vec<u8>, Error> {
         safe.set_saved_by(&self.machine);
         let bytes = safe.to_bytes(key)?;
         self.write_cache(&bytes)?;
         self.state.pending = true;
         self.save_state()?;
-        self.push(safe, key, bytes)
+        Ok(bytes)
     }
 
     /// The periodic exchange (every few minutes, on network up, on unlock).

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/core", "crates/store", "crates/daemon", "crates/cli"]
+members = ["crates/core", "crates/store", "crates/daemon", "crates/cli", "crates/testkit"]
 # the patched keepass-rs is a dependency, not ours to lint or format
 exclude = ["vendor"]
 
@@ -14,6 +14,7 @@ rust-version = "1.90"
 [workspace.dependencies]
 safe-core = { path = "crates/core" }
 safe-store = { path = "crates/store" }
+safe-testkit = { path = "crates/testkit" }
 # `_merge` only for the phase-0 merge spike: Safe merges itself (SPIKE-0 §2)
 keepass = { version = "0.15.2", features = ["save_kdbx4", "_merge"] }
 

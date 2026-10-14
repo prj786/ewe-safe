@@ -12,3 +12,11 @@ path = "src/main.rs"
 
 [dependencies]
 safe-core.workspace = true
+serde_json = "1"
+libc = "0.2"
+zeroize = "1"
+# the master password from a terminal, without echo
+rpassword = "7"
+
+[dev-dependencies]
+safe-testkit.workspace = true

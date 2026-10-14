@@ -13,3 +13,13 @@ path = "src/main.rs"
 [dependencies]
 safe-core.workspace = true
 safe-store.workspace = true
+keepass.workspace = true
+serde_json = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+sha2 = "0.11"
+zeroize = "1"
+libc = "0.2"
+# logind's LockedHint and PrepareForSleep (the screen locks, the lid closes)
+zbus = "5"
+signal-hook = "0.3"
+

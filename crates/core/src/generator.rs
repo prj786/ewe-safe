@@ -61,10 +61,23 @@ fn words() -> impl Iterator<Item = &'static str> {
 
 /// A password of `length` characters.
 pub fn password(length: usize, symbols: bool) -> Result<Zeroizing<String>, GeneratorError> {
+    password_with(length, symbols, true)
+}
+
+/// A password of `length` characters, with or without symbols and digits;
+/// every class used appears at least once.
+pub fn password_with(
+    length: usize,
+    symbols: bool,
+    digits: bool,
+) -> Result<Zeroizing<String>, GeneratorError> {
     if !(MIN_LENGTH..=MAX_LENGTH).contains(&length) {
         return Err(GeneratorError::Length(length));
     }
-    let mut classes = vec![LOWER, UPPER, DIGITS];
+    let mut classes = vec![LOWER, UPPER];
+    if digits {
+        classes.push(DIGITS);
+    }
     if symbols {
         classes.push(SYMBOLS);
     }
@@ -99,7 +112,14 @@ pub fn passphrase(count: usize, separator: &str) -> Result<Zeroizing<String>, Ge
 /// Bits of entropy of [`password`] (an upper bound: the class rule trims a
 /// little) and of [`passphrase`].
 pub fn password_bits(length: usize, symbols: bool) -> f64 {
-    let n = LOWER.len() + UPPER.len() + DIGITS.len() + if symbols { SYMBOLS.len() } else { 0 };
+    password_bits_with(length, symbols, true)
+}
+
+pub fn password_bits_with(length: usize, symbols: bool, digits: bool) -> f64 {
+    let n = LOWER.len()
+        + UPPER.len()
+        + if digits { DIGITS.len() } else { 0 }
+        + if symbols { SYMBOLS.len() } else { 0 };
     length as f64 * (n as f64).log2()
 }
 
@@ -134,6 +154,18 @@ mod tests {
             let q = password(8, false).expect("password");
             assert!(q.chars().all(|c| c.is_ascii_alphanumeric()));
         }
+    }
+
+    #[test]
+    fn no_digits_means_none() {
+        for _ in 0..200 {
+            let p = password_with(16, false, false).expect("password");
+            assert!(p.chars().all(|c| c.is_ascii_alphabetic()));
+            let q = password_with(16, true, false).expect("password");
+            assert!(!q.chars().any(|c| DIGITS.contains(c)));
+            assert!(q.chars().any(|c| SYMBOLS.contains(c)));
+        }
+        assert!(password_bits_with(16, false, false) < password_bits(16, false));
     }
 
     #[test]
