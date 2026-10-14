@@ -16,7 +16,7 @@ use std::path::Path;
 use keepass::config::{
     CompressionConfig, DatabaseVersion, InnerCipherConfig, KdfConfig, OuterCipherConfig,
 };
-use keepass::db::{EntryId, GroupId, History, Times, fields};
+use keepass::db::{CustomDataItem, CustomDataValue, EntryId, GroupId, History, Times, fields};
 use keepass::{Database, DatabaseKey};
 use uuid::Uuid;
 use zeroize::Zeroizing;
@@ -33,6 +33,9 @@ pub const RECYCLE_BIN: &str = "Recycle Bin";
 pub const HISTORY_MAX_ITEMS: usize = 10;
 /// The recycle bin's icon in KeePass's built-in set.
 const RECYCLE_BIN_ICON: usize = 43;
+/// Meta custom data naming the machine that wrote a copy (ewe-sync's "last
+/// saved by"); merge keeps the newer stamp.
+pub const SAVED_BY_KEY: &str = "ewe.saved-by";
 
 #[derive(Debug)]
 pub enum Error {
@@ -171,6 +174,43 @@ impl Safe {
 
     pub fn guard(&self) -> &Report {
         &self.guard
+    }
+
+    /// The machine that last saved this copy, if one stamped it.
+    pub fn saved_by(&self) -> Option<String> {
+        self.db
+            .meta
+            .custom_data
+            .get(SAVED_BY_KEY)
+            .and_then(|i| i.value.as_ref())
+            .map(item::custom_text)
+    }
+
+    /// Stamp this machine as the copy's writer, before a save.
+    pub fn set_saved_by(&mut self, machine: &str) {
+        self.db.meta.custom_data.insert(
+            SAVED_BY_KEY.to_string(),
+            CustomDataItem {
+                value: Some(CustomDataValue::String(machine.to_string())),
+                last_modification_time: Some(Times::now()),
+            },
+        );
+    }
+
+    /// The newest change this copy knows of: an item or folder changed or
+    /// moved, or a deletion recorded. A copy whose newest change is older
+    /// than one already seen is a rollback (PLAN.md §7).
+    pub fn newest_change(&self) -> Option<chrono::NaiveDateTime> {
+        let entries = self
+            .db
+            .iter_all_entries()
+            .flat_map(|e| [e.times.last_modification, e.times.location_changed]);
+        let groups = self
+            .db
+            .iter_all_groups()
+            .flat_map(|g| [g.times.last_modification, g.times.location_changed]);
+        let deletions = self.db.deleted_objects.values().copied();
+        entries.chain(groups).chain(deletions).flatten().max()
     }
 
     pub fn writable(&self) -> Result<(), Error> {
@@ -553,6 +593,38 @@ mod tests {
             websites: vec![format!("https://{}.example", title.to_lowercase())],
             ..Draft::default()
         }
+    }
+
+    #[test]
+    fn the_saved_by_stamp_survives_a_write_even_when_it_looks_like_base64() {
+        // "emoh" is valid base64: keepass-rs reads such custom data back as
+        // bytes (SPIKE-0 F6)
+        for name in ["emoh", "laptop"] {
+            let mut s = Safe::create("Sam's safe", cheap());
+            assert_eq!(s.saved_by(), None);
+            s.set_saved_by(name);
+            let back = Safe::open(&s.to_bytes(&pw()).expect("write"), &pw()).expect("open");
+            assert_eq!(back.saved_by().as_deref(), Some(name));
+        }
+    }
+
+    #[test]
+    fn newest_change_counts_items_and_deletions() {
+        let mut s = Safe::create("Sam's safe", cheap());
+        let id = s.add(&login("Bank", "pw")).expect("add");
+        let added = s.newest_change().expect("a time");
+        s.trash(&id).expect("trash");
+        s.purge(&id).expect("purge");
+        let deleted_at = s
+            .database()
+            .deleted_objects
+            .values()
+            .flatten()
+            .max()
+            .copied();
+        assert!(deleted_at.is_some(), "the purge was recorded");
+        assert!(s.newest_change() >= deleted_at);
+        assert!(s.newest_change() >= Some(added));
     }
 
     #[test]

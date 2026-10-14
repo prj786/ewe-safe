@@ -33,6 +33,13 @@ The reference the daemon is built against. The decisions are in PLAN.md
 Everything else in an entry (custom fields, attachments, icons, colours,
 auto-type) is left as it was.
 
+**The file itself:** Meta custom data `ewe.saved-by` names the machine that
+wrote the copy (set before every save by the sync engine, read for
+ewe-sync's "last saved by"; the merge keeps the newer stamp). Read it with
+`Safe::saved_by`, which survives F6. `Safe::newest_change` (items and
+folders changed or moved, recorded deletions) is what the rollback check
+compares (docs/PLACES.md).
+
 ## History
 
 - **Oldest first**, as KeePass files list it. keepass-rs puts a tracked
