@@ -346,6 +346,11 @@ fn a_safe_on_this_computer_from_init_to_restart() {
         &format!("{DISCORD_PW}\n"),
     );
     assert_eq!(a["ok"], true, "{a}");
+    let new_id = a["item_id"]
+        .as_str()
+        .expect("add answers item_id")
+        .to_string();
+    assert_eq!(s.ok(&["show", &new_id])["item"]["title"], "Discord");
     let n = s.cli_in(
         &[
             "add",
