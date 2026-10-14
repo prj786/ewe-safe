@@ -377,7 +377,9 @@ fn add(d: &Arc<Daemon>, a: &mut Args) -> Result<Value, Fail> {
     }
     let folder = s(a, "folder").unwrap_or("").to_string();
     let (id, sync) = d.mutate(|safe| Ok((safe.add_in(&draft, &folder)?, true)))?;
-    Ok(json!({"id": id, "sync": sync}))
+    // `id` is the socket's own request id (server.rs puts it on every
+    // reply), so the new item's id travels as `item_id`
+    Ok(json!({"item_id": id, "sync": sync}))
 }
 
 fn add_unique(to: &mut Vec<String>, more: Vec<String>) -> bool {
