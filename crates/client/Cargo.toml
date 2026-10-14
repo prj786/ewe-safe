@@ -1,0 +1,15 @@
+[package]
+name = "safe-client"
+description = "ewe-safe's client: docs/PROTOCOL.md v1 over the daemon's socket"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lib]
+name = "safe_client"
+
+[dependencies]
+serde_json = "1"
+libc = "0.2"
+zeroize = "1"

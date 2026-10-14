@@ -1,0 +1,35 @@
+[package]
+name = "ewe-safe-app"
+version = "0.1.0-alpha"
+description = "Safe, ewe's password manager: the window"
+authors = ["scubba"]
+license = "MIT"
+edition = "2024"
+rust-version = "1.90"
+
+# Its own Cargo project, outside the root workspace (which excludes app/):
+# Tauri links webkit2gtk even to type-check, and the daemon, the CLI and
+# their tests must build without it.
+[workspace]
+
+[lib]
+name = "ewe_safe_app"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-single-instance = "2"
+serde_json = "1"
+zeroize = "1"
+# docs/PROTOCOL.md v1, the same client the CLI uses
+safe-client = { path = "../../crates/client" }
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true
+panic = "abort"
