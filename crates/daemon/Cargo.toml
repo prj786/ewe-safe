@@ -1,0 +1,15 @@
+[package]
+name = "ewe-safed"
+description = "ewe-safe's daemon: holds the unlocked safe, locks it, syncs it"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "ewe-safed"
+path = "src/main.rs"
+
+[dependencies]
+safe-core.workspace = true
+safe-store.workspace = true

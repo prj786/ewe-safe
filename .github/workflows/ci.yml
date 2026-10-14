@@ -1,0 +1,29 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # quick-xml's overlapped-lists makes keepass-rs read protected values out
+      # of order: every password decrypts to garbage and is saved that way
+      # (docs/SPIKE-0.md, F2). No crate in the tree may switch it on.
+      - run: "! cargo tree -e features -i quick-xml | grep -q overlapped-lists"
+      - run: cargo fmt --all --check
+      - run: cargo clippy --all-targets --locked -- -D warnings
+      # the fidelity corpus (other projects' test files, never committed)
+      - run: pip install pykeepass
+      - run: tests/corpus/fetch.sh
+      - run: cargo test --locked
+      - run: cargo build --locked
+      # the go/no-go gate: files other KeePass apps wrote survive our save
+      - run: tests/fidelity/run.sh

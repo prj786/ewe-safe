@@ -1,0 +1,7 @@
+/target
+__pycache__/
+# downloaded by tests/corpus/fetch.sh — third-party files, never committed
+/tests/corpus/files/
+/tests/corpus/.src/
+# fidelity harness output
+/tests/fidelity/out/

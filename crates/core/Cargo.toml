@@ -1,0 +1,47 @@
+[package]
+name = "safe-core"
+description = "ewe-safe's core: the KDBX file, the item model, search, the generator, merge"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lib]
+name = "safe_core"
+
+[dependencies]
+keepass.workspace = true
+# keepass-rs's own XML reader, used here only to scan; never enable its
+# `overlapped-lists` feature (docs/SPIKE-0.md, F2)
+quick-xml = "0.42"
+rust-argon2 = "3"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+uuid = "1"
+getrandom = "0.4"
+zeroize = "1"
+# already in keepass-rs's tree: Safe computes one-time codes itself
+# (keepass-rs defaults to 8 digits and needs padded secrets, SPIKE-0 F7)
+totp-lite = "2"
+url = "2"
+base32 = "0.5"
+# keepass-rs's custom-data rule, matched exactly (SPIKE-0 F6)
+base64 = "0.23"
+# merge's tie-break: both machines must pick the same version (already in
+# keepass-rs's tree)
+sha2 = "0.11"
+
+[dev-dependencies]
+serde_json = "1"
+
+# the phase-0 harness lives with the corpus (tests/fidelity)
+[[example]]
+name = "fidelity-roundtrip"
+path = "../../tests/fidelity/roundtrip.rs"
+
+[[example]]
+name = "merge-spike"
+path = "../../tests/fidelity/merge_spike.rs"
+
+[[example]]
+name = "kdf-timing"
+path = "../../tests/fidelity/kdf_timing.rs"

@@ -1,0 +1,288 @@
+{
+  "_comment": "KDBX files other apps wrote, with their published test credentials. fetch.sh downloads them into files/ (gitignored: third-party test data, some GPL, never vendored here). synth_rich.kdbx is built by tests/fidelity/make_synthetic.py. `expect` lists known findings (docs/SPIKE-0.md): run.py fails only on anything else.",
+  "sources": {
+    "keepass-rs": {
+      "repo": "https://github.com/sseemayer/keepass-rs",
+      "commit": "28c078cfc8246357c81108fec72f1395448d3bbd",
+      "dir": "tests/resources",
+      "licence": "MIT"
+    },
+    "keepassxc": {
+      "repo": "https://github.com/keepassxreboot/keepassxc",
+      "commit": "52e2743b3a77a9e2bb1dba7a9ff6440238df36d2",
+      "dir": "tests/data",
+      "licence": "GPL-2.0/3.0"
+    },
+    "kdbxweb": {
+      "repo": "https://github.com/keeweb/kdbxweb",
+      "commit": "7601e45d2a437f35a7fa3d767164eab60bc05d42",
+      "dir": "resources",
+      "licence": "MIT"
+    },
+    "pykeepass": {
+      "repo": "https://github.com/libkeepass/pykeepass",
+      "commit": "aec256659e7b2b497a37891476241b720f60c84e",
+      "dir": "tests",
+      "licence": "GPL-3.0"
+    }
+  },
+  "files": [
+    {
+      "source": "keepass-rs",
+      "file": "test_db_kdbx41_features.kdbx",
+      "password": "demopass",
+      "note": "KeePassXC 2.7.12, KDBX 4.1: tags, PreviousParentGroup, QualityCheck"
+    },
+    {
+      "source": "keepass-rs",
+      "file": "test_db_kdbx41_with_password_aes.kdbx",
+      "password": "demopass"
+    },
+    {
+      "source": "keepass-rs",
+      "file": "test_db_kdbx4_with_password_argon2id.kdbx",
+      "password": "demopass"
+    },
+    {
+      "source": "keepass-rs",
+      "file": "test_db_kdbx4_with_password_argon2id_chacha20.kdbx",
+      "password": "demopass"
+    },
+    {
+      "source": "keepass-rs",
+      "file": "test_db_kdbx4_with_password_argon2_twofish.kdbx",
+      "password": "demopass"
+    },
+    {
+      "source": "keepass-rs",
+      "file": "test_db_kdbx4_with_password_deleted_entry.kdbx",
+      "password": "demopass",
+      "note": "DeletedObjects"
+    },
+    {
+      "source": "keepass-rs",
+      "file": "test_db_kdbx4_with_totp_entry.kdbx",
+      "password": "test",
+      "note": "otp field"
+    },
+    {
+      "source": "keepass-rs",
+      "file": "test_db_kdbx4_with_keyfile_v2.kdbx",
+      "password": "demopass",
+      "keyfile": "test_db_kdbx4_with_keyfile_v2.keyx"
+    },
+    {
+      "source": "keepass-rs",
+      "file": "test_db_kdbx3_with_attachments.kdbx",
+      "password": "demopass"
+    },
+    {
+      "source": "keepass-rs",
+      "file": "test_db_with_password.kdbx",
+      "password": "demopass"
+    },
+    {
+      "source": "keepass-rs",
+      "file": "test_db_kdb3_with_file_larger_1mb.kdbx",
+      "password": "demopass",
+      "note": "1 MB attachment"
+    },
+    {
+      "source": "keepassxc",
+      "file": "Format400.kdbx",
+      "password": "t"
+    },
+    {
+      "source": "keepassxc",
+      "file": "NewDatabaseBrowser.kdbx",
+      "password": "a",
+      "note": "browser-integration custom data"
+    },
+    {
+      "source": "keepassxc",
+      "file": "KeyFileProtected.kdbx",
+      "password": "a",
+      "keyfile": "KeyFileProtected.key"
+    },
+    {
+      "source": "keepassxc",
+      "file": "NewDatabase.kdbx",
+      "password": "a"
+    },
+    {
+      "source": "keepassxc",
+      "file": "NewDatabaseMulti.kdbx",
+      "password": "a"
+    },
+    {
+      "source": "keepassxc",
+      "file": "RecycleBinWithData.kdbx",
+      "password": "123",
+      "note": "recycle bin"
+    },
+    {
+      "source": "keepassxc",
+      "file": "ProtectedStrings.kdbx",
+      "password": "masterpw"
+    },
+    {
+      "source": "keepassxc",
+      "file": "NonAscii.kdbx",
+      "password": "Δöض"
+    },
+    {
+      "source": "keepassxc",
+      "file": "Compressed.kdbx",
+      "password": ""
+    },
+    {
+      "source": "keepassxc",
+      "file": "SyncDatabase.kdbx",
+      "password": "a"
+    },
+    {
+      "source": "kdbxweb",
+      "file": "KDBX4.1.kdbx",
+      "password": "test",
+      "note": "KeePass 2.x, KDBX 4.1"
+    },
+    {
+      "source": "kdbxweb",
+      "file": "Argon2.kdbx",
+      "password": "demo",
+      "keyfile": "demo.key"
+    },
+    {
+      "source": "kdbxweb",
+      "file": "Argon2id.kdbx",
+      "password": "demo",
+      "keyfile": "demo.key"
+    },
+    {
+      "source": "kdbxweb",
+      "file": "Argon2ChaCha.kdbx",
+      "password": "demo",
+      "keyfile": "demo.key"
+    },
+    {
+      "source": "kdbxweb",
+      "file": "demo.kdbx",
+      "password": "demo",
+      "keyfile": "demo.key"
+    },
+    {
+      "source": "kdbxweb",
+      "file": "cyrillic.kdbx",
+      "password": "пароль"
+    },
+    {
+      "source": "pykeepass",
+      "file": "test4.kdbx",
+      "password": "password",
+      "keyfile": "test4.key",
+      "note": "KeePass 2.x, rich: attachments, history, icons"
+    },
+    {
+      "source": "pykeepass",
+      "file": "test4_twofish_uncompressed.kdbx",
+      "password": "password"
+    },
+    {
+      "source": "pykeepass",
+      "file": "extra_content.kdbx",
+      "password": "password"
+    },
+    {
+      "source": "synthetic",
+      "file": "synth_rich.kdbx",
+      "password": "demopass",
+      "note": "test_db_kdbx41_features + passkeys, otp, KP2A URLs, shared attachments, history, custom icon (+ fallback IconID), custom data, colours, auto-type, expiry, recycle bin, deleted objects",
+      "expect": {
+        "lost": [
+          "/IconID[0] = 12"
+        ],
+        "added": [
+          "/IsExpanded[0] = false"
+        ]
+      }
+    },
+    {
+      "source": "synthetic",
+      "file": "synth_unknown_meta.kdbx",
+      "password": "demopass",
+      "note": "synth_rich + one unknown element in Meta",
+      "expect": {
+        "lost": [
+          "/IconID[0] = 12",
+          "FutureMetaElement"
+        ],
+        "added": [
+          "/IsExpanded[0] = false"
+        ]
+      }
+    },
+    {
+      "source": "synthetic",
+      "file": "synth_unknown_group.kdbx",
+      "password": "demopass",
+      "note": "synth_rich + one unknown element in Group",
+      "expect": {
+        "open_fails": "unknown variant `FutureGroupElement`"
+      }
+    },
+    {
+      "source": "synthetic",
+      "file": "synth_unknown_entry.kdbx",
+      "password": "demopass",
+      "note": "synth_rich + one unknown element in Entry",
+      "expect": {
+        "lost": [
+          "/IconID[0] = 12",
+          "FutureEntryElement"
+        ],
+        "added": [
+          "/IsExpanded[0] = false"
+        ]
+      }
+    },
+    {
+      "source": "synthetic",
+      "file": "synth_unknown_root.kdbx",
+      "password": "demopass",
+      "note": "synth_rich + one unknown element in Root",
+      "expect": {
+        "lost": [
+          "/IconID[0] = 12",
+          "FutureRootElement"
+        ],
+        "added": [
+          "/IsExpanded[0] = false"
+        ]
+      }
+    },
+    {
+      "source": "synthetic",
+      "file": "synth_unknown_attr.kdbx",
+      "password": "demopass",
+      "note": "synth_rich + one unknown attribute on a Value",
+      "expect": {
+        "lost": [
+          "/IconID[0] = 12",
+          "@FutureAttribute"
+        ],
+        "added": [
+          "/IsExpanded[0] = false"
+        ]
+      }
+    },
+    {
+      "source": "synthetic",
+      "file": "synth_unknown_interleaved.kdbx",
+      "password": "demopass",
+      "note": "synth_rich in pykeepass's own order: an entry's String fields not contiguous",
+      "expect": {
+        "open_fails": "duplicate field `String`"
+      }
+    }
+  ]
+}

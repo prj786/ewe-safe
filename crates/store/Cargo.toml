@@ -1,0 +1,13 @@
+[package]
+name = "safe-store"
+description = "ewe-safe's places: where the file lives and each place's conflict guard"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lib]
+name = "safe_store"
+
+[dependencies]
+safe-core.workspace = true
