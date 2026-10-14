@@ -10,7 +10,7 @@ they don't know. Renaming or removing a verb or a field means `"v": 2`.
 ## The CLI
 
 `ewe-safe <verb> [args]` prints **one JSON object** on stdout and **exits 0**
-(house rule 5). Two documented exceptions:
+(house rule 5). Three documented exceptions (`watch` streams lines, below):
 
 - **`reveal` without `--json`** prints the bare value and a newline, and exits 0.
   If there's no value (locked, not found, …) it prints nothing and exits 1,
@@ -128,6 +128,8 @@ protected custom field are.
 | `sync` | | `sync` — a nudge; never fails because the place is offline (that's a state) |
 | `place` | | `place`, `sync`, `probe` (`{guarded, checked_at}`) |
 | `passwd` | new password twice on tty/stdin (current one first if locked) | `sync`. Needs the place: the other machines' changes come in under the old password first (`place-error` while offline) |
+| `import` | `<format> <file> [--dry-run] [--folder F] [--skip-duplicates]` — formats: `1pux` (1Password's export), `1password-csv`, `op` (live from the 1Password app through its `op` CLI; `<file>` is omitted, `--vault V` picks vaults, default all); more formats later (Bitwarden, browsers, KeePass, pass) | `report`: `{logins, notes, attachments, otps, duplicates, skipped: [{title, reason}], folders}` and, without `--dry-run`, `sync`. One save for the whole import (one merge, one upload). Duplicate = same website host + username as an item already in the safe; kept unless `--skip-duplicates`. Items 1Password calls Credit Card, Identity, Bank Account, … become **Notes** whose text lists their fields; their secret fields are also kept as protected custom fields. 1Password's trash is skipped, its archive goes to the folder `Archive`. The file is a plaintext export: the reply's `hint` says to delete it. Over the socket the daemon reads the file itself (same uid); `op` runs as argv from the daemon |
+| `watch` | | **CLI only, a stream:** one JSON line per socket event (the `subscribe` stream of the section below), starting with the current `status`, until killed; exits 0 when the daemon goes away after printing `{"event": "daemon-gone"}`. For shells and scripts that can't hold a socket (the desktop plugin's bridge) |
 | `ping` | | `pong: true` |
 | `version` | | `version`, `protocol: 1` |
 

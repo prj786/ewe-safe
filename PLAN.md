@@ -501,7 +501,8 @@ use it here."*
 | **ewe-plugin-passwords** | provider `ewe` (first under `auto`), locked state + unlock, pins as tags, `Ctrl+L` lock; manifest 1.2.0 adds the choice | 1 |
 | **ewe-sync** | *This machine* gets a Safe row (place, state, last saved by); *Sync now* also runs `ewe-safe sync`; signing out warns when the safe lives in the account | 3 |
 | **komble-arch** | Safe in the curated Popular list | 2 |
-| **ewe-browser** | fill-on-click + save prompt over the socket | 6 |
+| **ewe-browser** | fill-on-click + save prompt over the socket (moved up: the 1Password move) | 2+ |
+| **ewe-plugin-safe** (new) | the desktop plugin `ewe.safe`: bar glyph, Quick Access, Quick settings tile | 2+ |
 | **ewe-companion** | RFC-007 P8: read `summary` + events; health nudges ("3 reused passwords"); canary test | 6 |
 | **ewe-repo** | package `ewe-safe` (daemon, CLI, app, units, polkit policy) | 2 |
 | **prj786.github.io** | `/docs/safe/`, `/docs/cli/ewe-safe/`, *Your safe on your phone* | 2–3 |
@@ -583,6 +584,38 @@ release stops at the ewe-repo publish; there's no ISO unless asked.
   - a fresh user who never opens a terminal creates a safe in Nextcloud, adds three logins, fills one with `Super+P`, sees the safe lock with the screen and unlocks it with the login password or a fingerprint;
   - on a second machine: restore `ewe.conf`, then *Open your safe*, type the master password, and everything is there;
   - a phone edit merges back.
+
+### Phase 2+: the 1Password move (owner, 2026-10-14)
+
+The owner wants to leave 1Password, so four things move up and ship together
+with phase 2, as one release wave:
+
+- [ ] **Import from 1Password first** (from phase 4): `.1pux`, 1Password CSV,
+      and **live from the 1Password app through `op`** (the owner already has
+      the CLI integration on for `Super+P`). `ewe-safe import`, plus the
+      window's Import screen. PROTOCOL.md `import`.
+- [ ] **ewe browser** (from phase 6), **built in, not a store extension**:
+      ewe browser is first-party, so its main process talks to `ewe-safed`
+      and fills the page's own fields (no virtual keyboard). A Safe key icon
+      in login fields with the matching logins (strict site match), fill on
+      click only, never on page load; "Save to Safe?" / "Update the password?"
+      after a sign-in; a strong password offered in new-password fields;
+      one-time codes; locked → "Unlock Safe". Ctrl+Shift+L keeps working. A
+      standard extension for other browsers stays parked (§18).
+- [ ] **A desktop plugin, `ewe.safe`** (new repo `prj786/ewe-plugin-safe`,
+      plugin API 3, opt-in like every plugin): a bar glyph (locked /
+      unlocked, a dot when sync needs attention), **Quick Access** (search
+      every item, copy username / password / one-time code, open in Safe,
+      lock), a Quick settings tile (lock / unlock). It never takes the master
+      password (S4) and never shows a password; copies go through the
+      daemon (`ewe-safe copy`), events through `ewe-safe watch`.
+      `ewe.passwords` stays the fill picker for every provider.
+- [ ] **The window** (the mockup, signed off) with an unlock-only mode that
+      replaces the kitty prompt, and **the package** (PKGBUILD, release
+      workflow, ewe-repo, Komble) so it installs with pacman.
+- **Gate:** the owner imports their real 1Password data on this machine
+  (counts match), fills a site in ewe browser and an app with `Super+P`,
+  and uses Quick Access — all from the package.
 
 ### Phase 3: more self-hosted places
 
