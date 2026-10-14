@@ -887,5 +887,9 @@ fn an_unused_safe_locks_itself() {
     wait_until("the idle lock", Duration::from_secs(8), || {
         s.ok(&["status"])["locked"] == true
     });
-    assert!(s.daemon_log().contains("locked (idle)"));
+    // the daemon drops the key first and logs after clearing the clipboard,
+    // so on a slow runner the line can trail the status by a moment
+    wait_until("the idle lock in the log", Duration::from_secs(5), || {
+        s.daemon_log().contains("locked (idle)")
+    });
 }
