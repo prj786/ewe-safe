@@ -15,11 +15,20 @@
 //!   username or a value); `safe-daemon` says whether the daemon can be
 //!   reached, on every change.
 
+//! - Launch: `ewe-safe-app` opens the window (one instance; a second
+//!   launch hands its arguments to it as `safe-args`); `--show <id>`,
+//!   `--new` and `--import` open those views; `--unlock` is a separate,
+//!   compact process that only unlocks (app_id `ewe-safe-unlock`, which
+//!   ewe's hyprland.lua floats at 560×200) and exits once the safe is open.
+
+mod tools;
+
 use std::sync::Mutex;
 use std::time::Duration;
 
 use serde_json::{Map, Value, json};
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri_plugin_dialog::DialogExt;
 use zeroize::Zeroize;
 
 /// The keys each verb may send (PROTOCOL.md); anything else from the page
@@ -256,6 +265,162 @@ async fn passwd(password: Option<String>, new_password: String) -> Value {
     call("passwd", a).await
 }
 
+/// `import` (PROTOCOL.md): a file the daemon reads itself (same uid), or
+/// `op` (the 1Password app's CLI) with no file. It can take minutes.
+#[tauri::command]
+async fn import_items(
+    format: String,
+    file: Option<String>,
+    dry_run: Option<bool>,
+    folder: Option<String>,
+    skip_duplicates: Option<bool>,
+    vault: Option<String>,
+) -> Value {
+    let a = with(&[
+        ("format", Some(Value::from(format))),
+        ("file", file.map(Value::from)),
+        ("dry_run", dry_run.map(Value::from)),
+        ("folder", folder.map(Value::from)),
+        ("skip_duplicates", skip_duplicates.map(Value::from)),
+        ("vault", vault.map(Value::from)),
+    ]);
+    tauri::async_runtime::spawn_blocking(move || {
+        safe_client::call("import", Value::Object(a), safe_client::SLOW)
+    })
+    .await
+    .unwrap_or_else(|_| json!({"ok": false, "error": "internal", "message": "The import failed."}))
+}
+
+/// What this process was started with (see the module notes).
+#[derive(Clone, Debug, Default, PartialEq)]
+struct Launch {
+    unlock: bool,
+    show: Option<String>,
+    new: bool,
+    import: bool,
+}
+
+impl Launch {
+    fn parse<I: IntoIterator<Item = String>>(args: I) -> Launch {
+        let mut l = Launch::default();
+        let mut it = args.into_iter().skip(1);
+        while let Some(a) = it.next() {
+            match a.as_str() {
+                "--unlock" => l.unlock = true,
+                "--new" => l.new = true,
+                "--import" => l.import = true,
+                "--show" => l.show = it.next().filter(|id| id.len() <= 64),
+                _ => {}
+            }
+        }
+        l
+    }
+
+    fn json(&self) -> Value {
+        json!({
+            "mode": if self.unlock { "unlock" } else { "main" },
+            "show": self.show,
+            "new": self.new,
+            "import": self.import,
+        })
+    }
+}
+
+#[tauri::command]
+fn launch_args(l: tauri::State<'_, Launch>) -> Value {
+    l.json()
+}
+
+#[tauri::command]
+async fn theme_tokens() -> Value {
+    blocking(tools::theme_tokens).await
+}
+
+#[tauri::command]
+async fn theme_key() -> Value {
+    blocking(|| Value::from(tools::theme_key())).await
+}
+
+#[tauri::command]
+async fn settings_get() -> Value {
+    blocking(tools::settings_get).await
+}
+
+#[tauri::command]
+async fn settings_set(key: String, value: Value) -> Value {
+    blocking(move || tools::settings_set(&key, &value)).await
+}
+
+#[tauri::command]
+async fn cloud_status() -> Value {
+    blocking(tools::cloud_status).await
+}
+
+#[tauri::command]
+async fn window_classes() -> Value {
+    blocking(tools::window_classes).await
+}
+
+#[tauri::command]
+async fn open_url(url: String) -> Value {
+    blocking(move || tools::open_url(&url)).await
+}
+
+#[tauri::command]
+async fn open_ewe_sync() -> Value {
+    blocking(tools::open_ewe_sync).await
+}
+
+/// A file picker (the desktop portal): a 1Password export, a CSV, a .kdbx.
+/// `kind` picks the filter; the path, or null when cancelled.
+#[tauri::command]
+async fn pick_file(app: AppHandle, kind: String) -> Value {
+    let (name, exts): (&str, &[&str]) = match kind.as_str() {
+        "1pux" => ("1Password export", &["1pux"]),
+        "csv" => ("CSV file", &["csv"]),
+        "kdbx" => ("KeePass file", &["kdbx"]),
+        _ => return json!({"ok": false, "error": "bad-request", "message": "Unknown file kind."}),
+    };
+    let picked = tauri::async_runtime::spawn_blocking(move || {
+        app.dialog()
+            .file()
+            .add_filter(name, exts)
+            .blocking_pick_file()
+    })
+    .await
+    .ok()
+    .flatten()
+    .and_then(|p| p.into_path().ok());
+    match picked {
+        Some(p) => json!({"ok": true, "path": p.to_string_lossy()}),
+        None => json!({"ok": true, "path": null}),
+    }
+}
+
+/// Print the page (the Emergency Kit); the page's print styles show only
+/// the kit.
+#[tauri::command]
+fn print_page(window: tauri::WebviewWindow) -> Value {
+    match window.print() {
+        Ok(()) => json!({"ok": true}),
+        Err(e) => json!({"ok": false, "error": "failed", "message": e.to_string()}),
+    }
+}
+
+/// The unlock-only window is done (the safe is open, or the user gave up).
+#[tauri::command]
+fn quit_app(app: AppHandle, code: i32) {
+    app.exit(code);
+}
+
+async fn blocking<F: FnOnce() -> Value + Send + 'static>(f: F) -> Value {
+    tauri::async_runtime::spawn_blocking(f)
+        .await
+        .unwrap_or_else(
+            |_| json!({"ok": false, "error": "internal", "message": "The call failed."}),
+        )
+}
+
 /// The last thing the event stream said about the daemon, for a page that
 /// loads after the first `safe-daemon` event was sent.
 #[tauri::command]
@@ -316,16 +481,51 @@ fn forward_events(app: AppHandle) {
 }
 
 pub fn run() {
-    tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            // a second launch (the launcher, the picker) brings the window back
+    let launch = Launch::parse(std::env::args());
+    // The Wayland app_id is GTK's program name, set before GTK starts:
+    // `ewe-safe` (ewe-safe.desktop) for the window, `ewe-safe-unlock` for
+    // the compact prompt (hyprland.lua floats that class at 560×200).
+    gtk::glib::set_prgname(Some(if launch.unlock {
+        "ewe-safe-unlock"
+    } else {
+        "ewe-safe"
+    }));
+
+    let mut builder = tauri::Builder::default();
+    if !launch.unlock {
+        // one window: a second launch (the launcher, the picker, the plugin)
+        // brings it back and hands over what it was asked to show
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
             if let Some(w) = app.get_webview_window("main") {
+                let _ = w.unminimize();
                 let _ = w.show();
                 let _ = w.set_focus();
             }
-        }))
+            let _ = app.emit("safe-args", Launch::parse(args).json());
+        }));
+    }
+    let unlock_only = launch.unlock;
+    builder
+        .plugin(tauri_plugin_dialog::init())
         .manage(Daemon::default())
-        .setup(|app| {
+        .manage(launch)
+        .setup(move |app| {
+            let w = if unlock_only {
+                WebviewWindowBuilder::new(app, "unlock", WebviewUrl::App("index.html".into()))
+                    .title("Unlock Safe")
+                    .inner_size(560.0, 200.0)
+                    .resizable(false)
+                    .decorations(false)
+                    .center()
+            } else {
+                WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
+                    .title("Safe")
+                    .inner_size(1040.0, 680.0)
+                    .min_inner_size(760.0, 520.0)
+                    .decorations(false)
+                    .center()
+            };
+            w.build()?;
             let handle = app.handle().clone();
             std::thread::Builder::new()
                 .name("safe-events".into())
@@ -333,6 +533,19 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            import_items,
+            launch_args,
+            theme_tokens,
+            theme_key,
+            settings_get,
+            settings_set,
+            cloud_status,
+            window_classes,
+            open_url,
+            open_ewe_sync,
+            pick_file,
+            print_page,
+            quit_app,
             status,
             summary,
             ping,
@@ -382,6 +595,22 @@ mod tests {
     fn with_leaves_out_what_is_missing() {
         let a = with(&[("kind", Some(Value::from("login"))), ("tag", None)]);
         assert_eq!(Value::Object(a), json!({"kind": "login"}));
+    }
+
+    #[test]
+    fn launch_reads_the_window_arguments() {
+        let p = |a: &[&str]| Launch::parse(a.iter().map(|s| s.to_string()));
+        assert_eq!(p(&["ewe-safe-app"]), Launch::default());
+        assert!(p(&["ewe-safe-app", "--unlock"]).unlock);
+        assert_eq!(
+            p(&["ewe-safe-app", "--show", "4f9c0d1e"]).show.as_deref(),
+            Some("4f9c0d1e")
+        );
+        assert!(p(&["ewe-safe-app", "--new"]).new);
+        assert!(p(&["ewe-safe-app", "--import"]).import);
+        // an over-long id is not an id
+        assert_eq!(p(&["ewe-safe-app", "--show", &"x".repeat(65)]).show, None);
+        assert_eq!(p(&["ewe-safe-app", "--unlock"]).json()["mode"], "unlock");
     }
 
     #[test]

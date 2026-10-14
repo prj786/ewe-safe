@@ -1,0 +1,21 @@
+# Safe's daemon is socket-activated: enable the socket for every user once,
+# so the first `ewe-safe` call, the Super+P picker or the window starts it.
+# Nothing is started here (a package install runs as root, outside any
+# session); a running session picks it up at the next login, or now with
+# `systemctl --user start ewe-safe.socket`.
+
+post_install() {
+  systemctl --global enable ewe-safe.socket >/dev/null 2>&1 || true
+  echo ":: Safe is installed. Open it from the launcher, or start its service"
+  echo "   in this session now: systemctl --user start ewe-safe.socket"
+}
+
+post_upgrade() {
+  systemctl --global enable ewe-safe.socket >/dev/null 2>&1 || true
+  echo ":: Restart Safe's service to use the new version (this locks the safe):"
+  echo "   systemctl --user restart ewe-safe.service"
+}
+
+pre_remove() {
+  systemctl --global disable ewe-safe.socket >/dev/null 2>&1 || true
+}

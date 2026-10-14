@@ -67,5 +67,26 @@ export const api = {
     invoke("generate", { length, words, noSymbols, noDigits }),
   sync: () => invoke("sync"),
   place: () => invoke("place"),
-  passwd: (password, newPassword) => invoke("passwd", { password, newPassword })
+  passwd: (password, newPassword) => invoke("passwd", { password, newPassword }),
+  // format: "1pux" | "1password-csv" | "op"; file: a path (none for op)
+  importItems: ({ format, file, dryRun, folder, skipDuplicates, vault }) =>
+    invoke("import_items", { format, file, dryRun, folder, skipDuplicates, vault }),
+
+  // the window and the desktop around it (not the daemon)
+  launchArgs: () => invoke("launch_args"),
+  themeTokens: () => invoke("theme_tokens"),
+  themeKey: () => invoke("theme_key"),
+  settingsGet: () => invoke("settings_get"),
+  settingsSet: (key, value) => invoke("settings_set", { key, value }),
+  cloudStatus: () => invoke("cloud_status"),
+  windowClasses: () => invoke("window_classes"),
+  openUrl: (url) => invoke("open_url", { url }),
+  openEweSync: () => invoke("open_ewe_sync"),
+  pickFile: (kind) => invoke("pick_file", { kind }),
+  print: () => {
+    if (inTauri()) return invoke("print_page");
+    window.print();
+    return Promise.resolve({ ok: true });
+  },
+  quit: (code = 0) => invoke("quit_app", { code })
 };

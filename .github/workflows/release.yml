@@ -1,0 +1,58 @@
+# Build the Arch package for every version tag and attach it to a GitHub
+# release; the [ewe] repository's publish workflow downloads that
+# .pkg.tar.zst (the same flow as ewe-sync, Komble and ewe-settings).
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    name: Build Arch package
+    runs-on: ubuntu-latest
+    container: archlinux:base-devel
+    steps:
+      - name: Install build dependencies
+        run: |
+          pacman -Syu --noconfirm --needed \
+            git nodejs npm rust openssl pkgconf github-cli \
+            webkit2gtk-4.1 gtk3 librsvg wl-clipboard
+
+      - name: Check out the tag
+        uses: actions/checkout@v4
+
+      - name: Build the package with makepkg
+        run: |
+          pkgver="${GITHUB_REF_NAME#v}"
+          # A tag may carry -alpha/-beta; an Arch pkgver may not hold a hyphen.
+          # 0.1.0-alpha -> 0.1.0alpha, the only spelling vercmp sorts BELOW
+          # the eventual 0.1.0.
+          pkgver="${pkgver//-/}"
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          # The versions go INTO the PKGBUILD, or makepkg builds whatever it
+          # was committed with and fetches a tag that doesn't exist.
+          sed -i "s/^_tag=.*/_tag=$GITHUB_REF_NAME/" PKGBUILD
+          sed -i "s/^pkgver=.*/pkgver=$pkgver/" PKGBUILD
+          grep -E '^(_tag|pkgver)=' PKGBUILD
+          # The source tarball IS this checkout: no network fetch, no checksum
+          # chicken-and-egg (makepkg uses a local file of the source's name).
+          git archive --format=tar.gz --prefix="ewe-safe-${GITHUB_REF_NAME#v}/" \
+            -o "ewe-safe-$pkgver.tar.gz" HEAD
+          useradd -m builder
+          chown -R builder: .
+          su builder -c "makepkg -d --noconfirm --skipchecksums"
+
+      - name: Attach the package to the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # a tag carrying -alpha/-beta is not "Latest"
+          pre=""; case "$GITHUB_REF_NAME" in *-alpha*|*-beta*) pre="--prerelease" ;; esac
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" $pre \
+            --title "$GITHUB_REF_NAME" --generate-notes *.pkg.tar.zst \
+          || gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+               --clobber *.pkg.tar.zst

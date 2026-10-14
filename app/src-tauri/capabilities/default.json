@@ -2,7 +2,10 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Capabilities for the Safe window",
-  "windows": ["main"],
+  "windows": [
+    "main",
+    "unlock"
+  ],
   "permissions": [
     "core:default",
     "core:event:default",
