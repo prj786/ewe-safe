@@ -18,7 +18,12 @@
   let input = $state();
 
   const place = $derived(safe.status?.place);
-  const where = $derived(place ? [placeLabel(place), place.location].filter(Boolean).join(" · ") : "");
+  // a This-computer safe's location is a full path: its file name says enough here
+  const where = $derived(
+    place
+      ? [placeLabel(place), place.kind === "local" ? place.location?.split("/").pop() : place.location].filter(Boolean).join(" · ")
+      : ""
+  );
   const minutes = $derived(Number(safe.settings.lock_after_minutes ?? 30));
   const methods = $derived(safe.status?.unlock_methods ?? ["password"]);
   const upgrade = $derived(safe.status?.upgrade_from);

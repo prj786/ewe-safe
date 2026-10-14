@@ -198,12 +198,24 @@ async fn copy(id: String, field: String, clear_after: Option<u64>) -> Value {
         ("field", Some(Value::from(field))),
         ("clear_after", clear_after.map(Value::from)),
         // the daemon runs wl-copy on the display this window is on
-        (
-            "wayland_display",
-            std::env::var("WAYLAND_DISPLAY").ok().map(Value::from),
-        ),
+        ("wayland_display", wayland_display().map(Value::from)),
     ]);
     call("copy", a).await
+}
+
+/// This window's Wayland display as an absolute socket path, so the daemon
+/// reaches it whatever its own runtime directory is.
+fn wayland_display() -> Option<String> {
+    let d = std::env::var("WAYLAND_DISPLAY")
+        .ok()
+        .filter(|d| !d.is_empty())?;
+    if d.starts_with('/') {
+        return Some(d);
+    }
+    match std::env::var("XDG_RUNTIME_DIR") {
+        Ok(r) if !r.is_empty() => Some(format!("{r}/{d}")),
+        _ => Some(d),
+    }
 }
 
 #[tauri::command]
