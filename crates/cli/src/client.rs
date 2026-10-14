@@ -11,7 +11,12 @@ use std::time::Duration;
 use serde_json::{Value, json};
 use zeroize::Zeroize;
 
+/// `$XDG_RUNTIME_DIR/ewe-safe.sock`; `EWE_SAFE_SOCKET` is a test switch (a
+/// sandboxed daemon, while the Wayland display stays the session's).
 pub fn socket() -> PathBuf {
+    if let Some(p) = std::env::var_os("EWE_SAFE_SOCKET").filter(|v| !v.is_empty()) {
+        return PathBuf::from(p);
+    }
     let dir = std::env::var_os("XDG_RUNTIME_DIR")
         .filter(|v| !v.is_empty())
         .map(PathBuf::from)

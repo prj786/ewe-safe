@@ -56,7 +56,8 @@ logind. Nothing touches the live keyring, ewe.conf or account. The daemon's
 test switches: `EWE_SAFE_KDF_ITERATIONS` (cheap keys),
 `EWE_SAFE_INSECURE_LOOPBACK=1` (plain http to 127.0.0.1),
 `EWE_SAFE_NO_LOGIND`, `EWE_SAFE_LOGIND_BUS`, `EWE_SAFE_IDLE_SECONDS`,
-`EWE_SAFE_SYNC_SECONDS`; the CLI's: `EWE_SAFE_ASK_CMD` (the unlock prompt).
+`EWE_SAFE_SYNC_SECONDS`; the CLI's: `EWE_SAFE_ASK_CMD` (the unlock prompt), `EWE_SAFE_SOCKET`
+(another socket than `$XDG_RUNTIME_DIR/ewe-safe.sock`).
 
 Never enable quick-xml's `overlapped-lists` feature anywhere in the tree: it
 corrupts every password keepass-rs reads (SPIKE-0, F2). CI checks for it.
