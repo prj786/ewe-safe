@@ -12,11 +12,14 @@
 //! - [`digest`]: what a safe holds, compared when a write is verified.
 //! - [`merge`]: two copies of one safe made one (PLAN.md §7). keepass-rs's
 //!   own merge loses data (SPIKE-0, M1/M2), so this one is Safe's.
+//! - [`import`]: another password manager's export (1Password: 1PUX, CSV,
+//!   `op`) turned into items (docs/IMPORT.md).
 
 pub mod atomic;
 pub mod digest;
 pub mod generator;
 pub mod guard;
+pub mod import;
 pub mod item;
 pub mod kdf;
 pub mod merge;

@@ -25,13 +25,16 @@ pub const FAST: Duration = Duration::from_secs(30);
 /// Verbs that derive a key or talk to the place (the place's own timeout is
 /// two minutes).
 pub const SLOW: Duration = Duration::from_secs(300);
+/// `import`: `op` asks the 1Password app for every item, one by one.
+pub const IMPORT: Duration = Duration::from_secs(1800);
 /// The arg keys that carry a secret (PROTOCOL.md, "The socket").
 pub const SECRET_KEYS: &[&str] = &["password", "new_password", "password_value", "notes"];
 
 /// How long a verb may take: a key derivation or a talk with the place
-/// gets [`SLOW`], everything else [`FAST`].
+/// gets [`SLOW`], an import [`IMPORT`], everything else [`FAST`].
 pub fn wait_for(verb: &str) -> Duration {
     match verb {
+        "import" => IMPORT,
         "init" | "open" | "unlock" | "passwd" | "add" | "edit" | "rm" | "restore" | "sync"
         | "place" => SLOW,
         _ => FAST,
@@ -299,5 +302,6 @@ mod tests {
         for v in ["status", "summary", "match", "list", "reveal", "copy"] {
             assert_eq!(wait_for(v), FAST, "{v}");
         }
+        assert_eq!(wait_for("import"), IMPORT);
     }
 }

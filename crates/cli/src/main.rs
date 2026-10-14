@@ -1,16 +1,17 @@
 //! `ewe-safe`: Safe's verbs, one JSON object each, exit 0 (house rule 5;
 //! docs/PROTOCOL.md). Secrets come from the terminal (no echo) or from
-//! stdin lines, never from the command line. Two exceptions to the JSON:
+//! stdin lines, never from the command line. Three exceptions to the JSON:
 //! `reveal` without `--json` prints the bare value (nothing and exit 1 when
-//! there is none), and `unlock --ask` opens a prompt window and waits.
+//! there is none), `unlock --ask` opens a prompt window and waits, and
+//! `watch` prints one line per event until the daemon goes away.
 
 use std::collections::HashSet;
-use std::io::{IsTerminal, Read};
+use std::io::{IsTerminal, Read, Write};
 use std::process::{Command, ExitCode, Stdio};
 use std::time::{Duration, Instant};
 
 use safe_client as client;
-use safe_client::{FAST, SLOW};
+use safe_client::{FAST, IMPORT, Next, SLOW};
 use safe_core::generator;
 use serde_json::{Map, Value, json};
 use zeroize::Zeroizing;
@@ -38,6 +39,8 @@ const VALUES: &[&str] = &[
     "clear-after",
     "remove-app",
     "remove-tag",
+    "vault",
+    "account",
 ];
 const FLAGS: &[&str] = &[
     "json",
@@ -50,17 +53,19 @@ const FLAGS: &[&str] = &[
     "clear-url",
     "password-stdin",
     "notes-stdin",
+    "dry-run",
+    "skip-duplicates",
 ];
 /// Read here, never sent.
 const LOCAL_FLAGS: &[&str] = &["json", "ask", "password-stdin", "notes-stdin"];
 const NUMBERS: &[&str] = &["length", "words", "limit", "clear-after"];
-/// Repeatable in `add` and `edit`.
-const LISTS: &[&str] = &["url", "app", "tag", "remove-app", "remove-tag"];
+/// Repeatable in `add` and `edit` (and `--vault` in `import`).
+const LISTS: &[&str] = &["url", "app", "tag", "remove-app", "remove-tag", "vault"];
 const WITH_ID: &[&str] = &["show", "reveal", "copy", "edit", "rm", "restore"];
 const VERBS: &[&str] = &[
     "status", "summary", "init", "open", "unlock", "lock", "list", "search", "match", "show",
     "reveal", "copy", "add", "edit", "rm", "restore", "generate", "sync", "place", "passwd",
-    "ping", "version",
+    "import", "watch", "ping", "version",
 ];
 
 struct Parsed {
@@ -84,7 +89,7 @@ fn parse(argv: &[String]) -> Result<Parsed, Value> {
         v["verbs"] = json!(VERBS);
         return Err(v);
     }
-    let lists = verb == "add" || verb == "edit";
+    let lists = matches!(verb.as_str(), "add" | "edit" | "import");
     let mut args = Map::new();
     let mut local = HashSet::new();
     let mut positional: Vec<String> = Vec::new();
@@ -146,6 +151,22 @@ fn parse(argv: &[String]) -> Result<Parsed, Value> {
         }
     } else if verb == "search" {
         args.insert("text".into(), json!(positional.join(" ")));
+    } else if verb == "import" {
+        // the daemon reads the file itself: it needs the full path
+        match positional.as_slice() {
+            [format] => {
+                args.insert("format".into(), json!(format));
+            }
+            [format, file] => {
+                let full = std::path::absolute(file)
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .unwrap_or_else(|_| file.clone());
+                args.insert("format".into(), json!(format));
+                args.insert("file".into(), json!(full));
+            }
+            [] => return Err(bad("import needs a format: 1pux, 1password-csv or op")),
+            [_, _, extra, ..] => return Err(bad(format!("import takes no {extra:?}"))),
+        }
     } else if let Some(p) = positional.first() {
         return Err(bad(format!("{verb} takes no {p:?}")));
     }
@@ -250,7 +271,45 @@ fn run(argv: &[String]) -> (Value, ExitCode) {
             }
         }
         "sync" | "rm" | "restore" => done(client::call(&p.verb, Value::Object(p.args), SLOW)),
+        "import" => done(client::call("import", Value::Object(p.args), IMPORT)),
+        "watch" => (Value::Null, watch()),
         verb => done(client::call(verb, Value::Object(p.args), FAST)),
+    }
+}
+
+/// `watch`: the daemon's events as JSON lines for a shell or a script
+/// that can't hold a socket (the desktop plugin's bridge). The first line
+/// is `{"v": 1, "event": "status", "status": {…}}`, then every event as the
+/// socket sends it, and `{"v": 1, "event": "daemon-gone"}` last.
+fn watch() -> ExitCode {
+    let mut out = std::io::stdout().lock();
+    let mut line = |v: &Value| writeln!(out, "{v}").and_then(|_| out.flush()).is_ok();
+    let gone = json!({"v": 1, "event": "daemon-gone"});
+    let mut events = match client::subscribe() {
+        Ok(e) => e,
+        Err(_) => {
+            line(&gone);
+            return ExitCode::SUCCESS;
+        }
+    };
+    let status = client::call("status", json!({}), FAST);
+    if !line(&json!({"v": 1, "event": "status", "status": status})) {
+        return ExitCode::SUCCESS;
+    }
+    loop {
+        match events.next(Duration::from_secs(3600)) {
+            Next::Event(mut v) => {
+                v["v"] = json!(1);
+                if !line(&v) {
+                    return ExitCode::SUCCESS;
+                }
+            }
+            Next::Quiet => {}
+            Next::Closed => {
+                line(&gone);
+                return ExitCode::SUCCESS;
+            }
+        }
     }
 }
 
@@ -454,6 +513,44 @@ mod tests {
         assert!(x.local.contains("json") && !x.args.contains_key("json"));
         let x = p(&["search", "git", "hub"]).unwrap();
         assert_eq!(x.args["text"], "git hub");
+    }
+
+    #[test]
+    fn import_takes_a_format_a_full_path_and_vaults() {
+        let x = p(&[
+            "import",
+            "1pux",
+            "/tmp/a.1pux",
+            "--dry-run",
+            "--folder",
+            "1P",
+        ])
+        .unwrap();
+        assert_eq!(x.args["format"], "1pux");
+        assert_eq!(x.args["file"], "/tmp/a.1pux");
+        assert_eq!(x.args["dry_run"], true);
+        assert_eq!(x.args["folder"], "1P");
+        let x = p(&["import", "1password-csv", "export.csv"]).unwrap();
+        assert!(
+            x.args["file"].as_str().unwrap().starts_with('/'),
+            "made absolute"
+        );
+        let x = p(&[
+            "import",
+            "op",
+            "--vault",
+            "Personal",
+            "--vault",
+            "Work",
+            "--skip-duplicates",
+        ])
+        .unwrap();
+        assert_eq!(x.args["vault"], json!(["Personal", "Work"]));
+        assert_eq!(x.args["skip_duplicates"], true);
+        assert!(x.args.get("file").is_none());
+        for argv in [&["import"][..], &["import", "op", "a", "b"]] {
+            assert_eq!(p(argv).err().expect("an error")["error"], "bad-request");
+        }
     }
 
     #[test]
