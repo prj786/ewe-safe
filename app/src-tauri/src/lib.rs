@@ -277,8 +277,9 @@ async fn passwd(password: Option<String>, new_password: String) -> Value {
     call("passwd", a).await
 }
 
-/// `import` (PROTOCOL.md): a file the daemon reads itself (same uid), or
-/// `op` (the 1Password app's CLI) with no file. It can take minutes.
+/// `import` (PROTOCOL.md, docs/IMPORT.md): a file the daemon reads itself
+/// (same uid), or `op` (the 1Password app's CLI) with no file. It can take
+/// minutes: `op`'s first call waits for the user to approve Safe.
 #[tauri::command]
 async fn import_items(
     format: String,
@@ -294,10 +295,11 @@ async fn import_items(
         ("dry_run", dry_run.map(Value::from)),
         ("folder", folder.map(Value::from)),
         ("skip_duplicates", skip_duplicates.map(Value::from)),
-        ("vault", vault.map(Value::from)),
+        // PROTOCOL.md: `vault` is a list (repeatable on the CLI)
+        ("vault", vault.map(|v| Value::from(vec![v]))),
     ]);
     tauri::async_runtime::spawn_blocking(move || {
-        safe_client::call("import", Value::Object(a), safe_client::SLOW)
+        safe_client::call("import", Value::Object(a), safe_client::wait_for("import"))
     })
     .await
     .unwrap_or_else(|_| json!({"ok": false, "error": "internal", "message": "The import failed."}))

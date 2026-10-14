@@ -8,6 +8,7 @@
   import { api } from "../api.js";
   import { safe } from "../safe.svelte.js";
   import { ui } from "../ui.svelte.js";
+  import { tick } from "svelte";
 
   const SOURCES = [
     {
@@ -38,6 +39,7 @@
   let report = $state(null); // the dry run's
   let done = $state(null); // the import's reply
   let error = $state("");
+  let importBtn = $state();
 
   const needsFile = $derived(format !== "op");
   const ready = $derived(!needsFile || !!file);
@@ -60,6 +62,9 @@
   function explain(r) {
     if (r?.error === "bad-request" && /no verb/i.test(r?.message ?? ""))
       return "This version of Safe's service can't import yet. Update Safe and try again.";
+    // source-error: not a 1PUX/CSV export, unreadable, or op's own words
+    if (r?.error === "source-error")
+      return format === "op" ? `The 1Password app didn't answer: ${r.message}` : `Safe can't read that file: ${r.message}`;
     return r?.message ?? "The import didn't work.";
   }
 
@@ -77,8 +82,12 @@
       error = explain(r);
       return;
     }
-    if (dryRun) report = r.report ?? {};
-    else done = r;
+    if (dryRun) {
+      report = r.report ?? {};
+      // keyboard first: the "Check first" button is gone, Enter imports
+      await tick();
+      importBtn?.focus();
+    } else done = r;
   }
 </script>
 
@@ -203,7 +212,7 @@
       <div class="safe-actions safe-actions--end">
         {#if report}
           <button class="ewe-btn ewe-btn--ghost" onclick={() => (report = null)}>Back</button>
-          <button class="ewe-btn ewe-btn--primary" disabled={!ready || safe.busy === "import" || total(report) === 0} onclick={() => run(false)}>
+          <button bind:this={importBtn} class="ewe-btn ewe-btn--primary" disabled={!ready || safe.busy === "import" || total(report) === 0} onclick={() => run(false)}>
             {safe.busy === "import" ? "Importing…" : `Import ${total(report)} items`}
           </button>
         {:else}
@@ -212,6 +221,9 @@
           </button>
         {/if}
       </div>
+      {#if format === "op" && safe.busy.startsWith("import")}
+        <div class="caption safe-muted">If 1Password asks, approve Safe there. Reading many items takes a while.</div>
+      {/if}
     {/if}
   </div>
 </div>

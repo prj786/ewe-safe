@@ -229,7 +229,7 @@ export function install(params) {
         ],
         folders: ["From 1Password"]
       };
-      if (dryRun) return { ok: true, report };
+      if (dryRun) return { ok: true, report, dry_run: true };
       return {
         ok: true,
         report,

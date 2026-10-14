@@ -14,10 +14,21 @@
     for (const i of items) for (const t of i.tags ?? []) m.set(t, (m.get(t) ?? 0) + 1);
     return [...m].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, 8);
   });
+  // folders as a tree: every folder and its parents, each counting the items
+  // in it and below it (the list shows the same), children indented
   const folders = $derived.by(() => {
     const m = new Map();
-    for (const i of items) if (i.folder) m.set(i.folder, (m.get(i.folder) ?? 0) + 1);
-    return [...m].sort((a, b) => a[0].localeCompare(b[0]));
+    for (const i of items) {
+      if (!i.folder) continue;
+      const parts = i.folder.split("/");
+      for (let n = 1; n <= parts.length; n++) {
+        const path = parts.slice(0, n).join("/");
+        m.set(path, (m.get(path) ?? 0) + 1);
+      }
+    }
+    return [...m]
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([path, n]) => ({ path, n, depth: path.split("/").length - 1, label: path.split("/").pop() }));
   });
   let now = $state(new Date());
   $effect(() => {
@@ -51,8 +62,8 @@
   {#if folders.length}
     <div class="ewe-sidenav__group">
       <div class="ewe-sidenav__heading">Folders</div>
-      {#each folders as [folder, n] (folder)}
-        {@render nav("folder", folder.split("/").pop(), n, { folder })}
+      {#each folders as f (f.path)}
+        {@render nav("folder", f.label, f.n, { folder: f.path }, f.depth)}
       {/each}
     </div>
   {/if}
@@ -73,9 +84,10 @@
   </div>
 </nav>
 
-{#snippet nav(icon, label, n, filter)}
+{#snippet nav(icon, label, n, filter, depth = 0)}
   <button
     class="ewe-navitem"
+    style={depth ? `padding-left:calc(var(--space-s) + ${depth} * var(--space-md))` : undefined}
     class:is-selected={ui.isFilter(filter)}
     aria-current={ui.isFilter(filter) ? "page" : undefined}
     onclick={() => ui.pick(filter)}
