@@ -1,12 +1,734 @@
-/* The Ewe design system, version 3: the token layer, copied verbatim from
-   ewe/design/tokens.css. The screens bring Tailwind and the component
-   classes (the ewe-sync shape); the plumbing page uses tokens only. */
+/* The Ewe design system, version 3: the token layer and the component
+   classes, both authored in ewe/design/ and copied verbatim
+   (design/check-tokens.sh holds the copies to the source). The rules below
+   lay out Safe's screens the way design-mockups/safe.html does — tokens
+   only, no raw colour, size or duration. */
 @import "./tokens.css";
+@import "./components.css";
 
+/* ── ground ─────────────────────────────────────────────────────────────── */
+html,
+body,
+#app {
+  height: 100%;
+}
+:root {
+  /* flipped to light by the theme runtime (lib/theme.js) with the scheme */
+  color-scheme: dark;
+}
+* {
+  box-sizing: border-box;
+}
+[hidden] {
+  display: none !important;
+}
+/* a scheme change recolours at once (lib/theme.js) */
+html.safe-instant,
+html.safe-instant * {
+  transition: none !important;
+}
 body {
   margin: 0;
   background: var(--surface-base);
   color: var(--text-primary);
   font-family: var(--font-sans);
   font-size: var(--font-size-md);
+  line-height: var(--line-height-md);
+  -webkit-font-smoothing: antialiased;
+  overscroll-behavior: none;
+  user-select: none;
+}
+input,
+textarea {
+  user-select: text;
+}
+button {
+  font-family: inherit;
+}
+:where(button, [role="button"], [role="radio"], [role="switch"], a, select, [tabindex]):focus-visible {
+  outline: var(--focus-width) solid var(--focus-ring);
+  outline-offset: var(--border-width-1);
+}
+
+/* ── type: Geist and Geist Mono (OFL, assets/GEIST-LICENSE), the same
+   variable files ewe ships for the desktop. Bundled so the window is right
+   even where the desktop's fontconfig isn't (a sandbox, another session);
+   --font-sans / --font-mono name them first. */
+@font-face {
+  font-family: "Geist";
+  src: url("./assets/Geist-Variable.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: block;
+}
+@font-face {
+  font-family: "Geist Mono";
+  src: url("./assets/GeistMono-Variable.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: block;
+}
+
+/* ── icons: the Lucide font in an .ewe-icon box (the ewe-sync runtime) ─── */
+@font-face {
+  font-family: "lucide";
+  src: url("./assets/Lucide.ttf") format("truetype");
+  font-weight: normal;
+  font-style: normal;
+  font-display: block;
+}
+.ewe-glyph {
+  container-type: size;
+  display: inline-grid;
+  place-items: center;
+  overflow: hidden;
+  width: var(--icon-md);
+  height: var(--icon-md);
+  flex: none;
+}
+.ewe-glyph > i {
+  font-family: "lucide";
+  font-style: normal;
+  font-weight: normal;
+  font-size: 100cqh;
+  line-height: 1;
+}
+.ewe-icon--xs { width: var(--icon-xs); height: var(--icon-xs); }
+.ewe-icon--sm { width: var(--icon-sm); height: var(--icon-sm); }
+.ewe-icon--lg { width: var(--icon-lg); height: var(--icon-lg); }
+.ewe-icon--xl { width: var(--icon-xl); height: var(--icon-xl); }
+
+/* a real <input> inside an .ewe-input box */
+.ewe-input > input,
+.ewe-input > textarea {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+.ewe-input > textarea {
+  padding: var(--space-xs) 0;
+  resize: none;
+}
+.ewe-input--multiline {
+  height: auto;
+  min-height: calc(3 * var(--control-md));
+  align-items: stretch;
+}
+.ewe-input .mono,
+.ewe-input > input.mono {
+  font-family: var(--font-mono);
+}
+.ewe-navitem,
+.ewe-row--interactive,
+.ewe-choice,
+.ewe-tab {
+  font-family: inherit;
+}
+button.ewe-navitem,
+button.ewe-row {
+  border: 0;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  color: inherit;
+}
+button.ewe-choice {
+  width: 100%;
+  text-align: left;
+  color: inherit;
+  font: inherit;
+}
+.ewe-choice.is-disabled {
+  cursor: not-allowed;
+  opacity: 1;
+}
+.ewe-choice.is-disabled .ewe-choice__title,
+.ewe-choice.is-disabled .ewe-choice__desc,
+.ewe-choice.is-disabled .ewe-choice__icon {
+  color: var(--text-disabled);
+}
+/* "Pick a window…": a button that reads as the field's placeholder */
+.ewe-input .ewe-link.ewe-input__placeholder {
+  color: var(--text-muted);
+}
+.ewe-input .ewe-link.ewe-input__placeholder:hover {
+  color: var(--text-secondary);
+}
+.ewe-link {
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  font: inherit;
+}
+
+/* overlays open with the motion table: base, fade + a 4px slide */
+@keyframes safe-in-down {
+  from { opacity: 0; transform: translateY(calc(-1 * var(--space-xs))); }
+}
+@keyframes safe-in-up {
+  from { opacity: 0; transform: translateY(var(--space-xs)); }
+}
+@keyframes safe-fade {
+  from { opacity: 0; }
+}
+@keyframes safe-timer {
+  from { transform: scaleX(1); }
+  to { transform: scaleX(0); }
+}
+
+/* ── the window: a solo column (setup, unlock) or the app shell ────────── */
+.safe-win {
+  display: flex;
+  height: 100%;
+  background: var(--surface-base);
+}
+.safe-win.ewe-appwin {
+  border: 0;
+  border-radius: 0;
+}
+.safe-solo {
+  flex: 1;
+  min-width: 0;
+  margin: var(--space-s);
+  background: var(--surface-raised);
+  border: var(--border-width-1) solid var(--border-subtle);
+  border-radius: var(--rounded);
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  position: relative;
+}
+.safe-col {
+  width: var(--panel-lg);
+  max-width: calc(100% - 2 * var(--space-md));
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  padding: var(--space-lg) 0;
+}
+.safe-col--center {
+  flex: 1;
+  justify-content: center;
+}
+.safe-col--narrow {
+  width: var(--panel-sm);
+}
+.safe-tile {
+  --app: var(--neutral-900);
+  --app-ink: var(--neutral-50);
+  width: var(--icon-3xl);
+  height: var(--icon-3xl);
+}
+.safe-tile--lg {
+  width: var(--icon-4xl);
+  height: var(--icon-4xl);
+}
+.safe-tile--sm {
+  width: var(--icon-xl);
+  height: var(--icon-xl);
+}
+.safe-head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+.safe-head .body-lg,
+.safe-head .body {
+  color: var(--text-secondary);
+}
+.safe-points {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-s) + var(--space-xs));
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.safe-points li {
+  display: flex;
+  gap: calc(var(--space-s) + var(--space-xs));
+  align-items: flex-start;
+  color: var(--text-secondary);
+}
+.safe-points .ewe-icon {
+  color: var(--accent-text);
+  margin-top: var(--space-xxs);
+}
+.safe-actions {
+  display: flex;
+  gap: var(--space-s);
+  align-items: center;
+  flex-wrap: wrap;
+}
+.safe-actions--end {
+  justify-content: flex-end;
+}
+.safe-actions--split {
+  justify-content: space-between;
+}
+.safe-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-s);
+}
+.safe-muted {
+  color: var(--text-muted);
+}
+.safe-secondary {
+  color: var(--text-secondary);
+}
+.safe-center {
+  text-align: center;
+  align-items: center;
+}
+.safe-center .ewe-field {
+  text-align: start;
+}
+.safe-more {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  color: var(--text-secondary);
+  padding: var(--space-xs) 0;
+  align-self: flex-start;
+}
+.safe-or {
+  display: flex;
+  align-items: center;
+  gap: var(--space-s);
+  color: var(--text-muted);
+  width: 100%;
+}
+.safe-or::before,
+.safe-or::after {
+  content: "";
+  flex: 1;
+  border-top: var(--border-width-1) solid var(--border-subtle);
+}
+
+/* the app shell: side navigation + a pane */
+.ewe-appwin .ewe-sidenav {
+  flex: none;
+  overflow-y: auto;
+}
+.ewe-sidenav__group {
+  display: flex;
+  flex-direction: column;
+}
+.ewe-sidenav__foot {
+  margin-top: auto;
+}
+.safe-pane {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  overflow: hidden;
+}
+.safe-count {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-xs);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  margin-left: auto;
+}
+.safe-sync {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  font-family: var(--font-sans);
+}
+.safe-sync .ewe-icon {
+  width: var(--icon-sm);
+  height: var(--icon-sm);
+  color: var(--success);
+}
+.safe-sync.is-warning .ewe-icon {
+  color: var(--warning);
+}
+.safe-sync.is-info .ewe-icon {
+  color: var(--info);
+}
+.safe-search {
+  width: calc(10 * var(--control-md));
+}
+
+/* items: list + detail */
+.safe-split {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  border-top: var(--border-width-1) solid var(--border-subtle);
+}
+.safe-listcol {
+  width: calc(12 * var(--control-sm) + var(--space-md));
+  flex: none;
+  overflow: auto;
+  padding: var(--space-s);
+  border-right: var(--border-width-1) solid var(--border-subtle);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+.safe-listcol .ewe-list {
+  background: transparent;
+  border: 0;
+  padding: 0;
+}
+.safe-detail {
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+  padding: var(--space-md) calc(var(--space-md) + var(--space-s));
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  position: relative;
+}
+.safe-dhead {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--space-s) + var(--space-xs));
+}
+.safe-dhead__titles {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xxs);
+}
+.safe-dhead__titles .caption {
+  color: var(--text-muted);
+}
+.safe-letter {
+  display: inline-grid;
+  place-items: center;
+  width: var(--control-lg);
+  height: var(--control-lg);
+  border-radius: var(--primary);
+  background: var(--surface-hover);
+  color: var(--text-secondary);
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
+  flex: none;
+}
+.safe-letter--lg {
+  width: var(--control-2xl);
+  height: var(--control-2xl);
+  border-radius: var(--rounded);
+  font-size: var(--font-size-xl);
+}
+.safe-val {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  color: var(--text-primary);
+  min-width: 0;
+}
+.safe-val .mono,
+.safe-val .mono-numeric {
+  color: var(--text-primary);
+}
+.safe-val--secret {
+  max-width: calc(8 * var(--control-lg));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.safe-chips {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+  justify-content: flex-end;
+}
+.safe-foot {
+  display: flex;
+  gap: var(--space-md);
+  color: var(--text-muted);
+}
+.safe-otp {
+  font-size: var(--font-size-lg);
+  line-height: var(--line-height-lg);
+  letter-spacing: var(--tracking-wide);
+}
+.safe-notes {
+  white-space: pre-wrap;
+  user-select: text;
+}
+.safe-toasts {
+  position: absolute;
+  right: calc(var(--space-md) + var(--space-s));
+  bottom: var(--space-md);
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-s);
+  align-items: flex-end;
+}
+.safe-toasts .ewe-toast {
+  animation: safe-in-up var(--dur-base) var(--ease-out);
+}
+.safe-toasts .ewe-toast__timer {
+  transform-origin: left;
+  animation: safe-timer linear forwards;
+}
+.safe-menu {
+  position: absolute;
+  z-index: 20;
+  right: 0;
+  top: calc(100% + var(--space-xs));
+  animation: safe-in-down var(--dur-base) var(--ease-out);
+}
+.safe-rel {
+  position: relative;
+}
+
+/* edit + generator */
+.safe-form {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-s) + var(--space-xs));
+}
+.safe-form .ewe-field {
+  width: 100%;
+}
+.safe-pwrow {
+  display: flex;
+  gap: var(--space-s);
+  align-items: flex-start;
+  position: relative;
+}
+.safe-pwrow .ewe-field {
+  flex: 1;
+}
+.safe-pwrow > .ewe-btn {
+  margin-top: calc(var(--line-height-s) + var(--space-xs));
+}
+.safe-gen {
+  position: absolute;
+  z-index: 2;
+  right: 0;
+  top: calc(var(--control-lg) * 2 + var(--space-s));
+  width: var(--panel-sm);
+  box-shadow: var(--shadow-float);
+  animation: safe-in-down var(--dur-base) var(--ease-out);
+}
+.safe-gen__preview {
+  display: flex;
+  align-items: center;
+  gap: var(--space-s);
+  padding: calc(var(--space-s) + var(--space-xs));
+  background: var(--surface-sunken);
+  border: var(--border-width-1) solid var(--border-subtle);
+  border-radius: var(--primary);
+}
+.safe-gen__preview .mono {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--font-size-md);
+  line-height: var(--line-height-md);
+  color: var(--text-primary);
+  word-break: break-all;
+  user-select: text;
+}
+.safe-gen__line {
+  display: flex;
+  align-items: center;
+  gap: var(--space-s);
+}
+.safe-gen__line .ewe-slider {
+  flex: 1;
+}
+.safe-gen__line .label {
+  width: calc(2 * var(--control-md));
+  color: var(--text-secondary);
+}
+.safe-gen__line .mono-numeric {
+  width: var(--control-md);
+  text-align: right;
+  color: var(--text-primary);
+}
+/* a native range over the drawn slider: the drawing is the design system's,
+   the dragging and the keys are the browser's */
+.safe-range {
+  position: relative;
+  flex: 1;
+}
+.safe-range > input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+.safe-range:focus-within .ewe-slider__thumb {
+  outline: var(--focus-width) solid var(--focus-ring);
+  outline-offset: var(--border-width-1);
+}
+.safe-pick {
+  position: absolute;
+  z-index: 3;
+  left: 0;
+  top: calc(100% + var(--space-xs));
+  max-height: calc(6 * var(--control-md));
+  overflow: auto;
+  animation: safe-in-down var(--dur-base) var(--ease-out);
+}
+
+/* settings, import, trash: a page in the pane */
+.safe-page {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 0 calc(var(--space-md) + var(--space-s)) var(--space-lg);
+}
+.safe-page__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-s);
+  width: var(--panel-lg);
+  max-width: 100%;
+}
+.safe-page__body .ewe-section {
+  width: 100%;
+}
+.safe-page__body .ewe-row__desc,
+.safe-page__body .ewe-row__title {
+  white-space: normal;
+}
+.safe-danger {
+  color: var(--danger);
+}
+.safe-report {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-s);
+}
+.safe-stat {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xxs);
+  padding: calc(var(--space-s) + var(--space-xs));
+  background: var(--surface-sunken);
+  border: var(--border-width-1) solid var(--border-subtle);
+  border-radius: var(--primary);
+}
+.safe-stat .mono-numeric {
+  font-size: var(--font-size-xl);
+  line-height: var(--line-height-xl);
+  color: var(--text-primary);
+}
+.safe-stat .caption {
+  color: var(--text-muted);
+}
+
+/* the Emergency Kit: paper in both modes */
+.safe-paper {
+  width: 100%;
+  background: var(--neutral-0);
+  color: var(--neutral-950);
+  border: var(--border-width-1) solid var(--neutral-200);
+  border-radius: var(--primary);
+  padding: var(--space-lg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  box-shadow: var(--shadow-float);
+  --text-primary: var(--neutral-950);
+  --text-secondary: var(--neutral-700);
+  --text-muted: var(--neutral-600);
+  --border-subtle: var(--neutral-200);
+  --border-strong: var(--neutral-500);
+  --surface-hover: var(--neutral-100);
+}
+.safe-paper__head {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--space-s) + var(--space-xs));
+}
+.safe-paper .ewe-kv {
+  width: 100%;
+}
+.safe-blank {
+  height: var(--control-xl);
+  border-bottom: var(--border-width-2) solid var(--border-strong);
+}
+.safe-paper .caption,
+.safe-paper .body {
+  color: var(--text-secondary);
+}
+
+/* dialogs */
+.safe-scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  background: var(--scrim);
+  display: grid;
+  place-items: center;
+  border-radius: inherit;
+  animation: safe-fade var(--dur-base) var(--ease-out);
+}
+.safe-dialog-field {
+  padding: 0 var(--space-md) var(--space-s);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-s);
+}
+
+/* the compact unlock window (`--unlock`, 560×200) */
+.safe-compact {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  padding: var(--space-md) var(--space-lg);
+  background: var(--surface-raised);
+  border: var(--border-width-1) solid var(--border-subtle);
+}
+.safe-compact__body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-s);
+}
+.safe-compact__row {
+  display: flex;
+  gap: var(--space-s);
+  align-items: center;
+}
+.safe-compact__row .ewe-input {
+  flex: 1;
+}
+
+@media print {
+  body,
+  html {
+    background: var(--neutral-0);
+  }
+  body * {
+    visibility: hidden;
+  }
+  .safe-paper,
+  .safe-paper * {
+    visibility: visible;
+  }
+  .safe-paper {
+    position: fixed;
+    inset: 0;
+    box-shadow: none;
+    border: 0;
+  }
 }

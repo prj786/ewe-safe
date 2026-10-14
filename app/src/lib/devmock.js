@@ -1,48 +1,76 @@
 // The dev mock: a plain browser with ?mock=1 gets a fake Safe built from
-// docs/PROTOCOL.md's shapes, for UI work and screenshots — no daemon, no
-// real secrets. Switches:
+// docs/PROTOCOL.md's shapes and the mockup's sample data ("Sam"), for UI
+// work and screenshots — no daemon, no real secrets. Switches:
 //   ?mock=1&locked=0      start unlocked (default: locked)
-//   ?mock=1&setup=0       no safe on this machine yet
-//   ?mock=1&daemon=0      the service isn't there (daemon-unavailable)
-//   ?mock=1&empty=1       a safe with no items
-// The master password is "mock"; every revealed value is "mock-<field>".
+//   &setup=0              no safe on this machine yet; &known=nextcloud: ewe.conf
+//                         already names one (a restored machine); &signedin=0
+//   &step=place|password|kit   where setup starts
+//   &daemon=0             the service isn't there (daemon-unavailable)
+//   &empty=1              a safe with no items     &readonly=1  read-only
+//   &sync=pending|offline|error|local|rollback|single-writer
+//   &keychanged=1         unlocking says the master password changed elsewhere
+//   &wrong=1              the first unlock is a wrong password
+//   &mode=unlock          the compact `--unlock` window
+//   &view=settings|import|trash   &edit=github|new   &gen=1 (generator open)
+//   &import=old           the daemon has no `import` verb yet
+//   &light=1              Ewe Light (the real token map, .dev-mock/theme-light.json)
+// The master password is "mock".
 
 import fixture from "../../.dev-mock/items.json";
+import light from "../../.dev-mock/theme-light.json";
 
 export function install(params) {
   const flag = (k, dflt) => (params.has(k) ? params.get(k) === "1" : dflt);
+  const clone = (x) => structuredClone(x);
   const s = {
     daemon: flag("daemon", true),
     setUp: flag("setup", true),
     locked: flag("locked", true),
-    items: flag("empty", false) ? [] : structuredClone(fixture),
-    deleted: []
+    readOnly: flag("readonly", false),
+    keyChanged: flag("keychanged", false),
+    wrong: flag("wrong", false),
+    items: flag("empty", false) ? [] : clone(fixture.items),
+    deleted: flag("empty", false) ? [] : clone(fixture.deleted),
+    settings: {
+      lock_after_minutes: 30,
+      lock_on_screen_lock: true,
+      lock_on_sleep: true,
+      clipboard_clear_seconds: 30,
+      generator_length: 20,
+      generator_words: 5,
+      ...(params.get("known") ? { place: params.get("known"), location: "ewe/safe/passwords.kdbx" } : {})
+    }
   };
-  const listeners = { "safe-event": new Set(), "safe-daemon": new Set() };
+  const listeners = { "safe-event": new Set(), "safe-daemon": new Set(), "safe-args": new Set() };
   const emit = (name, payload) => listeners[name]?.forEach((fn) => fn(payload));
   const fail = (error, message, hint) => ({ ok: false, error, message, ...(hint ? { hint } : {}) });
+  const minsAgo = (m) => new Date(Date.now() - m * 60000).toISOString().replace(/\.\d+Z$/, "Z");
+  const syncKind = params.get("sync") ?? "in-sync";
   const sync = {
-    state: "in-sync",
-    last: "2026-10-14T16:02:12Z",
-    by_machine: "mock-machine",
-    pending: false,
-    warning: null
+    state: ["rollback", "single-writer"].includes(syncKind) ? "in-sync" : syncKind,
+    last: minsAgo(2),
+    by_machine: "laptop",
+    pending: syncKind === "pending",
+    warning: ["rollback", "single-writer"].includes(syncKind) ? syncKind : null
   };
-  const place = { kind: "nextcloud", location: "ewe/safe/passwords.kdbx", guarded: true };
-  const find = (id) => s.items.find((i) => i.id === id);
+  const place = { kind: syncKind === "local" ? "local" : "nextcloud", location: "ewe/safe/passwords.kdbx", guarded: syncKind !== "single-writer" };
+  const find = (id) => s.items.find((i) => i.id === id) ?? s.deleted.find((i) => i.id === id);
+  const pub = ({ _notes, _password, ...rest }) => rest;
   const unavailable = () =>
     fail("daemon-unavailable", "Safe's service isn't running (mock).", "systemctl --user start ewe-safe.socket");
+  const changed = () => emit("safe-event", { event: "changed" });
+  const otpCode = () => String(100000 + ((Math.floor(Date.now() / 30000) * 7919) % 900000));
 
   const verbs = {
-    daemon_state: () =>
-      s.daemon ? { available: true } : { available: false, ...unavailable(), ok: undefined },
+    daemon_state: () => (s.daemon ? { available: true } : { available: false, ...unavailable(), ok: undefined }),
     ping: () => ({ ok: true, pong: true }),
     version: () => ({ ok: true, version: "0.1.0-alpha", protocol: 1 }),
     status: () => ({
       ok: true,
       set_up: s.setUp,
       locked: s.locked,
-      read_only: false,
+      read_only: s.readOnly,
+      ...(s.readOnly ? { reasons: ["2 items have a field Safe can't keep (from KeePassXC's browser add-on)."] } : {}),
       place: s.setUp ? place : null,
       unlock_methods: ["password"],
       items: s.locked ? null : s.items.length,
@@ -55,12 +83,28 @@ export function install(params) {
       s.setUp = true;
       s.locked = false;
       s.items = [];
+      s.deleted = [];
+      place.kind = p?.place ?? "local";
       emit("safe-event", { event: "unlocked" });
-      return { ok: true, place: { ...place, kind: p?.place ?? "local" } };
+      return { ok: true, place };
     },
-    open: ({ password }) => verbs.unlock({ password }),
+    open: ({ password }) => {
+      if (password !== "mock") return fail("wrong-key", "That password doesn't open the safe.");
+      s.setUp = true;
+      s.locked = false;
+      emit("safe-event", { event: "unlocked" });
+      return { ok: true, place, items: s.items.length };
+    },
     unlock: ({ password }) => {
       if (!s.setUp) return fail("not-set-up", "There's no safe on this computer yet.", "ewe-safe init");
+      if (s.wrong) {
+        s.wrong = false;
+        return fail("wrong-key", "That password doesn't open the safe.");
+      }
+      if (s.keyChanged) {
+        s.keyChanged = false;
+        return fail("key-changed", "The master password was changed on another machine.", "Unlock with the new password");
+      }
       if (password !== "mock") return fail("wrong-key", "That password doesn't open the safe.");
       s.locked = false;
       emit("safe-event", { event: "unlocked" });
@@ -76,28 +120,35 @@ export function install(params) {
       const items = from
         .filter((i) => !kind || i.kind === kind)
         .filter((i) => !tag || i.tags.includes(tag))
-        .sort((a, b) => a.title.localeCompare(b.title));
+        .sort((a, b) => a.title.localeCompare(b.title))
+        .map(pub);
       return { ok: true, items };
     },
     search: ({ text }) => {
       const q = (text ?? "").toLowerCase();
-      return { ok: true, items: s.items.filter((i) => (i.title + " " + i.username + " " + i.urls.join(" ")).toLowerCase().includes(q)) };
+      return { ok: true, items: s.items.filter((i) => (i.title + " " + i.username + " " + i.urls.join(" ")).toLowerCase().includes(q)).map(pub) };
     },
     match_items: ({ query }) => ({
       ok: true,
       items: verbs.search({ text: query ?? "" }).items.filter((i) => i.kind === "login").map((i) => ({ ...i, score: 1, reason: "mock" }))
     }),
-    show: ({ id }) => {
+    show: ({ id, revealNotes }) => {
       const i = find(id);
-      return i ? { ok: true, item: { ...i, notes: "" } } : fail("not-found", `No item ${id}.`);
+      if (!i) return fail("not-found", `No item ${id}.`);
+      return { ok: true, item: { ...pub(i), ...(i.kind === "login" || revealNotes ? { notes: i._notes ?? "" } : {}) } };
     },
     reveal: ({ id, field }) => {
       const i = find(id);
       if (!i) return fail("not-found", `No item ${id}.`);
-      return { ok: true, value: `mock-${field}`, ...(field === "otp" ? { expires_in: 17 } : {}) };
+      if (field === "otp") return { ok: true, value: otpCode(), expires_in: 30 - (Math.floor(Date.now() / 1000) % 30) };
+      if (field === "password") return { ok: true, value: i._password ?? "" };
+      if (field === "username") return { ok: true, value: i.username };
+      if (field === "notes") return { ok: true, value: i._notes ?? "" };
+      return fail("not-found", `No field ${field}.`);
     },
-    copy: ({ id }) => (find(id) ? { ok: true, cleared_after: 30 } : fail("not-found", `No item ${id}.`)),
+    copy: ({ id }) => (find(id) ? { ok: true, copied: true, cleared_after: s.settings.clipboard_clear_seconds } : fail("not-found", `No item ${id}.`)),
     add: ({ item }) => {
+      if (s.readOnly) return fail("read-only", "Safe can't save this file.");
       const id = crypto.randomUUID();
       s.items.push({
         id,
@@ -110,25 +161,36 @@ export function install(params) {
         folder: item?.folder ?? "",
         has_password: !!(item?.password_value || item?.generate),
         has_otp: false,
-        modified: new Date().toISOString().replace(/\.\d+Z$/, "Z")
+        modified: minsAgo(0),
+        _notes: item?.notes ?? "",
+        _password: item?.password_value ?? ""
       });
-      emit("safe-event", { event: "changed" });
-      return { ok: true, id, sync };
+      changed();
+      return { ok: true, id, sync: { ...sync, state: "pending", pending: true } };
     },
     edit: ({ id, item }) => {
       const i = find(id);
       if (!i) return fail("not-found", `No item ${id}.`);
       if (item?.title) i.title = item.title;
       if (item?.username !== undefined) i.username = item.username;
-      emit("safe-event", { event: "changed" });
+      if (item?.password_value) i._password = item.password_value;
+      if (item?.notes !== undefined) i._notes = item.notes;
+      if (item?.clear_url) i.urls = [];
+      for (const u of item?.url ?? []) if (!i.urls.includes(u)) i.urls.push(u);
+      for (const a of item?.app ?? []) if (!i.apps.includes(a)) i.apps.push(a);
+      i.apps = i.apps.filter((a) => !(item?.remove_app ?? []).includes(a));
+      for (const t of item?.tag ?? []) if (!i.tags.includes(t)) i.tags.push(t);
+      i.tags = i.tags.filter((t) => !(item?.remove_tag ?? []).includes(t));
+      i.modified = minsAgo(0);
+      changed();
       return { ok: true, sync };
     },
     rm: ({ id }) => {
-      const i = find(id);
+      const i = s.items.find((x) => x.id === id);
       if (!i) return fail("not-found", `No item ${id}.`);
       s.items = s.items.filter((x) => x !== i);
       s.deleted.push(i);
-      emit("safe-event", { event: "changed" });
+      changed();
       return { ok: true, sync };
     },
     restore: ({ id }) => {
@@ -136,21 +198,78 @@ export function install(params) {
       if (!i) return fail("not-found", `No item ${id}.`);
       s.deleted = s.deleted.filter((x) => x !== i);
       s.items.push(i);
-      emit("safe-event", { event: "changed" });
+      changed();
       return { ok: true, sync };
     },
-    generate: ({ words }) => (words ? { ok: true, value: "mock-mock-mock-mock-mock", bits: 64 } : { ok: true, value: "mock-generated-Pw-20!", bits: 128 }),
+    generate: ({ words, length, noDigits, noSymbols }) => {
+      if (words) {
+        const list = ["amble", "crisp", "lantern", "oyster", "velvet", "harbor", "tundra", "quill", "mosaic", "ember"];
+        return { ok: true, value: Array.from({ length: words }, (_, n) => list[(n * 3 + Date.now()) % list.length]).join("-"), bits: Math.round(words * 12.9) };
+      }
+      const pool = "abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ" + (noDigits ? "" : "23456789") + (noSymbols ? "" : "!#@$%&*");
+      const n = length ?? 20;
+      const a = crypto.getRandomValues(new Uint32Array(n));
+      return { ok: true, value: Array.from(a, (x) => pool[x % pool.length]).join(""), bits: Math.round(n * Math.log2(pool.length)) };
+    },
     sync: () => ({ ok: true, sync }),
-    place: () => ({ ok: true, place, sync, probe: { guarded: true, checked_at: sync.last } }),
-    passwd: ({ newPassword }) => (newPassword ? { ok: true, sync } : fail("bad-request", "A new password is needed."))
+    place: () => ({ ok: true, place, sync, probe: { guarded: place.guarded, checked_at: sync.last } }),
+    passwd: ({ newPassword }) => (newPassword ? { ok: true, sync } : fail("bad-request", "A new password is needed.")),
+    import_items: ({ format, file, dryRun, skipDuplicates }) => {
+      if (params.get("import") === "old") return fail("bad-request", 'There is no verb "import".');
+      if (format !== "op" && !file) return fail("bad-request", "Choose the export file first.");
+      const report = {
+        logins: 142,
+        notes: 9,
+        attachments: 3,
+        otps: 18,
+        duplicates: skipDuplicates ? 4 : 4,
+        skipped: [
+          { title: "Old laptop (archived)", reason: "In 1Password's trash" },
+          { title: "Passport scan", reason: "A document with no fields: its file is kept as an attachment of a note" }
+        ],
+        folders: ["From 1Password"]
+      };
+      if (dryRun) return { ok: true, report, dry_run: true };
+      return {
+        ok: true,
+        report,
+        sync,
+        ...(format === "op" ? {} : { hint: "This export holds every password in plain text. Delete it now." })
+      };
+    },
+
+    // the window's own commands
+    launch_args: () => ({
+      mode: params.get("mode") === "unlock" ? "unlock" : "main",
+      show: null,
+      new: params.get("edit") === "new",
+      import: params.get("view") === "import"
+    }),
+    theme_tokens: () => (flag("light", false) ? light : null),
+    theme_key: () => "mock",
+    settings_get: () => ({ ok: true, settings: s.settings }),
+    settings_set: ({ key, value }) => {
+      s.settings[key] = value;
+      return { ok: true };
+    },
+    cloud_status: () =>
+      flag("signedin", true)
+        ? { ok: true, signed_in: true, server: "https://cloud.example.org", user: "sam", display_name: "Sam" }
+        : { ok: true, signed_in: false },
+    window_classes: () => ({ ok: true, classes: ["code", "discord", "firefox", "kitty", "slack", "steam"] }),
+    open_url: () => ({ ok: true }),
+    open_ewe_sync: () => ({ ok: true }),
+    pick_file: ({ kind }) => ({ ok: true, path: `/home/sam/Downloads/1PasswordExport.${kind === "csv" ? "csv" : kind}` }),
+    print_page: () => ({ ok: true }),
+    quit_app: () => ({ ok: true })
   };
-  const needsDaemon = (cmd) => cmd !== "daemon_state";
-  const needsUnlock = new Set(["list", "search", "match_items", "show", "reveal", "copy", "add", "edit", "rm", "restore"]);
+  const local = new Set(["daemon_state", "launch_args", "theme_tokens", "theme_key", "settings_get", "settings_set", "cloud_status", "window_classes", "open_url", "open_ewe_sync", "pick_file", "print_page", "quit_app"]);
+  const needsUnlock = new Set(["list", "search", "match_items", "show", "reveal", "copy", "add", "edit", "rm", "restore", "import_items"]);
 
   window.__SAFE_MOCK__ = {
     async invoke(cmd, args) {
-      await new Promise((r) => setTimeout(r, 60));
-      if (needsDaemon(cmd) && !s.daemon) return unavailable();
+      await new Promise((r) => setTimeout(r, 40));
+      if (!local.has(cmd) && !s.daemon) return unavailable();
       if (needsUnlock.has(cmd) && !s.setUp) return fail("not-set-up", "There's no safe on this computer yet.", "ewe-safe init");
       if (needsUnlock.has(cmd) && s.locked) return fail("locked", "Safe is locked.", "ewe-safe unlock");
       const f = verbs[cmd];
@@ -170,4 +289,21 @@ export function install(params) {
       emit("safe-daemon", { available: true });
     }
   };
+}
+
+/** After the page mounted: the view switches that need the UI store. */
+export async function arrange(params, ui) {
+  const view = params.get("view");
+  if (view === "settings" || view === "import") ui.go(view);
+  if (view === "trash") ui.pick({ trash: true });
+  const edit = params.get("edit");
+  if (edit && edit !== "new") {
+    ui.selected = fixture.items.find((i) => i.title.toLowerCase() === edit)?.id ?? null;
+    ui.editing = { mode: "edit", id: ui.selected, kind: "login" };
+  }
+  const sel = params.get("select");
+  if (sel) ui.selected = fixture.items.find((i) => i.title.toLowerCase() === sel)?.id ?? null;
+  if (params.get("step")) ui.setupStep = params.get("step");
+  if (params.get("kit") === "1") ui.kit = true;
+  if (params.get("gen") === "1") ui.genOpen = true;
 }

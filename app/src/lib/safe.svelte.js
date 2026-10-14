@@ -19,8 +19,16 @@ class Safe {
   daemon = $state({ available: true });
   status = $state(null);
   items = $state([]);
+  deleted = $state([]);
   error = $state(null);
   busy = $state("");
+  // `[safe]` from ewe.conf (through ewe-conf): lock and clipboard settings,
+  // and where a safe lives when this machine has none yet
+  settings = $state({});
+  // the copy in the place has a new master key (changed elsewhere)
+  keyChanged = $state(false);
+  // a counter the screens watch to reload what they show (an item's notes)
+  changes = $state(0);
 
   #unlisten = [];
 
@@ -54,11 +62,16 @@ class Safe {
   #onEvent(e) {
     switch (e?.event) {
       case "unlocked":
+        this.keyChanged = false;
+        this.refresh();
+        break;
       case "changed":
+        this.changes += 1;
         this.refresh();
         break;
       case "locked":
         this.items = [];
+        this.deleted = [];
         this.refresh();
         break;
       case "sync":
@@ -73,6 +86,7 @@ class Safe {
       this.error = null;
     } else {
       this.error = r ? { error: r.error, message: r.message, hint: r.hint } : null;
+      if (r?.error === "key-changed") this.keyChanged = true;
       if (r?.error === "daemon-unavailable") {
         this.daemon = { available: false, message: r.message, hint: r.hint };
       }
@@ -102,13 +116,65 @@ class Safe {
   async loadItems(filter = {}) {
     const r = this.#take(await api.list(filter));
     if (r?.ok) this.items = r.items ?? [];
+    const d = await api.list({ deleted: true });
+    if (d?.ok) this.deleted = d.items ?? [];
+    return r;
+  }
+
+  get readOnly() {
+    return this.status?.read_only ?? false;
+  }
+
+  async loadSettings() {
+    const r = await api.settingsGet();
+    if (r?.ok) this.settings = r.settings ?? {};
+    return this.settings;
+  }
+
+  /** One `[safe]` setting through ewe-conf; the daemon reads it again. */
+  async setSetting(key, value) {
+    const before = this.settings[key];
+    this.settings = { ...this.settings, [key]: value };
+    const r = await api.settingsSet(key, value);
+    if (!r?.ok) this.settings = { ...this.settings, [key]: before };
+    return r;
+  }
+
+  /** A new safe: place = {place, location?}; the password is passed on. */
+  async create(place, password) {
+    const r = await this.#run("init", () => api.init(place, password));
+    if (r?.ok) await this.refresh();
+    return r;
+  }
+
+  /** An existing safe file or the account's safe. */
+  async openSafe(place, password) {
+    const r = await this.#run("open", () => api.open(place, password));
+    if (r?.ok) await this.refresh();
+    return r;
+  }
+
+  async show(id) {
+    return this.#take(await api.show(id));
+  }
+
+  async passwd(newPassword, current) {
+    return this.#run("passwd", () => api.passwd(current, newPassword));
+  }
+
+  async importItems(opts) {
+    const r = await this.#run(opts.dryRun ? "import-check" : "import", () => api.importItems(opts));
+    if (r?.ok && !opts.dryRun) await this.refresh();
     return r;
   }
 
   /** The password is passed straight through; the page clears its field. */
   async unlock(password) {
     const r = await this.#run("unlock", () => api.unlock(password));
-    if (r?.ok) await this.refresh();
+    if (r?.ok) {
+      this.keyChanged = false;
+      await this.refresh();
+    }
     return r;
   }
 

@@ -370,9 +370,22 @@ fn passwd(mut args: Map<String, Value>) -> Value {
     client::call("passwd", Value::Object(args), SLOW)
 }
 
+/// `ewe-safe-app`, the Safe window, next to this binary or on the PATH.
+fn unlock_window() -> Option<std::path::PathBuf> {
+    let beside = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.join("ewe-safe-app")));
+    let on_path = std::env::var_os("PATH").and_then(|path| {
+        std::env::split_paths(&path)
+            .map(|d| d.join("ewe-safe-app"))
+            .find(|p| p.is_file())
+    });
+    beside.filter(|p| p.is_file()).or(on_path)
+}
+
 /// `unlock --ask` (the Passwords plugin's Enter): open a small prompt
-/// window and wait until the safe is unlocked or the window is gone. Phase
-/// 1's bridge until the Safe window and the login unlock exist.
+/// window and wait until the safe is unlocked or the window is gone — the
+/// Safe window's `--unlock` mode, or phase 1's kitty bridge without it.
 fn unlock_ask() -> Value {
     let st = client::call("status", json!({}), FAST);
     if !ok(&st) {
@@ -396,22 +409,31 @@ fn unlock_ask() -> Value {
             c.arg("-c").arg(cmd);
             c
         }
-        Err(_) => {
-            let me = std::env::current_exe()
-                .map(|p| p.to_string_lossy().into_owned())
-                .unwrap_or_else(|_| "ewe-safe".into());
-            let mut c = Command::new("kitty");
-            c.args([
-                "--class",
-                "ewe-safe-unlock",
-                "--title",
-                "Unlock Safe",
-                "-e",
-                &me,
-                "unlock",
-            ]);
-            c
-        }
+        // the Safe window's own unlock prompt when it is installed
+        Err(_) => match unlock_window() {
+            Some(app) => {
+                let mut c = Command::new(app);
+                c.arg("--unlock");
+                c
+            }
+            // phase 1's bridge: a small kitty asking in a terminal
+            None => {
+                let me = std::env::current_exe()
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .unwrap_or_else(|_| "ewe-safe".into());
+                let mut c = Command::new("kitty");
+                c.args([
+                    "--class",
+                    "ewe-safe-unlock",
+                    "--title",
+                    "Unlock Safe",
+                    "-e",
+                    &me,
+                    "unlock",
+                ]);
+                c
+            }
+        },
     };
     // this command's stdout is its one JSON answer: the prompt's is its own
     let spawned = prompt

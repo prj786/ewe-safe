@@ -1,0 +1,20 @@
+[Desktop Entry]
+Type=Application
+Name=Safe
+GenericName=Password manager
+Comment=Your passwords in one file that only you can open
+Exec=ewe-safe-app
+Icon=ewe-safe
+Terminal=false
+Categories=Utility;Security;
+Keywords=password;passwords;keepass;kdbx;1password;login;vault;ewe;
+StartupWMClass=ewe-safe
+Actions=new-login;import;
+
+[Desktop Action new-login]
+Name=New login
+Exec=ewe-safe-app --new
+
+[Desktop Action import]
+Name=Import from 1Password
+Exec=ewe-safe-app --import

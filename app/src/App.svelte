@@ -1,75 +1,88 @@
 <script>
-  // The plumbing page: proves the wiring (status, unlock, list, reveal,
-  // lock, events, the daemon's absence) before the screens exist. Not a
-  // design — the screens replace it once the owner signs off the mockup.
+  // The window's states: Safe's service unreachable, no safe on this
+  // machine (setup), locked, or open. The `--unlock` process (`mode:
+  // "unlock"`) shows only the compact prompt and quits once the safe opens.
   import { onMount } from "svelte";
+  import Icon from "$lib/components/Icon.svelte";
+  import Setup from "$lib/screens/Setup.svelte";
+  import Unlock from "$lib/screens/Unlock.svelte";
+  import Main from "$lib/screens/Main.svelte";
+  import { api, listen } from "$lib/api.js";
   import { safe } from "$lib/safe.svelte.js";
+  import { ui } from "$lib/ui.svelte.js";
+  import { watchTheme } from "$lib/theme.js";
 
-  let password = $state("");
-  let shown = $state({}); // id → revealed password, dropped after 10 s
+  let mode = $state("main");
+
+  function follow(a) {
+    if (!a) return;
+    if (a.show) {
+      ui.pick({});
+      ui.selected = a.show;
+    }
+    if (a.new) {
+      ui.go("items");
+      ui.editing = { mode: "new", kind: "login" };
+    }
+    if (a.import) ui.go("import");
+  }
 
   onMount(() => {
-    safe.start();
-    return () => safe.stop();
+    const off = [watchTheme()];
+    (async () => {
+      const a = await api.launchArgs();
+      if (a?.mode) mode = a.mode;
+      follow(a);
+      off.push(await listen("safe-args", follow));
+      await safe.start();
+    })();
+    return () => {
+      off.forEach((f) => f?.());
+      safe.stop();
+    };
   });
 
-  async function unlock(e) {
-    e.preventDefault();
-    const pw = password;
-    password = "";
-    await safe.unlock(pw);
-  }
-
-  async function reveal(id) {
-    const v = await safe.reveal(id, "password");
-    if (v == null) return;
-    shown = { ...shown, [id]: v };
-    setTimeout(() => {
-      const { [id]: _, ...rest } = shown;
-      shown = rest;
-    }, 10000);
-  }
+  // the unlock-only window is done once the safe is open, however it opened
+  $effect(() => {
+    if (mode === "unlock" && safe.status && safe.status.set_up && !safe.status.locked) api.quit(0);
+  });
 </script>
 
-<main>
-  <h1>Safe — plumbing</h1>
-
-  {#if !safe.daemon.available}
-    <p role="alert">{safe.daemon.message ?? "Safe's service can't be reached."}</p>
-    {#if safe.daemon.hint}<p><code>{safe.daemon.hint}</code></p>{/if}
-  {:else if !safe.status}
-    <p>Asking Safe's service…</p>
-  {:else if !safe.setUp}
-    <p>There's no safe on this computer yet.</p>
-  {:else if safe.locked}
-    <form onsubmit={unlock}>
-      <label>Master password <input type="password" bind:value={password} autocomplete="off" /></label>
-      <button disabled={safe.busy === "unlock"}>{safe.busy === "unlock" ? "Unlocking…" : "Unlock"}</button>
-    </form>
-  {:else}
-    <p>
-      {safe.items.length} items · sync {safe.status.sync?.state ?? "—"}
-      <button onclick={() => safe.lock()}>Lock</button>
-    </p>
-    <ul>
-      {#each safe.items as item (item.id)}
-        <li>
-          {item.kind} · {item.title}{item.username ? ` · ${item.username}` : ""}
-          {#if item.has_password}
-            <button onclick={() => reveal(item.id)}>Reveal</button>
-            {#if shown[item.id]}<code>{shown[item.id]}</code>{/if}
-          {/if}
-        </li>
-      {/each}
-    </ul>
+{#if mode === "unlock"}
+  {#if !safe.daemon.available || (safe.status && !safe.status.set_up)}
+    <div class="safe-compact">
+      <span class="ewe-appicon safe-tile"><Icon name="lock" /></span>
+      <div class="safe-compact__body">
+        <div class="safe-head">
+          <div class="h3">{safe.daemon.available ? "There's no safe on this computer yet" : "Safe's service isn't running"}</div>
+          <div class="caption safe-muted">{safe.daemon.available ? "Open Safe to create one or open one." : (safe.daemon.hint ?? safe.daemon.message ?? "")}</div>
+        </div>
+        <div class="safe-compact__row"><button class="ewe-btn ewe-btn--secondary" onclick={() => api.quit(1)}>Close</button></div>
+      </div>
+    </div>
+  {:else if safe.status}
+    <Unlock compact />
   {/if}
-
-  {#if safe.error}
-    <p role="status">{safe.error.error}: {safe.error.message}</p>
-  {/if}
-
-  <details>
-    <summary>status</summary>
-    <pre>{JSON.stringify(safe.status, null, 2)}</pre>
-  </details>
-</main>
+{:else if !safe.daemon.available}
+  <div class="safe-win">
+    <div class="safe-solo">
+      <div class="safe-col safe-col--narrow safe-col--center safe-center">
+        <div class="ewe-empty">
+          <span class="ewe-empty__icon"><Icon name="cloud-off" /></span>
+          <div class="ewe-empty__title">Safe's service isn't running</div>
+          <div class="ewe-empty__desc">{safe.daemon.message ?? "The window can't reach it."}</div>
+          {#if safe.daemon.hint}<div class="caption safe-muted"><code>{safe.daemon.hint}</code></div>{/if}
+          <div class="ewe-empty__actions"><button class="ewe-btn ewe-btn--secondary" onclick={() => safe.refresh()}><Icon name="refresh-cw" />Try again</button></div>
+        </div>
+      </div>
+    </div>
+  </div>
+{:else if !safe.status}
+  <div class="safe-win"></div>
+{:else if ui.setup || !safe.setUp}
+  <Setup />
+{:else if safe.locked}
+  <Unlock />
+{:else}
+  <Main />
+{/if}
