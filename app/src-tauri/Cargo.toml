@@ -1,6 +1,6 @@
 [package]
 name = "ewe-safe-app"
-version = "0.1.0-alpha"
+version = "0.1.0-beta"
 description = "Safe, ewe's password manager: the window"
 authors = ["scubba"]
 license = "MIT"
