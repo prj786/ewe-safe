@@ -1,0 +1,250 @@
+{
+ "vaults": [
+  {
+   "id": "v1",
+   "name": "Personal"
+  },
+  {
+   "id": "v2",
+   "name": "Work"
+  }
+ ],
+ "lists": {
+  "v1": [
+   {
+    "id": "i1",
+    "title": "Discord",
+    "category": "LOGIN",
+    "vault": {
+     "id": "v1",
+     "name": "Personal"
+    }
+   },
+   {
+    "id": "i2",
+    "title": "Passport",
+    "category": "DOCUMENT",
+    "vault": {
+     "id": "v1",
+     "name": "Personal"
+    }
+   },
+   {
+    "id": "i3",
+    "title": "Old forum",
+    "category": "LOGIN",
+    "state": "ARCHIVED",
+    "vault": {
+     "id": "v1",
+     "name": "Personal"
+    }
+   }
+  ],
+  "v2": [
+   {
+    "id": "i4",
+    "title": "Visa",
+    "category": "CREDIT_CARD",
+    "vault": {
+     "id": "v2",
+     "name": "Work"
+    }
+   }
+  ]
+ },
+ "items": {
+  "i1": {
+   "id": "i1",
+   "title": "Discord",
+   "category": "LOGIN",
+   "vault": {
+    "id": "v1",
+    "name": "Personal"
+   },
+   "created_at": "2017-07-14T02:40:00Z",
+   "updated_at": "2023-11-14T22:13:20Z",
+   "tags": [
+    "chat"
+   ],
+   "favorite": true,
+   "urls": [
+    {
+     "label": "website",
+     "primary": true,
+     "href": "https://discord.com/login"
+    },
+    {
+     "label": "",
+     "href": "https://discordapp.com"
+    }
+   ],
+   "sections": [
+    {
+     "id": "add more"
+    },
+    {
+     "id": "s1",
+     "label": "Security"
+    }
+   ],
+   "fields": [
+    {
+     "id": "username",
+     "type": "STRING",
+     "purpose": "USERNAME",
+     "label": "username",
+     "value": "sam"
+    },
+    {
+     "id": "password",
+     "type": "CONCEALED",
+     "purpose": "PASSWORD",
+     "label": "password",
+     "value": "Disc-pw-Zq9!",
+     "password_details": {
+      "strength": "FANTASTIC",
+      "history": [
+       "old-disc-1",
+       "old-disc-2"
+      ]
+     }
+    },
+    {
+     "id": "notesPlain",
+     "type": "STRING",
+     "purpose": "NOTES",
+     "label": "notesPlain",
+     "value": "Discord *main* account"
+    },
+    {
+     "id": "pin",
+     "section": {
+      "id": "s1",
+      "label": "Security"
+     },
+     "type": "CONCEALED",
+     "label": "PIN",
+     "value": "4242"
+    },
+    {
+     "id": "otp1",
+     "section": {
+      "id": "s1",
+      "label": "Security"
+     },
+     "type": "OTP",
+     "label": "one-time password",
+     "value": "otpauth://totp/Discord:sam?secret=JBSWY3DPEHPK3PXP&issuer=Discord",
+     "totp": "123456"
+    }
+   ],
+   "files": [
+    {
+     "id": "f1",
+     "name": "backup-codes.txt",
+     "size": 23,
+     "content_path": "/v1/vaults/v1/items/i1/files/f1/content"
+    }
+   ]
+  },
+  "i2": {
+   "id": "i2",
+   "title": "Passport",
+   "category": "DOCUMENT",
+   "vault": {
+    "id": "v1",
+    "name": "Personal"
+   },
+   "created_at": "2020-01-01T00:00:00Z",
+   "updated_at": "2020-01-02T00:00:00Z",
+   "fields": [
+    {
+     "id": "notesPlain",
+     "type": "STRING",
+     "purpose": "NOTES",
+     "label": "notesPlain"
+    }
+   ],
+   "files": [
+    {
+     "id": "d1",
+     "name": "passport.pdf",
+     "size": 15
+    }
+   ]
+  },
+  "i3": {
+   "id": "i3",
+   "title": "Old forum",
+   "category": "LOGIN",
+   "state": "ARCHIVED",
+   "vault": {
+    "id": "v1",
+    "name": "Personal"
+   },
+   "urls": [
+    {
+     "primary": true,
+     "href": "https://forum.example.net"
+    }
+   ],
+   "fields": [
+    {
+     "id": "username",
+     "type": "STRING",
+     "purpose": "USERNAME",
+     "label": "username",
+     "value": "sam_old"
+    },
+    {
+     "id": "password",
+     "type": "CONCEALED",
+     "purpose": "PASSWORD",
+     "label": "password",
+     "value": "forum-pw"
+    }
+   ]
+  },
+  "i4": {
+   "id": "i4",
+   "title": "Visa",
+   "category": "CREDIT_CARD",
+   "vault": {
+    "id": "v2",
+    "name": "Work"
+   },
+   "fields": [
+    {
+     "id": "cardholder",
+     "type": "STRING",
+     "label": "cardholder name",
+     "value": "Sam Shepherd"
+    },
+    {
+     "id": "ccnum",
+     "type": "CREDIT_CARD_NUMBER",
+     "label": "number",
+     "value": "4111111111111111"
+    },
+    {
+     "id": "cvv",
+     "type": "CONCEALED",
+     "label": "verification number",
+     "value": "123"
+    },
+    {
+     "id": "expiry",
+     "type": "MONTH_YEAR",
+     "label": "expiry date",
+     "value": "202704"
+    }
+   ]
+  }
+ },
+ "files": {
+  "op://v1/i1/f1": "BACKUP-CODES 1111 2222\n"
+ },
+ "documents": {
+  "i2": "%PDF-1.4 fake\n"
+ }
+}

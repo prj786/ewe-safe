@@ -10,11 +10,14 @@
 //! - [`clip`]: copy, past the clipboard history, cleared later.
 //! - [`config`]: paths, ewe.conf `[safe]`, `machine.json`.
 //! - [`hygiene`]: no core dumps, no ptrace, password buffers out of swap.
+//! - [`import`]: another password manager's export, or 1Password through
+//!   `op`, added in one edit.
 
 mod clip;
 mod config;
 mod daemon;
 mod hygiene;
+mod import;
 mod logind;
 mod server;
 mod verbs;

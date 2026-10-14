@@ -23,6 +23,7 @@ use zeroize::Zeroizing;
 
 use crate::digest::{self, Digester};
 use crate::guard::{self, Report};
+use crate::import::{self, Batch, Imported};
 use crate::item::{self, Draft, Field, Summary};
 use crate::otp::Totp;
 use crate::{atomic, kdf, merge, search};
@@ -354,6 +355,96 @@ impl Safe {
             })
             .id();
         Ok(id.to_string())
+    }
+
+    /// Bring in what an export holds ([`crate::import`]): every item the
+    /// plan keeps, in its folder, with its custom fields, its password
+    /// history (oldest first, dated as the export dates it), its
+    /// attachments and its times. One edit in memory; the caller saves once.
+    pub fn import(
+        &mut self,
+        batch: &Batch,
+        opts: &import::Options,
+    ) -> Result<import::Report, Error> {
+        self.writable()?;
+        let plan = import::plan(batch, &self.items(), opts);
+        for (i, folder) in &plan.add {
+            self.add_imported(&batch.items[*i], folder)?;
+        }
+        Ok(plan.report)
+    }
+
+    fn add_imported(&mut self, it: &Imported, folder: &str) -> Result<String, Error> {
+        let at = self.folder(folder)?;
+        let max = self
+            .db
+            .meta
+            .history_max_items
+            .and_then(|n| usize::try_from(n).ok())
+            .unwrap_or(HISTORY_MAX_ITEMS);
+        let mut group = self
+            .db
+            .group_mut(at)
+            .ok_or_else(|| Error::NotFound(folder.to_string()))?;
+        let mut e = group.add_entry();
+        item::apply(&mut e, &it.draft);
+        for f in &it.fields {
+            if f.protected {
+                e.set_protected(f.name.clone(), f.value.as_str());
+            } else {
+                e.set_unprotected(f.name.clone(), f.value.as_str());
+            }
+        }
+        let now = Times::now();
+        let modified = it.modified.unwrap_or(now);
+        e.times.creation = Some(it.created.unwrap_or(modified));
+        e.times.last_modification = Some(modified);
+        e.times.last_access = Some(modified);
+        e.times.location_changed = Some(now);
+
+        // each old password is the item as it is now with that password,
+        // dated when it stopped being the password (or spread out after
+        // the item's creation when the export doesn't say)
+        if !it.history.is_empty() {
+            let base: keepass::db::Entry = (*e).clone();
+            let start = it.created.unwrap_or(modified);
+            let mut versions: Vec<keepass::db::Entry> = it
+                .history
+                .iter()
+                .enumerate()
+                .map(|(n, old)| {
+                    let mut v = base.clone();
+                    v.history = None;
+                    v.set_protected(fields::PASSWORD, old.value.as_str());
+                    let when = old
+                        .time
+                        .unwrap_or_else(|| start + chrono::Duration::seconds(n as i64));
+                    v.times.last_modification = Some(when.min(modified));
+                    v
+                })
+                .collect();
+            let surplus = versions.len().saturating_sub(max);
+            versions.drain(..surplus);
+            let mut h = History::default();
+            // add_entry puts each one first, so add newest to oldest
+            for v in versions.into_iter().rev() {
+                h.add_entry(v);
+            }
+            e.history = Some(h);
+        }
+
+        let mut names: Vec<String> = Vec::new();
+        for f in &it.files {
+            let mut name = f.name.clone();
+            let mut n = 2;
+            while names.contains(&name) {
+                name = format!("{} ({n})", f.name);
+                n += 1;
+            }
+            names.push(name.clone());
+            e.add_attachment(name, keepass::db::Value::protected(f.data.to_vec()));
+        }
+        Ok(e.id().to_string())
     }
 
     /// Move an item to a folder ("" is the top), making it if missing. A move
