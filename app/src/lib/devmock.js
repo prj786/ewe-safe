@@ -29,6 +29,7 @@ export function install(params) {
     readOnly: flag("readonly", false),
     keyChanged: flag("keychanged", false),
     wrong: flag("wrong", false),
+    superP: params.get("superp") || "1password",
     items: flag("empty", false) ? [] : clone(fixture.items),
     deleted: flag("empty", false) ? [] : clone(fixture.deleted),
     settings: {
@@ -252,6 +253,12 @@ export function install(params) {
       s.settings[key] = value;
       return { ok: true };
     },
+    // &superp=ewe|auto|… (default 1password): what Super+P fills from
+    passwords_provider: () => ({ ok: true, provider: s.superP }),
+    use_safe_for_passwords: () => {
+      s.superP = "ewe";
+      return { ok: true, provider: "ewe" };
+    },
     cloud_status: () =>
       flag("signedin", true)
         ? { ok: true, signed_in: true, server: "https://cloud.example.org", user: "sam", display_name: "Sam" }
@@ -263,7 +270,7 @@ export function install(params) {
     print_page: () => ({ ok: true }),
     quit_app: () => ({ ok: true })
   };
-  const local = new Set(["daemon_state", "launch_args", "theme_tokens", "theme_key", "settings_get", "settings_set", "cloud_status", "window_classes", "open_url", "open_ewe_sync", "pick_file", "print_page", "quit_app"]);
+  const local = new Set(["daemon_state", "launch_args", "theme_tokens", "theme_key", "settings_get", "settings_set", "passwords_provider", "use_safe_for_passwords", "cloud_status", "window_classes", "open_url", "open_ewe_sync", "pick_file", "print_page", "quit_app"]);
   const needsUnlock = new Set(["list", "search", "match_items", "show", "reveal", "copy", "add", "edit", "rm", "restore", "import_items"]);
 
   window.__SAFE_MOCK__ = {

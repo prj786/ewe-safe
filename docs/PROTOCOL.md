@@ -18,6 +18,13 @@ they don't know. Renaming or removing a verb or a field means `"v": 2`.
 - **`unlock`, `init`, `passwd` read secrets from the terminal or stdin**,
   never from argv. With a terminal they prompt (no echo); without one they
   read one line per secret from stdin.
+- **`read`, `run`, `inject` and `git-credential` follow the tools they
+  copy** (1Password's `op`, git's credential helpers), below in
+  [References](#references-safe): `read` prints the bare value (exit 1 and
+  nothing on stdout when there is none, the reason on stderr; `--json` is
+  the rule-5 answer); `run` exits with its command's code; `inject` prints
+  the filled template (with `-o` it writes the file and answers JSON);
+  `git-credential` speaks git's `key=value` lines and always exits 0.
 
 Every reply has `"ok"`. A failure is:
 
@@ -42,6 +49,7 @@ Every reply has `"ok"`. A failure is:
 | `key-changed` | the copy in the place has a different master key (changed on another machine): unlock with the new password |
 | `bad-request` | unknown verb, missing or invalid argument |
 | `cancelled` | the user dismissed a prompt (`unlock --ask`) |
+| `ambiguous` | a `safe://` reference fits more than one item (or field): `hint` lists the items' ids. Never a guess |
 | `source-error` | an import's source can't be read: not a 1PUX/CSV export, unreadable, or `op` failed (`message` has op's own words) |
 | `internal` | a bug; `message` has the detail |
 
@@ -131,6 +139,11 @@ protected custom field are.
 | `passwd` | new password twice on tty/stdin (current one first if locked) | `sync`. Needs the place: the other machines' changes come in under the old password first (`place-error` while offline) |
 | `import` | `<format> [<file>] [--dry-run] [--folder F] [--skip-duplicates] [--vault V]… [--account A]` — formats: `1pux` (1Password's export), `1password-csv` (1Password 8's CSV: logins and passwords only), `op` (live from the 1Password app through its `op` CLI: no file; `--vault` (repeatable, a name or an id) picks vaults, default all; `--account` when `op` knows several accounts); more formats later (Bitwarden, browsers, KeePass, pass). docs/IMPORT.md has the mapping | `report`: `{logins, notes, attachments, otps, duplicates, skipped: [{title, reason}], folders}`; with `--dry-run` also `dry_run: true` and nothing changes, without it `sync`. One save for the whole import (one merge, one upload); an import that adds nothing saves nothing. Duplicate = a website host (without `www.`) and a username an item already in the safe has; kept unless `--skip-duplicates`, which lists them under `skipped`. Items 1Password calls Credit Card, Identity, Bank Account, … become **Notes** whose text lists their fields; their secret fields are also kept as protected custom fields. Vaults become folders (below `--folder`); 1Password's trash is skipped, its archive goes to the folder `Archive`. `skipped` also names attachments left out (`"<title> — <file>"`: missing, or bigger than 25 MB). The file is a plaintext export: for `1pux` and `1password-csv` the reply's `hint` says to delete it. The daemon reads the file itself (same uid; the CLI sends the full path); `op` runs as argv from the daemon (`vault list`, `item list --include-archive`, `item get`, `read` for attachments, `document get`), and its first call may wait for the user to approve Safe in 1Password. Needs the safe unlocked, a dry run too (duplicates are counted against it) |
 | `watch` | | **CLI only, a stream** for shells and scripts that can't hold a socket (the desktop plugin's bridge). The first line is `{"v": 1, "event": "status", "status": {…}}` — the `status` verb's reply object, as the `sync` event carries `"sync": {…}`; then every socket event as-is, one per line (the `subscribe` stream below); the last line is `{"v": 1, "event": "daemon-gone"}` — also the only line when the daemon can't be reached — and `watch` exits 0. It runs until killed or the daemon goes away |
+| `read` | `<safe://…> [--json] [-n\|--no-newline]` | **CLI**, like `op read`: the bare value and a newline; nothing (exit 1) when there is none. `--json`: `resolve`'s reply. A locked safe opens the unlock prompt once (`unlock --ask`), then tries again |
+| `run` | `[--env-file F]… [--] <command> [args…]` | **CLI**, like `op run`: every environment value that is a `safe://` reference, or holds `{{ safe://… }}`, is resolved — in the command's environment only — and ewe-safe becomes the command (exec), so the exit code is the command's. ewe-safe's own failures exit 125 (a reference that doesn't resolve: the command never runs), a command that can't run 126 or 127 (as `env` does). `--env-file` (repeatable) is a dotenv file and wins over the inherited environment. The output is **not** masked: the command can print what it got |
+| `inject` | `[-i <template>] [-o <file>]` | **CLI**, like `op inject`: the template (stdin without `-i`) with each `{{ safe://… }}` replaced; any other `{{ … }}` stays. To stdout, or with `-o` into the file (written whole, `0600`), answering `file`, `references` (how many). One reference that fails: nothing is written |
+| `git-credential` | `get\|store\|erase` | **CLI**, git's credential-helper protocol (`git help credential`); setup: `git config --global credential.helper '!ewe-safe git-credential'`. `get`: a login whose website has git's protocol and host exactly (`www.` and subdomains differ; a website without a scheme is https), with `credential.useHttpPath` also a path the repository's path starts with, and git's `username` when sent; the closest path, then the newest wins; nothing fits → nothing printed. Locked → the unlock prompt once. `store`: only after a yes — "Save the login …?" (title = the host) or "Update the password …?" when exactly one login with that host and username has another password; asked on git's terminal, else a prompt window (`EWE_SAFE_CONFIRM_CMD` replaces both: it writes `yes` into `$EWE_SAFE_ANSWER`; the question is `$EWE_SAFE_QUESTION`); never while locked, never for an OAuth token (`password_expiry_utc`, `oauth_refresh_token`) or an `ephemeral` credential. `erase` does nothing: Safe never deletes a login because a server refused it once |
+| `resolve` | `ref` (a `safe://` reference) | **socket only** (the CLI's face is `read --json`): `value`, `item_id`, `field` (as asked), `expires_in` for `otp`. Like `reveal`, it carries a value |
 | `ping` | | `pong: true` |
 | `version` | | `version`, `protocol: 1` |
 
@@ -165,7 +178,8 @@ Newline-delimited JSON, one object per line, UTF-8.
 booleans.
 
 **Reply:** the CLI's JSON object plus `"v": 1` and the request's `"id"`. So no reply field is ever called `id`: the envelope's would overwrite it (an item's id is `item_id` or sits inside `item`).
-`reveal` over the socket always answers `{"ok": true, "value": "…"}`.
+`reveal` over the socket always answers `{"ok": true, "value": "…"}`;
+`resolve` answers the same way, plus `item_id` and `field`.
 
 **Events:** after `{"v": 1, "id": n, "verb": "subscribe"}`, the connection
 stays open and receives lines without an `"id"`:
@@ -189,9 +203,48 @@ Events never carry a title, a username or a value.
 without touching the place or the disk, so the picker opens instantly. Only
 `unlock`, `open`, `init`, saves and `sync` talk to the place.
 
-`show`, `reveal` and `copy` read the unlocked safe and never wait for the
-place either (the daemon exchanges a copy of the safe with it). An edit
+`show`, `reveal`, `copy` and `resolve` read the unlocked safe and never
+wait for the place either (the daemon exchanges a copy of the safe with it). An edit
 (`add`, `edit`, `rm`, `restore`) writes and verifies the encrypted cache
 before it answers — a key derivation, about a second at the default cost —
 and waits for an exchange already under way; the place gets the edit
 moments later. `lock` never waits for the place.
+
+## References (`safe://`)
+
+A reference names one value in the safe, the way 1Password's `op://` does.
+`read`, `run` and `inject` send it to the daemon's `resolve`, so every
+caller follows the same rules (`safe_core::refs`).
+
+| reference | names |
+|---|---|
+| `safe://Personal/GitHub/password` | the item titled GitHub in the folder Personal |
+| `safe://Work/Mail/Gmail/username` | folders nest: Gmail in Work/Mail |
+| `safe:///GitHub/password` | GitHub at the top (no folder) |
+| `safe://GitHub/password` | GitHub in any folder |
+| `safe://4f9c0d1e-…/password` | the item with that id (any spelling of the UUID) |
+
+- **Fields:** `password`, `username`, `otp` (the current code; `expires_in`
+  says how long it lasts), `notes`, `url` (the first website), or a custom
+  field's name. These names compare without case. A custom field matches by
+  its exact name first, then without case; several fields that differ only
+  in case are `ambiguous`. A name that is no field but an attached file's
+  (a text file) gives the file. `public_key` and `private_key` are an SSH
+  key item's: the `public_key` field, and the key file its
+  `KeeAgent.settings` names (or its only other file).
+- **Names:** a folder path and a title compare exactly first; when nothing
+  fits exactly, without case and outer spaces. More than one item that fits
+  is `ambiguous` (exit 1 for `read`), never a guess; name it by its id.
+  Items in the recycle bin are never found.
+- **Escapes:** each part is percent-decoded: a title with a `/` is written
+  `%2F` (`safe://Music/AC%2FDC/password`), a `%` is `%25`, a space may be
+  `%20`. A `%` that isn't followed by two hex digits stays a `%`. `?` and
+  `#` are kept for later options: write them `%3F` and `%23`. A folder whose
+  own name holds a `/` can't be told from two nested folders.
+- **In `run` and `inject`:** a value that is a reference is replaced whole;
+  `{{ safe://… }}` (spaces inside the braces allowed) is replaced inside
+  any text. A reference on more than one line is not one.
+- **Env files** (`run --env-file`): `KEY=value` lines, `export KEY=value`,
+  `#` comments; `"double quotes"` take `\n` `\t` `\r` `\\` `\"` and may run over
+  several lines, `'single quotes'` keep everything as is, a bare value ends
+  at ` #`. `$VAR` is not expanded.

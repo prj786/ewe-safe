@@ -43,6 +43,33 @@ and **your ewe account's Nextcloud**.
 The Passwords plugin (`ewe.passwords` 1.2.0, provider `ewe`) fills from it
 with `Super+P`; a locked safe opens a small unlock prompt.
 
+## Use Safe from scripts
+
+No 1Password CLI needed. A **reference** names one value:
+`safe://<folder>/<title>/<field>` (`safe://GitHub/password` finds the title
+in any folder; `safe://<item-id>/<field>` always works). A `/` in a title is
+`%2F`. Two items with the same name are an error (`ambiguous`), never a
+guess. Details: [docs/PROTOCOL.md](docs/PROTOCOL.md#references-safe).
+
+| you want | Safe | 1Password |
+|---|---|---|
+| one value | `ewe-safe read "safe://Personal/GitHub/password"` | `op read "op://Personal/GitHub/password"` |
+| secrets in a command's environment | `ewe-safe run --env-file .env -- npm start` | `op run --env-file .env -- npm start` |
+| a config file from a template | `ewe-safe inject -i config.tpl -o config.ini` | `op inject -i config.tpl -o config.ini` |
+| git over https | `git config --global credential.helper '!ewe-safe git-credential'` | 1Password's git helper / SSH agent |
+
+    # .env — values that are references are resolved for the command only
+    GITHUB_TOKEN=safe://Personal/GitHub/token
+    DATABASE_URL="postgres://app:{{ safe://Work/DB/password }}@db/app"
+
+    # config.tpl — {{ safe://… }} is replaced; the output file is 0600
+    password = {{ safe://Work/Mail/password }}
+
+`run` doesn't hide secrets in the command's output (1Password masks them):
+don't print them. A locked safe opens the unlock prompt. The git helper
+answers only for a login whose website has git's exact host, and asks before
+it saves or changes a login; it never deletes one.
+
 ## Develop
 
     cargo test                      # everything, including the binaries end to end
@@ -70,7 +97,8 @@ test switches: `EWE_SAFE_KDF_ITERATIONS` (cheap keys),
 `EWE_SAFE_INSECURE_LOOPBACK=1` (plain http to 127.0.0.1),
 `EWE_SAFE_NO_LOGIND`, `EWE_SAFE_LOGIND_BUS`, `EWE_SAFE_IDLE_SECONDS`,
 `EWE_SAFE_SYNC_SECONDS`; the CLI's: `EWE_SAFE_ASK_CMD` (the unlock prompt), `EWE_SAFE_SOCKET`
-(another socket than `$XDG_RUNTIME_DIR/ewe-safe.sock`).
+(another socket than `$XDG_RUNTIME_DIR/ewe-safe.sock`),
+`EWE_SAFE_CONFIRM_CMD` (the git helper's "save this login?" question).
 
 Never enable quick-xml's `overlapped-lists` feature anywhere in the tree: it
 corrupts every password keepass-rs reads (SPIKE-0, F2). CI checks for it.

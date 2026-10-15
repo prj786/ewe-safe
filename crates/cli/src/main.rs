@@ -4,6 +4,8 @@
 //! `reveal` without `--json` prints the bare value (nothing and exit 1 when
 //! there is none), `unlock --ask` opens a prompt window and waits, and
 //! `watch` prints one line per event until the daemon goes away.
+//! `read`, `run`, `inject` and `git-credential` follow the tools they copy
+//! (1Password's `op`, git's helpers): [`scripts`] and [`git`].
 
 use std::collections::HashSet;
 use std::io::{IsTerminal, Read, Write};
@@ -15,6 +17,9 @@ use safe_client::{FAST, IMPORT, Next, SLOW};
 use safe_core::generator;
 use serde_json::{Map, Value, json};
 use zeroize::Zeroizing;
+
+mod git;
+mod scripts;
 
 /// How long `unlock --ask` waits for the prompt.
 const ASK_WAIT: Duration = Duration::from_secs(300);
@@ -86,7 +91,7 @@ fn parse(argv: &[String]) -> Result<Parsed, Value> {
         } else {
             format!("There is no verb {verb:?}.")
         });
-        v["verbs"] = json!(VERBS);
+        v["verbs"] = json!([VERBS, scripts::VERBS].concat());
         return Err(v);
     }
     let lists = matches!(verb.as_str(), "add" | "edit" | "import");
@@ -211,6 +216,9 @@ fn ok(v: &Value) -> bool {
 }
 
 fn run(argv: &[String]) -> (Value, ExitCode) {
+    if let Some(out) = scripts::dispatch(argv) {
+        return out;
+    }
     let mut p = match parse(argv) {
         Ok(p) => p,
         Err(v) => return (v, ExitCode::SUCCESS),
