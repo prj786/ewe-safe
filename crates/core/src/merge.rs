@@ -9,6 +9,10 @@
 //! - When both copies changed an entry, the newer `LastModificationTime`
 //!   wins and the other version joins the entry's history. Equal times are
 //!   settled by a hash of the content, so both machines pick the same one.
+//! - One exception inside an entry: its passkey ([`carry_passkey`]). When
+//!   only the losing side changed the passkey since the newest version both
+//!   copies share, its passkey goes onto the winner, and the winner's own
+//!   version joins the history too.
 //! - Deletions come only from `DeletedObjects` (the union of both copies). A
 //!   deletion wins over a copy last changed at or before it and loses to a
 //!   later change.
@@ -41,6 +45,7 @@ use uuid::Uuid;
 use zeroize::Zeroizing;
 
 use crate::item::custom_text;
+use crate::passkey;
 use crate::safe::HISTORY_MAX_ITEMS;
 
 type Time = Option<NaiveDateTime>;
@@ -51,7 +56,8 @@ type Hash = [u8; 32];
 pub struct Report {
     /// Items that were only in the other copy.
     pub added: usize,
-    /// Items whose newer version came from the other copy.
+    /// Items whose current version changed here: the other copy's was
+    /// newer, or its passkey came over.
     pub updated: usize,
     /// Items both copies changed: one version won, the other is in history.
     pub diverged: usize,
@@ -191,16 +197,25 @@ fn debug_hash(v: &impl Debug) -> Hash {
 /// An entry version's content: everything but its place, its history and
 /// the read-only counters (last access, usage count).
 fn entry_hash(e: &EntryRef<'_>) -> Hash {
+    content_hash(e, &e.fields, &e.tags)
+}
+
+/// [`entry_hash`] of `e` with these fields and tags instead of its own.
+fn content_hash(
+    e: &EntryRef<'_>,
+    fields: &HashMap<String, Value<String>>,
+    tags: &[String],
+) -> Hash {
     let mut h = Hasher::new();
-    let mut keys: Vec<&String> = e.fields.keys().collect();
+    let mut keys: Vec<&String> = fields.keys().collect();
     keys.sort();
     for k in keys {
-        let v = &e.fields[k];
+        let v = &fields[k];
         h.text(k);
         h.bytes(&[u8::from(v.is_protected())]);
         h.text(v.get());
     }
-    h.debug(&e.tags);
+    h.debug(&tags);
     let t = &e.times;
     h.debug(&(t.creation, t.last_modification, t.expiry, t.expires));
     h.custom(&e.custom_data);
@@ -540,6 +555,116 @@ fn merge_groups(
     Ok(())
 }
 
+/// A passkey field: KeePassXC's `KPEX_PASSKEY_*` and Strongbox's username.
+fn is_passkey_field(name: &str) -> bool {
+    name.starts_with(passkey::PREFIX) || name == passkey::KPXC_USERNAME
+}
+
+fn has_passkey(e: &Entry) -> bool {
+    e.fields.keys().any(|k| is_passkey_field(k)) || e.tags.iter().any(|t| t == passkey::TAG)
+}
+
+/// A version's passkey (its fields with their protection, and the tag), as
+/// a hash: compared, never kept.
+fn passkey_hash(e: &Entry) -> Hash {
+    let mut h = Hasher::new();
+    let mut keys: Vec<&String> = e.fields.keys().filter(|k| is_passkey_field(k)).collect();
+    keys.sort();
+    for k in keys {
+        let v = &e.fields[k];
+        h.text(k);
+        h.bytes(&[u8::from(v.is_protected())]);
+        h.text(v.get());
+    }
+    h.debug(&e.tags.iter().any(|t| t == passkey::TAG));
+    h.done()
+}
+
+/// The passkey of the newest version both copies have (current or in
+/// history): what the entry's passkey was before the two diverged. None
+/// when they share no version (a history turned off or trimmed).
+fn shared_passkey(
+    o: &EntryRef<'_>,
+    t: &EntryRef<'_>,
+    ours_history: &[EntryRef<'_>],
+    theirs_history: &[EntryRef<'_>],
+) -> Option<Hash> {
+    let ours: HashSet<Hash> = ours_history.iter().chain([o]).map(entry_hash).collect();
+    theirs_history
+        .iter()
+        .chain([t])
+        .filter_map(|v| {
+            let h = entry_hash(v);
+            ours.contains(&h)
+                .then(|| (v.times.last_modification, h, passkey_hash(v)))
+        })
+        .max()
+        .map(|(_, _, pk)| pk)
+}
+
+/// Whether the losing version's passkey goes onto the winner: only the
+/// loser changed it (added, replaced or removed) since the shared version.
+/// When both changed it, the winner, the newer version, keeps its own. With
+/// no shared version, a passkey only the loser has is kept: losing a
+/// passkey breaks a sign-in, keeping one breaks nothing.
+fn carry_passkey(winner: &EntryRef<'_>, loser: &EntryRef<'_>, shared: Option<Hash>) -> bool {
+    let (w, l) = (passkey_hash(winner), passkey_hash(loser));
+    w != l
+        && match shared {
+            Some(base) => w == base,
+            None => !has_passkey(winner) && has_passkey(loser),
+        }
+}
+
+/// The tie-break between two versions with the same time: their content
+/// without the passkey first, so a winner that took the loser's passkey
+/// still wins against both inputs the next time (merging again changes
+/// nothing). Without a passkey this is [`entry_hash`]: the rule for every
+/// other item is as it was.
+fn rank_hash(e: &EntryRef<'_>) -> Hash {
+    if !has_passkey(e) {
+        return entry_hash(e);
+    }
+    let fields: HashMap<String, Value<String>> = e
+        .fields
+        .iter()
+        .filter(|(k, _)| !is_passkey_field(k))
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+    let tags: Vec<String> = e
+        .tags
+        .iter()
+        .filter(|t| *t != passkey::TAG)
+        .cloned()
+        .collect();
+    content_hash(e, &fields, &tags)
+}
+
+/// The winner's fields and tags with the loser's passkey in them.
+fn with_passkey_of(
+    winner: &EntryRef<'_>,
+    loser: &EntryRef<'_>,
+) -> (HashMap<String, Value<String>>, Vec<String>) {
+    let mut fields: HashMap<String, Value<String>> = winner
+        .fields
+        .iter()
+        .filter(|(k, _)| !is_passkey_field(k))
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+    for (k, v) in loser.fields.iter().filter(|(k, _)| is_passkey_field(k)) {
+        fields.insert(k.clone(), v.clone());
+    }
+    let mut tags = winner.tags.clone();
+    if loser.tags.iter().any(|t| t == passkey::TAG) {
+        if !tags.iter().any(|t| t == passkey::TAG) {
+            tags.push(passkey::TAG.to_string());
+        }
+    } else {
+        tags.retain(|t| t != passkey::TAG);
+    }
+    (fields, tags)
+}
+
 /// An entry's history versions as stored (a KeePass file lists them oldest
 /// first).
 fn history_of<'a>(e: &'a EntryRef<'_>) -> Vec<EntryRef<'a>> {
@@ -685,20 +810,47 @@ fn merge_entry(
     let id = o.id();
     let (ho, ht) = (entry_hash(o), entry_hash(t));
     let diverged = ho != ht;
-    let theirs_wins = diverged && (t.times.last_modification, ht) > (o.times.last_modification, ho);
-    let loser = if theirs_wins {
-        ours.entry(id)
-    } else {
-        theirs.entry(id)
-    };
+    let theirs_wins = diverged
+        && (t.times.last_modification, rank_hash(t), ht)
+            > (o.times.last_modification, rank_hash(o), ho);
+    let (winner, loser) = if theirs_wins { (t, o) } else { (o, t) };
 
     let ours_history = history_of(o);
     let theirs_history = history_of(t);
     let ours_hashes: Vec<Hash> = ours_history.iter().map(entry_hash).collect();
     let longest = ours_history.len().max(theirs_history.len());
+
+    // the passkey the loser changed alone goes onto the winner; the
+    // winner's own version then joins the history too, so nothing is lost
+    let carry = diverged
+        && carry_passkey(
+            winner,
+            loser,
+            shared_passkey(o, t, &ours_history, &theirs_history),
+        );
+    let current = carry.then(|| with_passkey_of(winner, loser));
+    let hc = match &current {
+        Some((fields, tags)) => content_hash(winner, fields, tags),
+        None => entry_hash(winner),
+    };
+    let side = |theirs_side: bool| {
+        if theirs_side {
+            theirs.entry(id)
+        } else {
+            ours.entry(id)
+        }
+    };
+    let mut lost: Vec<EntryRef<'_>> = Vec::new();
+    if diverged {
+        lost.extend(side(!theirs_wins));
+        if carry {
+            lost.extend(side(theirs_wins));
+        }
+    }
+    lost.retain(|v| entry_hash(v) != hc);
+
     let mut seen = HashSet::new();
     let mut versions: Vec<(Time, Hash, EntryRef<'_>)> = Vec::new();
-    let lost = if diverged { loser } else { None };
     for v in ours_history.into_iter().chain(theirs_history).chain(lost) {
         let h = entry_hash(&v);
         if seen.insert(h) {
@@ -716,12 +868,18 @@ fn merge_entry(
     if diverged {
         report.diverged += 1;
     }
-    if theirs_wins {
+    if hc != ho {
         report.updated += 1;
     }
-    if theirs_wins || hashes != ours_hashes {
+    if hc != ho || hashes != ours_hashes {
         let versions: Vec<EntryRef<'_>> = versions.into_iter().map(|v| v.2).collect();
-        rebuild(out, id, &versions, if theirs_wins { t } else { o })?;
+        rebuild(out, id, &versions, winner)?;
+        if let Some((fields, tags)) = current
+            && let Some(mut e) = out.entry_mut(id)
+        {
+            e.fields = fields;
+            e.tags = tags;
+        }
     }
 
     let op = o.parent().id();

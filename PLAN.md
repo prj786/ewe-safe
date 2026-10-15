@@ -30,7 +30,7 @@ password.
 | in (v1) | out (on purpose) |
 |---|---|
 | One safe per person, one master password | Several vaults, shared vaults, families, teams |
-| Two kinds of item: **Login**, **Note** | Cards, identities, documents, SSH keys, passkeys |
+| Kinds of item: **Login**, **Note**, **SSH key** (2026-10-15); a login may hold a **passkey** | Cards, identities, documents |
 | Search-first window, tags, folders shown if the file has them | Collections, Watchtower dashboards, travel mode |
 | Fill any app with `Super+P` (exists today) | A browser extension for every browser |
 | Generator (characters or words) | |
@@ -441,11 +441,17 @@ init  --place P [--location L]   create (password twice on tty/stdin)
 open  --place P [--location L]   use an existing .kdbx
 unlock [--ask]               tty/stdin password; --ask = system auth or the window
 lock
-list   [--kind login|note] [--tag T]
+list   [--kind login|note|ssh-key] [--tag T]
 search <text>
 match  [--class C] [--title T] [--url U]    best first, no secrets (the picker's verb)
 show   <id>                  fields, secrets masked
 reveal <id> --field password|username|otp|<name>   bare value on stdout
+read   "safe://<folder>/<title>/<field>"   bare value, like `op read` (2026-10-15)
+run    [--env-file F] -- <cmd>   safe:// values in its environment, like `op run`
+inject -i <template> [-o F]  {{ safe://… }} filled in, like `op inject`
+git-credential get|store|erase   git's helper: strict host match, asks before saving
+passkey list [--rp R]        the passkeys (made and used by the browser, over the socket)
+ssh list|add|new|adopt|enable|disable|status   SSH keys and the agent (TRIO.md S2)
 copy   <id> --field …        wl-copy with the password-manager hint, auto-clear
 add    --kind login|note --title … [--username …] [--url …] [--app CLASS]
        [--generate | --password-stdin]
@@ -482,6 +488,10 @@ connection.
 | Nextcloud app password | unchanged: keyring, service `ewe-cloud` (read through `ewe-cloud token`) | — |
 | Google / Dropbox refresh tokens | keyring, `ewe-auth` only | — |
 | socket | `$XDG_RUNTIME_DIR/ewe-safe.sock` (0600) | — |
+| SSH agent socket | `$XDG_RUNTIME_DIR/ewe-safe-ssh.sock` (0600; TRIO.md S2) | — |
+| SSH agent's public keys (for the list while locked) | `~/.local/state/ewe/safe/ssh-public.json` (public keys and titles) | never |
+| agent settings | `ewe.conf` `[safe]`: `ssh_agent`, `ssh_confirm` | yes |
+| `SSH_AUTH_SOCK` for new sessions | `~/.config/environment.d/90-ewe-safe-ssh.conf` (`ewe-safe ssh enable`) | never |
 
 **A new machine:** restore `ewe.conf` in ewe-sync, open Safe, and you see
 *Open your safe from Your ewe account*. Type the master password once.
@@ -652,6 +662,34 @@ with phase 2, as one release wave:
   - the browser never fills without a click, and never on a site that doesn't match;
   - the canary secret appears in no companion log, prompt or request.
 
+### Phase 2++: Safe, the browser and the companion (owner, 2026-10-15)
+
+The owner wants Safe to replace 1Password for real: passkeys, SSH keys, a
+CLI like `op`, and the ewe browser using Safe as 1Password's extension
+does. The contract between the repos is [docs/TRIO.md](docs/TRIO.md).
+
+- [x] **Passkeys** (TRIO.md S1, branch `feat/passkeys`): stored in
+      KeePassXC's fields (docs/FORMAT.md, "Passkeys"), so KeePassXC,
+      KeePassDX and Strongbox share them; ES256 and EdDSA; the socket verbs
+      `passkey-list`, `passkey-create`, `passkey-get`, `ewe-safe passkey
+      list`, `edit --remove-passkey`, the summary's `passkey`
+      (docs/PROTOCOL.md); the window's passkey row, list badge and the
+      Import screen's line. Tested against a file KeePassXC 2.7.12 wrote,
+      OpenSSL and KeePassXC's own test vectors. *Open:* the browser side
+      (TRIO.md B1) and a real site (webauthn.io, GitHub) end to end. PR #11.
+- [x] **SSH keys and the agent** (TRIO.md S2, branch `feat/ssh`): KeeAgent
+      entries as KeePassXC stores them (docs/FORMAT.md, "SSH keys"),
+      `ewe-safe ssh …`, the agent on `ewe-safe-ssh.sock` with a first-use
+      question per app, 1Password's SSH keys imported as SSH keys and
+      `ssh adopt` for a safe imported before. *Open:* the owner's real
+      `git push` through it. PR #13.
+- [x] **A CLI like `op`** (TRIO.md S3, branch `feat/cli-power`): `read`,
+      `run`, `inject`, `git-credential`, the socket's `resolve`, and the
+      window's *Use Safe for Super+P*. PR #10.
+- The three, with the edit hotfix (PR #12), are merged and tested together
+  on `integrate/trio` (one PR); `crates/core/tests/together.rs` checks
+  where they meet.
+
 ### Before calling it 1.0
 
 - [ ] Security review: the `security-reviewer` agent on every crate, `cargo audit`, `cargo-fuzz` on the KDBX reader and every importer, and an outside reviewer if one can be found.
@@ -687,16 +725,18 @@ with phase 2, as one release wave:
 
 | idea | why not now |
 |---|---|
-| Passkeys | KDBX can store them, but Linux has no passkey provider API for native apps (research 2026-09-15: credentialsd is passkeys-only and early) |
 | Shared / family safes | later, as a second safe file in a Nextcloud shared folder; needs "several safes" first |
 | Several safes open at once | simplicity first |
 | KeePassXC-Browser protocol (Firefox, Chromium) | the ewe browser comes first; this is a whole extra protocol surface |
-| SSH agent | ewe has the SSH plugin; KeePassXC already does this |
+| ~~SSH agent~~ | **moved 2026-10-15** (the owner pushes with 1Password's agent and wants Safe to do it): SSH keys in Safe and an agent in `ewe-safed`, TRIO.md S2; docs/PROTOCOL.md "SSH keys and the agent", docs/FORMAT.md "SSH keys" |
 | YubiKey challenge-response | `keepass-rs` supports it (`challenge_response`); adds UI and hardware testing |
 | S3-compatible place (MinIO, Garage) | possible later; S3 has conditional writes now |
 | Our own phone app | **rejected**: KeePassDX, Strongbox and KeePassium exist and open the file |
 | Safe as the Secret Service (replacing gnome-keyring) | **rejected**: the keyring is unlocked by PAM at login and other apps depend on it; the safe must never block login |
 | rclone as the transport | **rejected**: no conditional write, so concurrent saves would be lost |
+
+Passkeys left this list on 2026-10-15: the ewe browser uses Safe's passkeys
+itself, so no Linux passkey provider API is needed (docs/TRIO.md, S1).
 
 ---
 

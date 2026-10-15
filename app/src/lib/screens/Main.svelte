@@ -1,6 +1,8 @@
 <script>
   // The unlocked window (App shell card): side navigation, a header with
   // search, New and Lock, then the list and the item — or Settings, Import.
+  // SSH keys have their own New (make one, or add a key file) and the
+  // agent's state above the list.
   // Keyboard first: type anywhere to search, arrows move, Enter or Ctrl+C
   // copies the password, Ctrl+Shift+C the username, Ctrl+N is a new login,
   // Ctrl+L locks, Esc steps back.
@@ -8,6 +10,8 @@
   import Sidenav from "../components/Sidenav.svelte";
   import ItemDetail from "../components/ItemDetail.svelte";
   import ItemEdit from "../components/ItemEdit.svelte";
+  import SshKeyNew from "../components/SshKeyNew.svelte";
+  import SshAgentBar from "../components/SshAgentBar.svelte";
   import Toasts from "../components/Toasts.svelte";
   import Settings from "./Settings.svelte";
   import Import from "./Import.svelte";
@@ -52,7 +56,7 @@
     ui.editing?.mode === "edit" ? safe.items.find((i) => i.id === ui.editing.id) ?? null : null
   );
   const title = $derived(
-    f.trash ? "Trash" : f.kind === "login" ? "Logins" : f.kind === "note" ? "Notes" : f.tag || f.folder.split("/").pop() || "All items"
+    f.trash ? "Trash" : f.kind === "login" ? "Logins" : f.kind === "note" ? "Notes" : f.kind === "ssh-key" ? "SSH keys" : f.tag || f.folder.split("/").pop() || "All items"
   );
   const subtitle = $derived(
     `${base.length === 0 ? "Empty" : base.length === 1 ? "1 item" : `${base.length} items`}${safe.readOnly ? " · read-only" : ""}`
@@ -144,7 +148,7 @@
               <span class="ewe-kbd-combo"><kbd class="ewe-kbd">Ctrl</kbd><span>+</span><kbd class="ewe-kbd">F</kbd></span>
             </label>
           </div>
-          <button class="ewe-btn ewe-btn--primary ewe-btn--sm" disabled={safe.readOnly || f.trash} onclick={() => newItem(f.kind === "note" ? "note" : "login")}>
+          <button class="ewe-btn ewe-btn--primary ewe-btn--sm" disabled={safe.readOnly || f.trash} onclick={() => newItem(f.kind === "note" || f.kind === "ssh-key" ? f.kind : "login")}>
             <Icon name="plus" />New
           </button>
           <button class="ewe-iconbtn ewe-iconbtn--ghost" aria-label="Lock Safe" title="Lock (Ctrl+L)" onclick={() => safe.lock()}>
@@ -164,6 +168,8 @@
           </div>
         </div>
       {/if}
+
+      {#if f.kind === "ssh-key"}<SshAgentBar />{/if}
 
       {#if safe.items.length === 0 && !f.trash && !ui.editing}
         <div class="safe-split" style="align-items:center;justify-content:center">
@@ -195,13 +201,15 @@
                     }}
                   >
                     <span class="ewe-row__lead">
-                      {#if i.kind === "login"}<span class="safe-letter">{letter(i.title)}</span>{:else}<span class="safe-letter"><Icon name="sticky-note" /></span>{/if}
+                      {#if i.kind === "login"}<span class="safe-letter">{letter(i.title)}</span>{:else}<span class="safe-letter"><Icon name={i.kind === "ssh-key" ? "terminal" : "sticky-note"} /></span>{/if}
                     </span>
                     <span class="ewe-row__text">
                       <span class="ewe-row__title">{i.title}</span>
-                      <span class="ewe-row__desc">{i.kind === "note" ? "Note" : i.username || (i.urls?.[0] ? hostOf(i.urls[0]) : "")}</span>
+                      <span class="ewe-row__desc">{i.kind === "note" ? "Note" : i.kind === "ssh-key" ? ["SSH key", i.ssh?.key_type].filter(Boolean).join(" · ") : i.username || (i.urls?.[0] ? hostOf(i.urls[0]) : "")}</span>
                     </span>
-                    {#if i.has_otp}<span class="ewe-row__trail"><Icon name="timer" /></span>{/if}
+                    {#if i.has_otp || i.passkey}<span class="ewe-row__trail"
+                        >{#if i.passkey}<Icon name="key-round" label="Has a passkey" />{/if}{#if i.has_otp}<Icon name="timer" />{/if}</span
+                      >{/if}
                   </button>
                 {/each}
               </div>
@@ -212,7 +220,9 @@
             {/if}
           </div>
           <div class="safe-detail">
-            {#if ui.editing}
+            {#if ui.editing?.mode === "new" && ui.editing.kind === "ssh-key"}
+              <SshKeyNew />
+            {:else if ui.editing}
               {#if ui.editing.mode === "new" || editItem}
                 {#key ui.editing}
                   <ItemEdit editing={ui.editing} item={editItem} />
@@ -220,6 +230,8 @@
               {/if}
             {:else if current}
               <ItemDetail bind:this={detail} item={current} trash={f.trash} />
+            {:else if f.kind === "ssh-key" && !f.trash}
+              <SshKeyNew />
             {/if}
           </div>
         </div>

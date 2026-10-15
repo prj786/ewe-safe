@@ -71,6 +71,15 @@ export const api = {
   // format: "1pux" | "1password-csv" | "op"; file: a path (none for op)
   importItems: ({ format, file, dryRun, folder, skipDuplicates, vault }) =>
     invoke("import_items", { format, file, dryRun, folder, skipDuplicates, vault }),
+  // SSH keys and the agent (PROTOCOL.md "SSH keys"): a key file by its path
+  // (the daemon reads it); its passphrase, if any, is a secret
+  sshAdd: ({ file, title, folder, passphrase }) => invoke("ssh_add", { file, title, folder, passphrase }),
+  // keyType: "ed25519" | "ecdsa" | "rsa"
+  sshNew: ({ title, keyType, bits, folder }) => invoke("ssh_new", { title, keyType, bits, folder }),
+  sshAdopt: (dryRun = false) => invoke("ssh_adopt", { dryRun }),
+  sshEnable: (confirm) => invoke("ssh_enable", { confirm }),
+  sshDisable: () => invoke("ssh_disable"),
+  sshStatus: () => invoke("ssh_status"),
 
   // the window and the desktop around it (not the daemon)
   launchArgs: () => invoke("launch_args"),
@@ -78,6 +87,9 @@ export const api = {
   themeKey: () => invoke("theme_key"),
   settingsGet: () => invoke("settings_get"),
   settingsSet: (key, value) => invoke("settings_set", { key, value }),
+  // Super+P: the Passwords plugin's provider, and switching it to Safe
+  passwordsProvider: () => invoke("passwords_provider"),
+  useSafeForPasswords: () => invoke("use_safe_for_passwords"),
   cloudStatus: () => invoke("cloud_status"),
   windowClasses: () => invoke("window_classes"),
   openUrl: (url) => invoke("open_url", { url }),

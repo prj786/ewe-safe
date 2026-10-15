@@ -49,7 +49,9 @@ pub fn listen(paths: &Paths) -> Result<(UnixListener, Option<PathBuf>), String> 
     Ok((l, Some(path)))
 }
 
-/// systemd's `LISTEN_FDS`: the socket is fd 3.
+/// systemd's `LISTEN_FDS`: the socket is fd 3. A unit that also listens
+/// for the SSH agent passes its socket too; each fd is told apart by the
+/// path it is bound to, and the agent's waits for agent.rs.
 fn activated() -> Option<UnixListener> {
     let pid: u32 = std::env::var("LISTEN_PID").ok()?.parse().ok()?;
     let fds: i32 = std::env::var("LISTEN_FDS").ok()?.parse().ok()?;
@@ -57,13 +59,19 @@ fn activated() -> Option<UnixListener> {
         return None;
     }
     // SAFETY: still one thread (main runs this first), so nothing reads the
-    // environment while it changes; fd 3 is ours by the activation protocol
+    // environment while it changes; fds 3… are ours by the activation protocol
     unsafe {
         std::env::remove_var("LISTEN_PID");
         std::env::remove_var("LISTEN_FDS");
         std::env::remove_var("LISTEN_FDNAMES");
-        libc::fcntl(3, libc::F_SETFD, libc::FD_CLOEXEC);
-        Some(UnixListener::from_raw_fd(3))
+        let mut main = None;
+        for fd in 3..3 + fds {
+            libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC);
+            if !crate::agent::claim(fd) && main.is_none() {
+                main = Some(fd);
+            }
+        }
+        main.map(|fd| UnixListener::from_raw_fd(fd))
     }
 }
 

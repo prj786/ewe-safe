@@ -118,9 +118,9 @@
           it.clear_url = true;
           it.url = urls;
         }
-        const was = new Set(was.apps ?? []);
-        const addA = apps.filter((a) => !was.has(a));
-        const remA = [...was].filter((a) => !apps.includes(a));
+        const hadApps = new Set(was.apps ?? []);
+        const addA = apps.filter((a) => !hadApps.has(a));
+        const remA = [...hadApps].filter((a) => !apps.includes(a));
         if (addA.length) it.app = addA;
         if (remA.length) it.remove_app = remA;
       }
@@ -134,7 +134,8 @@
       return;
     }
     toasts.show(isNew ? `Added “${title.trim()}”.` : "Saved.", { icon: "circle-check" });
-    if (isNew && r.id) ui.selected = r.id;
+    // add answers `item_id`; `id` is the socket's own request id
+    if (isNew && r.item_id) ui.selected = r.item_id;
     ui.editing = null;
   }
 
@@ -149,10 +150,10 @@
     {#if isLogin}
       <span class="safe-letter safe-letter--lg">{title ? letter(title) : "?"}</span>
     {:else}
-      <span class="safe-letter safe-letter--lg"><Icon name="sticky-note" /></span>
+      <span class="safe-letter safe-letter--lg"><Icon name={kind === "ssh-key" ? "terminal" : "sticky-note"} /></span>
     {/if}
     <div class="safe-dhead__titles">
-      <div class="h3">{isNew ? (isLogin ? "New login" : "New note") : isLogin ? "Edit login" : "Edit note"}</div>
+      <div class="h3">{isNew ? (isLogin ? "New login" : "New note") : isLogin ? "Edit login" : kind === "ssh-key" ? "Edit SSH key" : "Edit note"}</div>
       <div class="caption">Changes are saved and synced when you press Save.</div>
     </div>
   </div>
@@ -267,7 +268,7 @@
     </div>
 
     <label class="ewe-field">
-      <span class="ewe-field__label"><span>{isLogin ? "Notes" : "Note"}</span>{#if isLogin}<span class="ewe-field__optional">Optional</span>{/if}</span>
+      <span class="ewe-field__label"><span>{isLogin || kind === "ssh-key" ? "Notes" : "Note"}</span>{#if isLogin}<span class="ewe-field__optional">Optional</span>{/if}</span>
       <span class="ewe-input ewe-input--multiline"><textarea bind:value={notes} rows="4" spellcheck="false"></textarea></span>
     </label>
 

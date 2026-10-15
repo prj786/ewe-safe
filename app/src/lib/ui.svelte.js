@@ -5,11 +5,12 @@
 class Ui {
   // "items" | "settings" | "import"
   view = $state("items");
-  // the side navigation: kind "login"/"note", a tag, a folder, or the trash
+  // the side navigation: kind "login"/"note"/"ssh-key", a tag, a folder, or the trash
   filter = $state({ kind: "", tag: "", folder: "", trash: false });
   selected = $state(null);
   query = $state("");
-  // null, or {mode: "new" | "edit", id?, kind}
+  // null, or {mode: "new" | "edit", id?, kind}; a new "ssh-key" is
+  // SshKeyNew (make one, or add a file)
   editing = $state(null);
   // the Emergency Kit over the window (from Settings)
   kit = $state(false);

@@ -146,6 +146,46 @@ pub fn settings_set(key: &str, value: &Value) -> Value {
     json!({"ok": true})
 }
 
+/// The Passwords plugin (`Super+P`) and its `provider` setting.
+const PASSWORDS: &str = "ewe.passwords";
+
+/// What `Super+P` fills from: the Passwords plugin's `provider` (`auto`,
+/// `ewe`, `1password`, …) through `ewe-plugin get`; not `ok` when the
+/// plugin isn't installed.
+pub fn passwords_provider() -> Value {
+    provider_reply(tool_json(
+        "ewe-plugin",
+        &["get", PASSWORDS, "provider"],
+        Duration::from_secs(10),
+    ))
+}
+
+/// `ewe-plugin get <id> <key>` prints the value as JSON (`"auto"`); a
+/// plugin that isn't installed prints nothing on stdout.
+fn provider_reply(v: Value) -> Value {
+    match v {
+        Value::String(p) => json!({"ok": true, "provider": p}),
+        _ => {
+            json!({"ok": false, "error": "failed", "message": "The Passwords plugin isn't installed."})
+        }
+    }
+}
+
+/// `Super+P` fills from Safe: `ewe-plugin set ewe.passwords provider ewe`,
+/// the plugin-settings path (checked against the plugin's manifest, written
+/// through ewe-conf, live). Never `ewe-conf set` on the dotted id.
+pub fn use_safe_for_passwords() -> Value {
+    let r = tool_json(
+        "ewe-plugin",
+        &["set", PASSWORDS, "provider", "ewe"],
+        Duration::from_secs(30),
+    );
+    if r.get("ok").and_then(Value::as_bool) == Some(true) {
+        return json!({"ok": true, "provider": "ewe"});
+    }
+    json!({"ok": false, "error": "failed", "message": "Couldn't change what Super+P fills from."})
+}
+
 /// The ewe account (`ewe-cloud status`, which never prompts): for "Your
 /// ewe account" on the Place step.
 pub fn cloud_status() -> Value {
@@ -214,6 +254,21 @@ mod tests {
             settings_set("lock_after_minutes", &json!("thirty"))["error"],
             "bad-request"
         );
+    }
+
+    #[test]
+    fn the_passwords_provider_is_a_json_string_or_nothing() {
+        assert_eq!(
+            provider_reply(json!("1password")),
+            json!({"ok": true, "provider": "1password"})
+        );
+        for nothing in [
+            json!({"ok": false, "error": "failed"}),
+            json!({"ok": false, "error": "missing"}),
+            Value::Null,
+        ] {
+            assert_eq!(provider_reply(nothing)["ok"], false);
+        }
     }
 
     #[test]

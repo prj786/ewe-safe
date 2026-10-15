@@ -214,6 +214,8 @@ mod tests {
             has_password: true,
             has_otp: false,
             modified: None,
+            passkey: None,
+            ssh: None,
         }
     }
 

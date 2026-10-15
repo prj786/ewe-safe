@@ -20,7 +20,13 @@
 //!   `--new` and `--import` open those views; `--unlock` is a separate,
 //!   compact process that only unlocks (app_id `ewe-safe-unlock`, which
 //!   ewe's hyprland.lua floats at 560×200) and exits once the safe is open.
+//! - `--approve` is the SSH agent's question, the same kind of compact
+//!   process (and app_id, so it floats the same): "Allow ssh (from git) to
+//!   use GitHub key?". The daemon names the app and the key in
+//!   `EWE_SAFE_APPROVE_APP` and `EWE_SAFE_APPROVE_KEY`; the exit code is the
+//!   answer (0 allow, 1 deny).
 
+mod ssh;
 mod tools;
 
 use std::sync::Mutex;
@@ -49,6 +55,7 @@ const ITEM_KEYS: &[&str] = &[
     "clear_url",
     "remove_app",
     "remove_tag",
+    "remove_passkey",
 ];
 const PLACE_KEYS: &[&str] = &["place", "location", "url", "user"];
 
@@ -305,10 +312,23 @@ async fn import_items(
     .unwrap_or_else(|_| json!({"ok": false, "error": "internal", "message": "The import failed."}))
 }
 
+/// The SSH agent's question, from the daemon's environment: the app, the
+/// key's name, the app's full paths, and whether both are system programs
+/// (a same-uid program can take any name: the paths say which it is).
+#[derive(Clone, Debug, Default, PartialEq)]
+struct Approve {
+    app: String,
+    key: String,
+    path: String,
+    system: bool,
+}
+
 /// What this process was started with (see the module notes).
 #[derive(Clone, Debug, Default, PartialEq)]
 struct Launch {
     unlock: bool,
+    /// The SSH agent's question.
+    approve: Option<Approve>,
     show: Option<String>,
     new: bool,
     import: bool,
@@ -321,6 +341,15 @@ impl Launch {
         while let Some(a) = it.next() {
             match a.as_str() {
                 "--unlock" => l.unlock = true,
+                "--approve" => {
+                    let env = |k: &str| std::env::var(k).unwrap_or_default();
+                    l.approve = Some(Approve {
+                        app: env("EWE_SAFE_APPROVE_APP"),
+                        key: env("EWE_SAFE_APPROVE_KEY"),
+                        path: env("EWE_SAFE_APPROVE_PATH"),
+                        system: env("EWE_SAFE_APPROVE_SYSTEM") == "1",
+                    });
+                }
                 "--new" => l.new = true,
                 "--import" => l.import = true,
                 "--show" => l.show = it.next().filter(|id| id.len() <= 64),
@@ -330,9 +359,22 @@ impl Launch {
         l
     }
 
+    /// A compact process of its own: no single instance, a small window.
+    fn compact(&self) -> bool {
+        self.unlock || self.approve.is_some()
+    }
+
     fn json(&self) -> Value {
+        let mode = if self.approve.is_some() {
+            "approve"
+        } else if self.unlock {
+            "unlock"
+        } else {
+            "main"
+        };
         json!({
-            "mode": if self.unlock { "unlock" } else { "main" },
+            "mode": mode,
+            "approve": self.approve.as_ref().map(|a| json!({"app": a.app, "key": a.key, "path": a.path, "system": a.system})),
             "show": self.show,
             "new": self.new,
             "import": self.import,
@@ -366,6 +408,16 @@ async fn settings_set(key: String, value: Value) -> Value {
 }
 
 #[tauri::command]
+async fn passwords_provider() -> Value {
+    blocking(tools::passwords_provider).await
+}
+
+#[tauri::command]
+async fn use_safe_for_passwords() -> Value {
+    blocking(tools::use_safe_for_passwords).await
+}
+
+#[tauri::command]
 async fn cloud_status() -> Value {
     blocking(tools::cloud_status).await
 }
@@ -393,13 +445,20 @@ async fn pick_file(app: AppHandle, kind: String) -> Value {
         "1pux" => ("1Password export", &["1pux"]),
         "csv" => ("CSV file", &["csv"]),
         "kdbx" => ("KeePass file", &["kdbx"]),
+        // a private key has no extension (id_ed25519): no filter, from ~/.ssh
+        "ssh-key" => ("", &[]),
         _ => return json!({"ok": false, "error": "bad-request", "message": "Unknown file kind."}),
     };
     let picked = tauri::async_runtime::spawn_blocking(move || {
-        app.dialog()
-            .file()
-            .add_filter(name, exts)
-            .blocking_pick_file()
+        let mut d = app.dialog().file();
+        if exts.is_empty() {
+            if let Some(home) = std::env::var_os("HOME") {
+                d = d.set_directory(std::path::PathBuf::from(home).join(".ssh"));
+            }
+        } else {
+            d = d.add_filter(name, exts);
+        }
+        d.blocking_pick_file()
     })
     .await
     .ok()
@@ -499,14 +558,14 @@ pub fn run() {
     // The Wayland app_id is GTK's program name, set before GTK starts:
     // `ewe-safe` (ewe-safe.desktop) for the window, `ewe-safe-unlock` for
     // the compact prompt (hyprland.lua floats that class at 560×200).
-    gtk::glib::set_prgname(Some(if launch.unlock {
+    gtk::glib::set_prgname(Some(if launch.compact() {
         "ewe-safe-unlock"
     } else {
         "ewe-safe"
     }));
 
     let mut builder = tauri::Builder::default();
-    if !launch.unlock {
+    if !launch.compact() {
         // one window: a second launch (the launcher, the picker, the plugin)
         // brings it back and hands over what it was asked to show
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
@@ -519,12 +578,20 @@ pub fn run() {
         }));
     }
     let unlock_only = launch.unlock;
+    let approve = launch.approve.is_some();
     builder
         .plugin(tauri_plugin_dialog::init())
         .manage(Daemon::default())
         .manage(launch)
         .setup(move |app| {
-            let w = if unlock_only {
+            let w = if approve {
+                WebviewWindowBuilder::new(app, "approve", WebviewUrl::App("index.html".into()))
+                    .title("Allow the SSH key?")
+                    .inner_size(560.0, 200.0)
+                    .resizable(false)
+                    .decorations(false)
+                    .center()
+            } else if unlock_only {
                 WebviewWindowBuilder::new(app, "unlock", WebviewUrl::App("index.html".into()))
                     .title("Unlock Safe")
                     .inner_size(560.0, 200.0)
@@ -553,6 +620,8 @@ pub fn run() {
             theme_key,
             settings_get,
             settings_set,
+            passwords_provider,
+            use_safe_for_passwords,
             cloud_status,
             window_classes,
             open_url,
@@ -583,6 +652,12 @@ pub fn run() {
             place,
             passwd,
             daemon_state,
+            ssh::ssh_add,
+            ssh::ssh_new,
+            ssh::ssh_adopt,
+            ssh::ssh_enable,
+            ssh::ssh_disable,
+            ssh::ssh_status,
         ])
         .run(tauri::generate_context!())
         .expect("error while running the Safe window");
@@ -625,11 +700,21 @@ mod tests {
         // an over-long id is not an id
         assert_eq!(p(&["ewe-safe-app", "--show", &"x".repeat(65)]).show, None);
         assert_eq!(p(&["ewe-safe-app", "--unlock"]).json()["mode"], "unlock");
+        let a = p(&["ewe-safe-app", "--approve"]);
+        assert!(a.compact() && !a.unlock);
+        assert_eq!(a.json()["mode"], "approve");
     }
 
     #[test]
     fn every_secret_key_the_page_can_send_is_one_safe_client_scrubs() {
-        for k in ["password", "new_password", "password_value", "notes"] {
+        for k in [
+            "password",
+            "new_password",
+            "password_value",
+            "notes",
+            "passphrase",
+            "private_key",
+        ] {
             assert!(safe_client::SECRET_KEYS.contains(&k), "{k}");
         }
     }

@@ -3,7 +3,10 @@
 //! stdin lines, never from the command line. Three exceptions to the JSON:
 //! `reveal` without `--json` prints the bare value (nothing and exit 1 when
 //! there is none), `unlock --ask` opens a prompt window and waits, and
-//! `watch` prints one line per event until the daemon goes away.
+//! `watch` prints one line per event until the daemon goes away. SSH keys
+//! and the agent are `ewe-safe ssh …` ([`ssh`]).
+//! `read`, `run`, `inject` and `git-credential` follow the tools they copy
+//! (1Password's `op`, git's helpers): [`scripts`] and [`git`].
 
 use std::collections::HashSet;
 use std::io::{IsTerminal, Read, Write};
@@ -15,6 +18,10 @@ use safe_client::{FAST, IMPORT, Next, SLOW};
 use safe_core::generator;
 use serde_json::{Map, Value, json};
 use zeroize::Zeroizing;
+
+mod git;
+mod scripts;
+mod ssh;
 
 /// How long `unlock --ask` waits for the prompt.
 const ASK_WAIT: Duration = Duration::from_secs(300);
@@ -41,6 +48,7 @@ const VALUES: &[&str] = &[
     "remove-tag",
     "vault",
     "account",
+    "rp",
 ];
 const FLAGS: &[&str] = &[
     "json",
@@ -55,6 +63,7 @@ const FLAGS: &[&str] = &[
     "notes-stdin",
     "dry-run",
     "skip-duplicates",
+    "remove-passkey",
 ];
 /// Read here, never sent.
 const LOCAL_FLAGS: &[&str] = &["json", "ask", "password-stdin", "notes-stdin"];
@@ -65,7 +74,7 @@ const WITH_ID: &[&str] = &["show", "reveal", "copy", "edit", "rm", "restore"];
 const VERBS: &[&str] = &[
     "status", "summary", "init", "open", "unlock", "lock", "list", "search", "match", "show",
     "reveal", "copy", "add", "edit", "rm", "restore", "generate", "sync", "place", "passwd",
-    "import", "watch", "ping", "version",
+    "import", "watch", "ping", "version", "passkey", "ssh",
 ];
 
 struct Parsed {
@@ -86,7 +95,7 @@ fn parse(argv: &[String]) -> Result<Parsed, Value> {
         } else {
             format!("There is no verb {verb:?}.")
         });
-        v["verbs"] = json!(VERBS);
+        v["verbs"] = json!([VERBS, scripts::VERBS].concat());
         return Err(v);
     }
     let lists = matches!(verb.as_str(), "add" | "edit" | "import");
@@ -167,6 +176,15 @@ fn parse(argv: &[String]) -> Result<Parsed, Value> {
             [] => return Err(bad("import needs a format: 1pux, 1password-csv or op")),
             [_, _, extra, ..] => return Err(bad(format!("import takes no {extra:?}"))),
         }
+    } else if verb == "passkey" {
+        // `passkey list`; making and using a passkey is the browser's, over
+        // the socket (passkey-create, passkey-get)
+        if !matches!(positional.as_slice(), [sub] if sub == "list") {
+            return Err(bad("Usage: ewe-safe passkey list [--rp R]"));
+        }
+        if let Some(rp) = args.remove("rp") {
+            args.insert("rp_id".into(), rp);
+        }
     } else if let Some(p) = positional.first() {
         return Err(bad(format!("{verb} takes no {p:?}")));
     }
@@ -211,6 +229,12 @@ fn ok(v: &Value) -> bool {
 }
 
 fn run(argv: &[String]) -> (Value, ExitCode) {
+    if let Some(out) = scripts::dispatch(argv) {
+        return out;
+    }
+    if argv.first().map(String::as_str) == Some("ssh") {
+        return (ssh::run(&argv[1..]), ExitCode::SUCCESS);
+    }
     let mut p = match parse(argv) {
         Ok(p) => p,
         Err(v) => return (v, ExitCode::SUCCESS),
@@ -272,6 +296,7 @@ fn run(argv: &[String]) -> (Value, ExitCode) {
         }
         "sync" | "rm" | "restore" => done(client::call(&p.verb, Value::Object(p.args), SLOW)),
         "import" => done(client::call("import", Value::Object(p.args), IMPORT)),
+        "passkey" => done(client::call("passkey-list", Value::Object(p.args), FAST)),
         "watch" => (Value::Null, watch()),
         verb => done(client::call(verb, Value::Object(p.args), FAST)),
     }
@@ -485,6 +510,9 @@ fn unlock_ask() -> Value {
 }
 
 fn main() -> ExitCode {
+    // no core dump, no ptrace: reveal, read, run, inject and the git helper
+    // hold values (`run` gives its command the core limit back)
+    safe_core::hygiene::harden_soft();
     let argv: Vec<String> = std::env::args().skip(1).collect();
     let (v, code) = run(&argv);
     if !v.is_null() {
@@ -573,6 +601,23 @@ mod tests {
         for argv in [&["import"][..], &["import", "op", "a", "b"]] {
             assert_eq!(p(argv).err().expect("an error")["error"], "bad-request");
         }
+    }
+
+    #[test]
+    fn passkey_list_and_remove() {
+        let x = p(&["passkey", "list", "--rp", "github.com"]).unwrap();
+        assert_eq!(x.args["rp_id"], "github.com");
+        assert!(x.args.get("rp").is_none());
+        assert!(p(&["passkey", "list"]).unwrap().args.is_empty());
+        for argv in [
+            &["passkey"][..],
+            &["passkey", "add"],
+            &["passkey", "list", "x"],
+        ] {
+            assert_eq!(p(argv).err().expect("an error")["error"], "bad-request");
+        }
+        let x = p(&["edit", "4f9c", "--remove-passkey"]).unwrap();
+        assert_eq!(x.args["remove_passkey"], true);
     }
 
     #[test]
