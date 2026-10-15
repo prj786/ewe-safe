@@ -28,6 +28,9 @@ use crate::item::{self, Draft, Field, Summary};
 use crate::otp::Totp;
 use crate::{atomic, kdf, merge, search};
 
+// passkeys on items (set, add, remove, read): crate::passkey has the format
+mod passkeys;
+
 pub const GENERATOR: &str = "ewe-safe";
 pub const RECYCLE_BIN: &str = "Recycle Bin";
 /// KeePassXC's default when a file names none.

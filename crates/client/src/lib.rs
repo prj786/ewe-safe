@@ -37,6 +37,8 @@ pub fn wait_for(verb: &str) -> Duration {
         "import" => IMPORT,
         "init" | "open" | "unlock" | "passwd" | "add" | "edit" | "rm" | "restore" | "sync"
         | "place" => SLOW,
+        // it saves, as `add` does
+        "passkey-create" => SLOW,
         _ => FAST,
     }
 }

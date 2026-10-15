@@ -60,7 +60,9 @@ anyway, unless `--skip-duplicates`, which lists them under `skipped`.
 - items in 1Password's **trash**;
 - **links between items** (`reference` fields): they point at 1Password's
   own item ids;
-- **passkeys**: 1Password's desktop export leaves them out;
+- **passkeys**: 1Password's desktop export leaves them out. Sign in to each
+  site once with the password, then add a Safe passkey there (the ewe
+  browser offers it; the Import screen says so too);
 - vault and item **icons**, Watchtower data, 1Password's item ids;
 - attachments over **25 MB**, or missing from the export (the report names
   each one, as `"<item> — <file>"`).

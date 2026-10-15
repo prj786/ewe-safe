@@ -22,4 +22,6 @@ libc = "0.2"
 # logind's LockedHint and PrepareForSleep (the screen locks, the lid closes)
 zbus = "5"
 signal-hook = "0.3"
+# a new passkey login's website, from the page's origin
+url = "2"
 

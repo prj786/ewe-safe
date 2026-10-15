@@ -20,3 +20,7 @@ rpassword = "7"
 
 [dev-dependencies]
 safe-testkit.workspace = true
+# checking the daemon's passkey answers (tests/passkeys.rs)
+p256 = { version = "0.14", default-features = false, features = ["ecdsa", "pem", "std"] }
+ed25519-dalek = { version = "3", default-features = false, features = ["fast", "zeroize", "pem"] }
+sha2 = "0.11"

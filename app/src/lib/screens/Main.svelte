@@ -201,7 +201,9 @@
                       <span class="ewe-row__title">{i.title}</span>
                       <span class="ewe-row__desc">{i.kind === "note" ? "Note" : i.username || (i.urls?.[0] ? hostOf(i.urls[0]) : "")}</span>
                     </span>
-                    {#if i.has_otp}<span class="ewe-row__trail"><Icon name="timer" /></span>{/if}
+                    {#if i.has_otp || i.passkey}<span class="ewe-row__trail"
+                        >{#if i.passkey}<Icon name="key-round" label="Has a passkey" />{/if}{#if i.has_otp}<Icon name="timer" />{/if}</span
+                      >{/if}
                   </button>
                 {/each}
               </div>

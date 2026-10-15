@@ -14,6 +14,8 @@
 //!   own merge loses data (SPIKE-0, M1/M2), so this one is Safe's.
 //! - [`import`]: another password manager's export (1Password: 1PUX, CSV,
 //!   `op`) turned into items (docs/IMPORT.md).
+//! - [`passkey`]: passkeys in KeePassXC's fields, their keys, and what an
+//!   authenticator answers (docs/FORMAT.md).
 
 pub mod atomic;
 pub mod digest;
@@ -24,6 +26,7 @@ pub mod item;
 pub mod kdf;
 pub mod merge;
 pub mod otp;
+pub mod passkey;
 pub mod safe;
 pub mod search;
 

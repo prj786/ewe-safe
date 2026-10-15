@@ -168,6 +168,10 @@
         </label>
       {/if}
 
+      <div class="caption safe-muted">
+        1Password's export leaves passkeys out. Sign in to each site once with the password, then add a Safe passkey there.
+      </div>
+
       <label class="ewe-field">
         <span class="ewe-field__label"><span>Put them in a folder</span><span class="ewe-field__optional">Optional</span></span>
         <span class="ewe-input"><input bind:value={folder} placeholder="From 1Password" spellcheck="false" oninput={reset} /></span>

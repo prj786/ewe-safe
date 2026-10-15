@@ -12,6 +12,7 @@
 //! - [`hygiene`]: no core dumps, no ptrace, password buffers out of swap.
 //! - [`import`]: another password manager's export, or 1Password through
 //!   `op`, added in one edit.
+//! - [`passkey`]: the passkey verbs (list, create, get) for the browser.
 
 mod clip;
 mod config;
@@ -19,6 +20,7 @@ mod daemon;
 mod hygiene;
 mod import;
 mod logind;
+mod passkey;
 mod server;
 mod verbs;
 mod worker;
