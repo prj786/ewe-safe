@@ -844,3 +844,53 @@ fn the_agent_limits_its_connections_and_waits_for_no_one() {
         "{waited:?}"
     );
 }
+
+/// Where SSH keys meet the other streams (docs/TRIO.md): a `safe://`
+/// reference (S3) reads an SSH key's two parts exactly as `reveal` does,
+/// and a passkey (S1) never goes on an SSH key.
+#[test]
+fn references_and_passkeys_meet_ssh_keys() {
+    use std::io::{BufRead, BufReader};
+    use std::os::unix::net::UnixStream;
+
+    let mut s = Sandbox::new("trio");
+    s.start();
+    s.init();
+    let made = s.ok(&["ssh", "new", "--title", "GitHub key"]);
+    let id = made["item_id"].as_str().unwrap().to_string();
+    let public = made["ssh"]["public_key"].as_str().unwrap().to_string();
+
+    // `read` prints the bare public line; with --json it is `resolve`'s
+    // answer, the same value `reveal` gives
+    let (out, code) = s.raw(&["read", "safe://GitHub key/public_key"], None);
+    assert_eq!((out.trim_end(), code), (public.as_str(), 0));
+    let shown = s.ok(&["reveal", &id, "--field", "private_key", "--json"]);
+    let read = s.ok(&["read", &format!("safe://{id}/private_key"), "--json"]);
+    assert_eq!(read["value"], shown["value"]);
+    assert_eq!(read["item_id"], json!(id));
+    assert!(
+        read["value"]
+            .as_str()
+            .unwrap()
+            .starts_with("-----BEGIN OPENSSH PRIVATE KEY-----"),
+        "the key file KeeAgent.settings names"
+    );
+
+    // a passkey goes on a login only, over the socket as the browser asks
+    let mut sock = UnixStream::connect(s.run.join("ewe-safe.sock")).expect("connect");
+    let req = json!({"v": 1, "id": 1, "verb": "passkey-create", "args": {
+        "rp_id": "github.com", "rp_name": "GitHub", "user_id": "dXNlcg",
+        "user_name": "sam", "user_display_name": "Sam",
+        "client_data_hash": "A".repeat(43), "algorithms": [-7], "exclude": [],
+        "item_id": id, "origin": "https://github.com", "user_verified": true,
+    }});
+    writeln!(sock, "{req}").unwrap();
+    let mut line = String::new();
+    BufReader::new(&sock).read_line(&mut line).unwrap();
+    let v: Value = serde_json::from_str(&line).expect("json");
+    assert_eq!(v["error"], "bad-request", "{v}");
+    assert_eq!(s.ok(&["passkey", "list"])["passkeys"], json!([]));
+    let keys = s.ok(&["ssh", "list"]);
+    assert_eq!(keys["items"][0]["passkey"], Value::Null, "{keys}");
+    assert_eq!(keys["items"][0]["ssh"]["public_key"], json!(public));
+}
