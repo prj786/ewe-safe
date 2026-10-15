@@ -54,6 +54,10 @@ SSH agent for `ssh` and `git`, asking once per app before a key is used:
 
 `enable` never edits `~/.ssh/config`: if it names another agent
 (`IdentityAgent ~/.1password/agent.sock`), put the line it prints there.
+The question names the program by its full path and marks one outside
+`/usr` and `/opt`. It cuts down on surprises, nothing more: the master
+password is what protects the keys, since any program running as you can
+use the agent while Safe is unlocked (docs/PROTOCOL.md, "The SSH agent").
 
 ## Develop
 

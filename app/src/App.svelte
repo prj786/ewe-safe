@@ -54,7 +54,7 @@
 </script>
 
 {#if mode === "approve"}
-  <Approve app={approve?.app || "An app"} key={approve?.key || "an SSH key"} />
+  <Approve app={approve?.app || "An app"} key={approve?.key || "an SSH key"} path={approve?.path ?? ""} system={!!approve?.system} />
 {:else if mode === "unlock"}
   {#if !safe.daemon.available || (safe.status && !safe.status.set_up)}
     <div class="safe-compact">

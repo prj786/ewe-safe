@@ -92,7 +92,7 @@ elif a and a[0] == "set":
         write_exec(
             &bin.join("approve"),
             &format!(
-                "#!/bin/sh\necho \"$EWE_SAFE_APPROVE_APP|$EWE_SAFE_APPROVE_KEY\" >> {r}/approvals\na=$(cat {r}/answer 2>/dev/null)\n[ \"$a\" = sleep ] && exec sleep 30\nexit \"${{a:-1}}\"\n"
+                "#!/bin/sh\necho \"$EWE_SAFE_APPROVE_APP|$EWE_SAFE_APPROVE_KEY|$EWE_SAFE_APPROVE_PATH|$EWE_SAFE_APPROVE_SYSTEM\" >> {r}/approvals\na=$(cat {r}/answer 2>/dev/null)\n[ \"$a\" = sleep ] && exec sleep 30\nexit \"${{a:-1}}\"\n"
             ),
         );
         let me = cli_exe().display().to_string();
@@ -288,6 +288,11 @@ elif a and a[0] == "set":
     /// `ssh-keygen -Y sign` through the agent (only the public key is on
     /// disk where it looks), then `-Y verify`. Whether both worked.
     fn sign_and_verify(&self, public: &str) -> bool {
+        self.sign_with("ssh-keygen", public)
+    }
+
+    /// The same, signed by `prog` (a copy of ssh-keygen, say).
+    fn sign_with(&self, prog: &str, public: &str) -> bool {
         let pubfile = self.root.join("pub").join("key.pub");
         std::fs::write(&pubfile, format!("{public}\n")).unwrap();
         let data = self.root.join("pub").join("data.txt");
@@ -295,7 +300,7 @@ elif a and a[0] == "set":
         let sig = data.with_extension("txt.sig");
         let _ = std::fs::remove_file(&sig);
         let (_, err, code) = self.openssh(
-            "ssh-keygen",
+            prog,
             &[
                 "-Y",
                 "sign",
@@ -420,6 +425,19 @@ fn keys_come_in_and_the_agent_signs_with_them() {
         again["error"], "bad-request",
         "a key comes in once: {again}"
     );
+    // only the kinds the agent signs with come in
+    let (p521, _) = s.keygen("id_p521", &["-t", "ecdsa", "-b", "521"], "");
+    let no = s.cli(&["ssh", "add", p521.to_str().unwrap()]);
+    assert_eq!(no["error"], "bad-request", "{no}");
+    assert!(no["message"].as_str().unwrap().contains("nistp521"), "{no}");
+    // a file bigger than a key isn't even read
+    let big = s.root.join("keys").join("big");
+    std::fs::write(&big, vec![b'a'; 2 * 1024 * 1024]).unwrap();
+    let no = s.cli(&["ssh", "add", big.to_str().unwrap()]);
+    assert!(no["message"].as_str().unwrap().contains("too big"), "{no}");
+    // no public-key list while the agent is off
+    let cache = s.root.join("state/ewe/safe/ssh-public.json");
+    assert!(!cache.exists());
 
     let keys = s.ok(&["ssh", "list"]);
     let titles: Vec<&str> = keys["items"]
@@ -501,8 +519,21 @@ fn keys_come_in_and_the_agent_signs_with_them() {
     );
     let asked = s.approvals();
     assert_eq!(asked.len(), 3, "{asked:?}");
-    assert!(asked[0].starts_with("ssh-keygen"), "the app: {asked:?}");
-    assert!(asked[0].ends_with("|GitHub key"), "the key: {asked:?}");
+    let first: Vec<&str> = asked[0].split('|').collect();
+    assert!(
+        first[0].starts_with("ssh-keygen (from "),
+        "the app: {asked:?}"
+    );
+    assert_eq!(first[1], "GitHub key", "the key");
+    assert!(
+        first[2].starts_with("/usr/bin/ssh-keygen, started by "),
+        "the full path: {asked:?}"
+    );
+    assert!(
+        first[2].ends_with("(not a system program)"),
+        "the test's own binary"
+    );
+    assert_eq!(first[3], "0");
 
     // first use only: a no now changes nothing until the safe locks
     s.answer("1");
@@ -520,9 +551,55 @@ fn keys_come_in_and_the_agent_signs_with_them() {
     assert!(start.elapsed() < Duration::from_secs(20));
     s.answer("0");
 
+    // an approval is for the program's file: a lookalike outside the
+    // system's folders is asked about and marked, the same file under
+    // another name is remembered, a replaced file is asked about again
+    let n = s.approvals().len();
+    let copy = s.root.join("keys").join("git");
+    std::fs::copy("/usr/bin/ssh-keygen", &copy).unwrap();
+    assert!(s.sign_with(copy.to_str().unwrap(), &gh_public));
+    let asked = s.approvals();
+    assert_eq!(asked.len(), n + 1);
+    let last: Vec<&str> = asked[n].split('|').collect();
+    assert!(last[0].starts_with("git (from "), "{last:?}");
+    assert!(
+        last[2].starts_with(&format!("{} (not a system program)", copy.display())),
+        "{last:?}"
+    );
+    let moved = s.root.join("keys").join("git2");
+    std::fs::rename(&copy, &moved).unwrap();
+    assert!(s.sign_with(moved.to_str().unwrap(), &gh_public));
+    assert_eq!(s.approvals().len(), n + 1, "the same file: remembered");
+    let fresh = s.root.join("keys").join("git3");
+    std::fs::copy("/usr/bin/ssh-keygen", &fresh).unwrap();
+    std::fs::rename(&fresh, &moved).unwrap();
+    assert!(s.sign_with(moved.to_str().unwrap(), &gh_public));
+    assert_eq!(s.approvals().len(), n + 2, "a replaced file asks again");
+
+    // never asking is allowed, with a warning, and logged
+    let en = s.ok(&["ssh", "enable", "--confirm", "never"]);
+    assert!(
+        en["warning"]
+            .as_str()
+            .unwrap()
+            .contains("without a question"),
+        "{en}"
+    );
+    assert!(s.ok(&["ssh", "status"])["warning"].is_string());
+    let n = s.approvals().len();
+    s.answer("1");
+    assert!(s.sign_and_verify(&rsa_public), "never asks");
+    assert_eq!(s.approvals().len(), n);
+    assert!(
+        s.daemon_log()
+            .contains("without asking (ssh_confirm = never)")
+    );
+    let en = s.ok(&["ssh", "enable", "--confirm", "first-use"]);
+    assert!(en.get("warning").is_none());
+    s.answer("0");
+
     // locked: the keys are still listed, from the public-key list
     s.ok(&["lock"]);
-    let cache = s.root.join("state/ewe/safe/ssh-public.json");
     let text = std::fs::read_to_string(&cache).expect("the public-key list");
     assert!(!text.contains("PRIVATE"), "public keys only");
     assert_eq!(
@@ -537,7 +614,11 @@ fn keys_come_in_and_the_agent_signs_with_them() {
     s.ok(&["lock"]);
     s.extra.retain(|(k, _)| k != "EWE_SAFE_ASK_CMD");
     s.stop();
-    s.extra.push(("EWE_SAFE_ASK_CMD".into(), "true".into()));
+    let asks = s.root.join("asks");
+    s.extra.push((
+        "EWE_SAFE_ASK_CMD".into(),
+        format!("echo asked >> {}", asks.display()),
+    ));
     s.start();
     assert_eq!(
         s.listed().len(),
@@ -546,6 +627,17 @@ fn keys_come_in_and_the_agent_signs_with_them() {
     );
     assert!(!s.sign_and_verify(&ec_public));
     assert_eq!(s.ok(&["status"])["locked"], true);
+    // a loop of requests doesn't reopen the prompt: it rests a while
+    assert!(!s.sign_and_verify(&ec_public));
+    assert!(!s.sign_and_verify(&ec_public));
+    let opened = std::fs::read_to_string(&asks).unwrap_or_default();
+    assert_eq!(opened.lines().count(), 1, "one prompt: {opened:?}");
+    let log = s.daemon_log();
+    assert!(log.contains("none again for"), "{log}");
+    assert!(
+        log.contains("opening the unlock prompt for ssh-keygen"),
+        "{log}"
+    );
 
     // keys come from Safe: ssh-add can't put one in or take one out
     let (_, err, code) = s.openssh("ssh-add", &[ec_file.to_str().unwrap()], None);
@@ -567,6 +659,16 @@ fn keys_come_in_and_the_agent_signs_with_them() {
     );
     assert!(!env_file.exists());
     assert!(s.listed().is_empty());
+    assert!(!cache.exists(), "off: no public-key list");
+
+    // ewe-conf can't record it: no SSH_AUTH_SOCK for an agent that stays off
+    write_exec(&s.bin.join("ewe-conf"), "#!/bin/sh\nexit 1\n");
+    let en = s.ok(&["ssh", "enable"]);
+    assert_eq!(
+        (en["recorded"].clone(), en["env_file"].clone()),
+        (json!(false), Value::Null)
+    );
+    assert!(!env_file.exists());
 
     let log = s.daemon_log();
     for never in ["GitHub key", "Old box", "PRIVATE KEY", KEY_PASS, MASTER] {
@@ -622,10 +724,15 @@ fn notes_from_1password_become_ssh_keys() {
     )
     .expect("import");
     let file = s.root.join("data").join("old.kdbx");
+    // a public-key list left from another safe goes when the daemon starts
+    let stale = s.root.join("state/ewe/safe/ssh-public.json");
+    std::fs::create_dir_all(stale.parent().unwrap()).unwrap();
+    std::fs::write(&stale, b"{\"v\": 1, \"keys\": []}\n").unwrap();
     safe.write_file(&file, &safe_core::safe::key(MASTER, None).unwrap())
         .expect("write");
 
     s.start();
+    assert!(!stale.exists());
     let o = s.cli_in(
         &[
             "open",
@@ -693,5 +800,47 @@ fn notes_from_1password_become_ssh_keys() {
             .as_array()
             .unwrap()
             .is_empty()
+    );
+}
+
+#[test]
+fn the_agent_limits_its_connections_and_waits_for_no_one() {
+    use std::io::Read;
+    use std::os::unix::net::UnixStream;
+
+    let mut s = Sandbox::new("limits");
+    s.start();
+    // 32 connections at once are served; the ones above are closed
+    let conns: Vec<UnixStream> = (0..40)
+        .map(|_| UnixStream::connect(s.agent()).expect("connect"))
+        .collect();
+    std::thread::sleep(Duration::from_millis(300));
+    let closed = conns
+        .iter()
+        .filter(|c| {
+            c.set_read_timeout(Some(Duration::from_millis(200)))
+                .unwrap();
+            let mut b = [0u8; 1];
+            matches!((&**c).read(&mut b), Ok(0))
+        })
+        .count();
+    assert_eq!(closed, 8, "the ones above 32 are closed");
+    drop(conns);
+    std::thread::sleep(Duration::from_millis(300));
+    let (out, _, _) = s.openssh("ssh-add", &["-L"], None);
+    assert!(out.contains("no identities"), "served again: {out}");
+
+    // a request that stops halfway is dropped (10 s for a whole message)
+    let mut half = UnixStream::connect(s.agent()).expect("connect");
+    half.write_all(&[0, 0, 0, 100, 11]).unwrap();
+    half.set_read_timeout(Some(Duration::from_secs(20)))
+        .unwrap();
+    let start = Instant::now();
+    let mut b = [0u8; 1];
+    assert!(matches!(half.read(&mut b), Ok(0)), "closed, no answer");
+    let waited = start.elapsed();
+    assert!(
+        waited >= Duration::from_secs(9) && waited < Duration::from_secs(15),
+        "{waited:?}"
     );
 }

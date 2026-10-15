@@ -90,6 +90,28 @@ fn parse(argv: &[String]) -> Result<Parsed, Value> {
     Ok(p)
 }
 
+/// A private key file's text: refused unread when it is bigger than a key.
+fn read_key(file: &str) -> Result<zeroize::Zeroizing<String>, Value> {
+    use std::io::Read;
+    let cant = |e: std::io::Error| bad(format!("Safe can't read {file}: {e}"));
+    let f = std::fs::File::open(file).map_err(cant)?;
+    let size = f.metadata().map_err(cant)?.len();
+    if size > safe_core::ssh::MAX_KEY_FILE {
+        return Err(bad(format!("{file} is too big to be a private key.")));
+    }
+    // the exact size up front: a buffer that grew would leave copies behind
+    let mut bytes = zeroize::Zeroizing::new(Vec::with_capacity(size as usize));
+    f.take(safe_core::ssh::MAX_KEY_FILE + 1)
+        .read_to_end(&mut bytes)
+        .map_err(cant)?;
+    match std::str::from_utf8(&bytes) {
+        Ok(t) => Ok(zeroize::Zeroizing::new(t.to_string())),
+        Err(_) => Err(bad(format!(
+            "{file} isn't a private key file: it isn't text."
+        ))),
+    }
+}
+
 pub fn run(argv: &[String]) -> Value {
     let mut p = match parse(argv) {
         Ok(p) => p,
@@ -97,15 +119,15 @@ pub fn run(argv: &[String]) -> Value {
     };
     match p.sub.as_str() {
         "add" => {
-            // the daemon reads the file itself: it needs the full path
-            let file = &p.positional[0];
-            let full = std::path::absolute(file)
-                .map(|x| x.to_string_lossy().into_owned())
-                .unwrap_or_else(|_| file.clone());
+            // the key's text goes to the daemon as a secret (`private_key`),
+            // read here: no file bigger than a key is read at all
+            let file = p.positional[0].clone();
+            let text = match read_key(&file) {
+                Ok(t) => t,
+                Err(v) => return v,
+            };
             // a key with a passphrase needs it: asked here, sent as a secret
-            let locked = std::fs::read(&full)
-                .map(zeroize::Zeroizing::new)
-                .is_ok_and(|b| safe_core::ssh::is_encrypted(&b));
+            let locked = safe_core::ssh::is_encrypted(text.as_bytes());
             if locked || p.passphrase_stdin {
                 match secret(&format!("Passphrase for {file}: ")) {
                     Ok(pass) => {
@@ -114,7 +136,12 @@ pub fn run(argv: &[String]) -> Value {
                     Err(v) => return v,
                 }
             }
-            p.args.insert("file".into(), json!(full));
+            p.args.insert("private_key".into(), json!(text.as_str()));
+            drop(text);
+            let name = std::path::Path::new(&file)
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned());
+            p.args.insert("file_name".into(), json!(name));
             client::call("ssh-add", Value::Object(p.args), SLOW)
         }
         "status" => {

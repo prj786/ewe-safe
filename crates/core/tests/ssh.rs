@@ -458,6 +458,13 @@ fn op_ssh_keys_become_ssh_key_items() {
             .iter()
             .any(|f| f.name == "private key" && f.protected)
     );
+    assert!(
+        b.skipped
+            .iter()
+            .any(|x| x.title == "Key d — SSH key" && x.reason.starts_with("kept as a note: ")),
+        "the report says why: {:?}",
+        b.skipped
+    );
 
     let mut s = Safe::create("x", cheap());
     let r = s.import(&b, &Options::default()).expect("import");

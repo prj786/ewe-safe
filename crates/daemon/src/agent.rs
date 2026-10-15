@@ -26,6 +26,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -44,12 +45,23 @@ const IDENTITIES_ANSWER: u8 = 12;
 const SIGN_REQUEST: u8 = 13;
 const SIGN_RESPONSE: u8 = 14;
 /// Requests that would put keys in or take them out (SSH2 and the old
-/// SSH1 ones, smartcards, lock/unlock): all refused.
-const KEY_CHANGES: [u8; 12] = [1, 7, 8, 9, 17, 18, 19, 20, 21, 22, 23, 25];
+/// SSH1 ones, smartcards, constrained adds, lock/unlock): all refused.
+const KEY_CHANGES: [u8; 14] = [1, 7, 8, 9, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26];
 /// OpenSSH's own limit on a message.
 const MAX_MESSAGE: usize = 256 * 1024;
 /// How long the unlock prompt and the approval prompt wait for the user.
 const PROMPT_WAIT: Duration = Duration::from_secs(60);
+/// Connections served at once; one more is closed straight away.
+const MAX_CONNECTIONS: usize = 32;
+/// A connection may wait this long for its next request…
+const IDLE: Duration = Duration::from_secs(60);
+/// …and a request, once begun, must arrive whole within this.
+const MESSAGE: Duration = Duration::from_secs(10);
+/// After an unlock prompt went unanswered, no new one for this long, then
+/// twice as long each time: a loop of signing requests must not reopen it
+/// forever.
+const COOLDOWN: Duration = Duration::from_secs(30);
+const COOLDOWN_MAX: Duration = Duration::from_secs(600);
 
 /// The agent's socket from systemd, when the unit passed one.
 static ACTIVATED: Mutex<Option<RawFd>> = Mutex::new(None);
@@ -135,15 +147,29 @@ pub fn cleanup() {
 
 pub struct Agent {
     d: Arc<Daemon>,
-    /// (app, public key) pairs allowed since the safe was unlocked.
+    /// (app's files, public key) pairs allowed since the safe was unlocked.
     allowed: Mutex<HashSet<(String, String)>>,
     /// One approval prompt at a time.
     asking: Mutex<()>,
     /// One unlock prompt at a time.
     unlocking: Mutex<()>,
+    /// No unlock prompt before this; the next pause; said in the log yet.
+    cooldown: Mutex<(Option<Instant>, Duration, bool)>,
     /// What `ssh-public.json` holds now.
     cached: Mutex<String>,
     listening: Mutex<bool>,
+    connections: AtomicUsize,
+    /// When a connection over the limit was last logged.
+    crowded: Mutex<Option<Instant>>,
+}
+
+/// One served connection, counted while it lives.
+struct Counted(Arc<Agent>);
+
+impl Drop for Counted {
+    fn drop(&mut self) {
+        self.0.connections.fetch_sub(1, Ordering::SeqCst);
+    }
 }
 
 /// One key the agent offers.
@@ -160,9 +186,17 @@ pub fn spawn(d: Arc<Daemon>) -> Arc<Agent> {
         allowed: Mutex::new(HashSet::new()),
         asking: Mutex::new(()),
         unlocking: Mutex::new(()),
+        cooldown: Mutex::new((None, COOLDOWN, false)),
         cached: Mutex::new(String::new()),
         listening: Mutex::new(false),
+        connections: AtomicUsize::new(0),
+        crowded: Mutex::new(None),
     });
+    // a list from another safe, or from before the agent was turned off
+    // (it is only rewritten unlocked: docs/PROTOCOL.md, "The SSH agent")
+    if !d.is_set_up() || !d.settings().ssh_agent {
+        a.forget_cache();
+    }
     let rx = d.subscribe();
     let w = a.clone();
     std::thread::spawn(move || {
@@ -172,7 +206,11 @@ pub fn spawn(d: Arc<Daemon>) -> Arc<Agent> {
                 .and_then(|v| v.get("event").and_then(Value::as_str).map(str::to_string));
             match event.as_deref() {
                 Some("locked") => lk(&w.allowed).clear(),
-                Some("unlocked" | "changed") => w.write_cache(),
+                Some("unlocked") => {
+                    *lk(&w.cooldown) = (None, COOLDOWN, false);
+                    w.write_cache();
+                }
+                Some("changed") => w.write_cache(),
                 _ => {}
             }
         }
@@ -185,8 +223,13 @@ pub fn spawn(d: Arc<Daemon>) -> Arc<Agent> {
                 for conn in l.incoming() {
                     match conn {
                         Ok(s) => {
-                            let a = srv.clone();
-                            std::thread::spawn(move || a.serve(s));
+                            if srv.connections.fetch_add(1, Ordering::SeqCst) >= MAX_CONNECTIONS {
+                                srv.connections.fetch_sub(1, Ordering::SeqCst);
+                                srv.too_many();
+                                continue;
+                            }
+                            let guard = Counted(srv.clone());
+                            std::thread::spawn(move || guard.0.serve(s));
                         }
                         Err(e) => log(&format!("ssh agent: accept: {e}")),
                     }
@@ -202,6 +245,25 @@ pub fn spawn(d: Arc<Daemon>) -> Arc<Agent> {
 impl Agent {
     pub fn listening(&self) -> bool {
         *lk(&self.listening)
+    }
+
+    /// A connection over the limit was closed; said at most once a minute.
+    fn too_many(&self) {
+        let mut last = lk(&self.crowded);
+        if last.is_none_or(|t| t.elapsed() > Duration::from_secs(60)) {
+            *last = Some(Instant::now());
+            log(&format!(
+                "ssh agent: {MAX_CONNECTIONS} connections at once: closing the ones above"
+            ));
+        }
+    }
+
+    /// `ssh-public.json` goes (the agent was turned off, or the list is
+    /// from another safe).
+    pub fn forget_cache(&self) {
+        let mut cached = lk(&self.cached);
+        let _ = std::fs::remove_file(self.d.paths.ssh_public());
+        cached.clear();
     }
 
     /// The keys an agent may use, from the unlocked safe.
@@ -223,8 +285,12 @@ impl Agent {
         )
     }
 
-    /// `ssh-public.json` from the unlocked safe, when it changed.
+    /// `ssh-public.json` from the unlocked safe, when it changed; only while
+    /// the agent is on.
     pub fn write_cache(&self) {
+        if !self.d.settings().ssh_agent {
+            return;
+        }
         let Some(found) = self.unlocked_keys() else {
             return;
         };
@@ -271,8 +337,13 @@ impl Agent {
             .into_iter()
             .flatten()
             .filter_map(|k| {
+                let line = k.get("public_key")?.as_str()?;
+                // the agent signs with these kinds of key only
+                if !keys::supported_line(line) {
+                    return None;
+                }
                 Some(Identity {
-                    blob: keys::public_blob(k.get("public_key")?.as_str()?)?,
+                    blob: keys::public_blob(line)?,
                     comment: k
                         .get("comment")
                         .and_then(Value::as_str)
@@ -325,7 +396,7 @@ impl Agent {
         let peer = Peer::of(pid);
         loop {
             let mut len = [0u8; 4];
-            if s.read_exact(&mut len).is_err() {
+            if s.set_read_timeout(Some(IDLE)).is_err() || s.read_exact(&mut len).is_err() {
                 return;
             }
             let n = u32::from_be_bytes(len) as usize;
@@ -333,7 +404,7 @@ impl Agent {
                 return;
             }
             let mut body = Zeroizing::new(vec![0u8; n]);
-            if s.read_exact(&mut body).is_err() {
+            if s.set_read_timeout(Some(MESSAGE)).is_err() || s.read_exact(&mut body).is_err() {
                 return;
             }
             let reply = self.answer(&peer, &body);
@@ -388,11 +459,7 @@ impl Agent {
         if !self.d.settings().ssh_agent || !self.identities().iter().any(|i| i.blob == blob) {
             return None;
         }
-        if rd(&self.d.snap).locked && !self.wait_unlocked() {
-            log(&format!(
-                "ssh agent: still locked, no signature for {}",
-                peer.label
-            ));
+        if rd(&self.d.snap).locked && !self.wait_unlocked(peer) {
             return None;
         }
         // the safe is open: which item holds the key now
@@ -401,8 +468,12 @@ impl Agent {
             .into_iter()
             .find(|(_, _, line)| keys::public_blob(line).as_deref() == Some(blob))?;
         let key = keys::public_line(blob).unwrap_or_default();
+        let asked = self.d.settings().ssh_confirm != "never";
         if !self.approved(peer, &key, &title) {
-            log(&format!("ssh agent: {} was not allowed", peer.label));
+            log(&format!(
+                "ssh agent: {} was not allowed ({})",
+                peer.label, peer.detail
+            ));
             return None;
         }
         let private = self
@@ -417,7 +488,14 @@ impl Agent {
         };
         match keys::sign(&text, &pass, data, flags) {
             Ok(sig) => {
-                log(&format!("ssh agent: signed for {}", peer.label));
+                if asked {
+                    log(&format!("ssh agent: signed for {}", peer.label));
+                } else {
+                    log(&format!(
+                        "ssh agent: signed for {} without asking (ssh_confirm = never)",
+                        peer.label
+                    ));
+                }
                 Some(sig)
             }
             Err(e) => {
@@ -428,8 +506,9 @@ impl Agent {
     }
 
     /// Open the unlock prompt (`ewe-safe unlock --ask`, the same prompt the
-    /// picker opens) and wait for the safe to open.
-    fn wait_unlocked(&self) -> bool {
+    /// picker opens) and wait for the safe to open. After a prompt went
+    /// unanswered, none opens again for a while (`COOLDOWN`, growing).
+    fn wait_unlocked(&self, peer: &Peer) -> bool {
         let _one = lk(&self.unlocking);
         let snap_ok = |d: &Daemon| {
             let s = rd(&d.snap);
@@ -440,6 +519,27 @@ impl Agent {
             (true, false) => return true,
             _ => {}
         }
+        {
+            let mut cd = lk(&self.cooldown);
+            if let Some(until) = cd.0
+                && Instant::now() < until
+            {
+                if !cd.2 {
+                    cd.2 = true;
+                    log(&format!(
+                        "ssh agent: locked, and the last unlock prompt went unanswered: none again for {} s ({} asked: {})",
+                        until.saturating_duration_since(Instant::now()).as_secs(),
+                        peer.label,
+                        peer.detail
+                    ));
+                }
+                return false;
+            }
+        }
+        log(&format!(
+            "ssh agent: opening the unlock prompt for {} ({})",
+            peer.label, peer.detail
+        ));
         // the prompt the CLI opens, and the test switches it honours
         let mut env = display_env(&self.d.paths);
         for k in ["EWE_SAFE_ASK_CMD", "EWE_SAFE_SOCKET"] {
@@ -459,21 +559,37 @@ impl Agent {
         };
         let start = Instant::now();
         let wait = prompt_wait();
-        loop {
+        let opened = loop {
             std::thread::sleep(Duration::from_millis(150));
             if !snap_ok(&self.d).1 {
                 let _ = child.try_wait();
-                return true;
+                break true;
             }
             if let Ok(Some(_)) = child.try_wait() {
-                return !snap_ok(&self.d).1;
+                break !snap_ok(&self.d).1;
             }
             if start.elapsed() > wait {
                 let _ = child.kill();
                 let _ = child.wait();
-                return false;
+                break false;
             }
-        }
+        };
+        let mut cd = lk(&self.cooldown);
+        *cd = if opened {
+            (None, COOLDOWN, false)
+        } else {
+            log(&format!(
+                "ssh agent: still locked, no signature for {} (no new prompt for {} s)",
+                peer.label,
+                cd.1.as_secs()
+            ));
+            (
+                Some(Instant::now() + cd.1),
+                (cd.1 * 2).min(COOLDOWN_MAX),
+                false,
+            )
+        };
+        opened
     }
 
     /// `[safe] ssh_confirm`: `never` asks nothing, `every-time` asks every
@@ -483,19 +599,26 @@ impl Agent {
         if mode == "never" {
             return true;
         }
-        let pair = (peer.identity.clone(), key.to_string());
+        // a program whose file can't be seen is asked every time
+        let pair = peer.identity.clone().map(|id| (id, key.to_string()));
         let first_use = mode == config::CONFIRM_FIRST_USE;
-        if first_use && lk(&self.allowed).contains(&pair) {
+        let known = |p: &Option<(String, String)>| {
+            first_use && p.as_ref().is_some_and(|p| lk(&self.allowed).contains(p))
+        };
+        if known(&pair) {
             return true;
         }
         let _one = lk(&self.asking);
         // allowed while this request waited for the other prompt
-        if first_use && lk(&self.allowed).contains(&pair) {
+        if known(&pair) {
             return true;
         }
-        let yes = ask(&self.d.paths, &peer.label, title);
-        if yes && first_use {
-            lk(&self.allowed).insert(pair);
+        let yes = ask(&self.d.paths, peer, title);
+        if yes
+            && first_use
+            && let Some(p) = pair
+        {
+            lk(&self.allowed).insert(p);
         }
         yes
     }
@@ -546,34 +669,67 @@ fn peer_cred(s: &UnixStream) -> Option<(u32, i32)> {
 
 // ── who is asking ───────────────────────────────────────────────────────
 
-/// The app on the other end, from `SO_PEERCRED`'s pid: "ssh (from git)".
+/// The app on the other end, from `SO_PEERCRED`'s pid. A same-uid
+/// program can call itself anything, so the prompt shows the full
+/// resolved paths and marks one outside the system's folders, and an
+/// approval is remembered for the program *file* (its device and inode):
+/// moving it keeps the approval, a new or replaced file asks again.
 struct Peer {
+    /// "ssh (from git)": the log line and the prompt's title.
     label: String,
-    /// What an approval is remembered by: the program and its parent's.
-    identity: String,
+    /// "/usr/bin/ssh, started by /usr/bin/git", each path outside /usr and
+    /// /opt marked "(not a system program)".
+    detail: String,
+    /// Both programs live in /usr or /opt.
+    system: bool,
+    /// What an approval is remembered by: the program's file and its
+    /// parent's. None when the kernel doesn't say: then it always asks.
+    identity: Option<String>,
 }
 
-/// (the program's path, its short name), or None for a pid that is gone.
-fn program(pid: i32) -> Option<(String, String)> {
+/// One running program, from /proc.
+struct Program {
+    path: String,
+    name: String,
+    /// (device, inode) of the file it runs.
+    file: Option<(u64, u64)>,
+    system: bool,
+}
+
+/// Where the system's programs live; anything else (a home folder, /tmp)
+/// may be a lookalike.
+fn system_path(path: &str) -> bool {
+    ["/usr/", "/opt/"].iter().any(|d| path.starts_with(d)) && !path.contains("/../")
+}
+
+fn program(pid: i32) -> Option<Program> {
+    use std::os::unix::fs::MetadataExt;
     let comm = std::fs::read_to_string(format!("/proc/{pid}/comm"))
         .ok()
         .map(|c| c.trim().to_string())?;
-    let exe = std::fs::read_link(format!("/proc/{pid}/exe"))
-        .ok()
-        .map(|p| {
-            p.to_string_lossy()
-                .trim_end_matches(" (deleted)")
-                .to_string()
-        });
-    match exe {
-        Some(path) => {
-            let name = Path::new(&path)
+    let link = format!("/proc/{pid}/exe");
+    let file = std::fs::metadata(&link).ok().map(|m| (m.dev(), m.ino()));
+    match std::fs::read_link(&link) {
+        Ok(p) => {
+            let path = p.to_string_lossy().into_owned();
+            let name = Path::new(path.trim_end_matches(" (deleted)"))
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_else(|| comm.clone());
-            Some((path, name))
+            Some(Program {
+                system: system_path(&path),
+                path,
+                name,
+                file,
+            })
         }
-        None => Some((comm.clone(), comm)),
+        // a program that hides its file: a name only, never remembered
+        Err(_) => Some(Program {
+            path: format!("{comm} (its file can't be seen)"),
+            name: comm,
+            file: None,
+            system: false,
+        }),
     }
 }
 
@@ -584,27 +740,42 @@ fn parent_of(pid: i32) -> Option<i32> {
     after.split_whitespace().nth(1)?.parse().ok()
 }
 
+fn shown(p: &Program) -> String {
+    if p.system {
+        p.path.clone()
+    } else {
+        format!("{} (not a system program)", p.path)
+    }
+}
+
 impl Peer {
     fn of(pid: i32) -> Peer {
-        let Some((path, name)) = (pid > 0).then(|| program(pid)).flatten() else {
+        let Some(me) = (pid > 0).then(|| program(pid)).flatten() else {
             return Peer {
                 label: "an app".to_string(),
-                identity: "?".to_string(),
+                detail: "a program Safe can't see".to_string(),
+                system: false,
+                identity: None,
             };
         };
         let parent = parent_of(pid).filter(|p| *p > 1).and_then(program);
+        let file = |p: &Program| p.file.map(|(d, i)| format!("{d}:{i}"));
         match parent {
-            Some((ppath, pname)) if pname != name => Peer {
-                label: format!("{name} (from {pname})"),
-                identity: format!("{path}\n{ppath}"),
-            },
-            Some((ppath, _)) => Peer {
-                label: name,
-                identity: format!("{path}\n{ppath}"),
+            Some(up) => Peer {
+                label: if up.name != me.name {
+                    format!("{} (from {})", me.name, up.name)
+                } else {
+                    me.name.clone()
+                },
+                detail: format!("{}, started by {}", shown(&me), shown(&up)),
+                system: me.system && up.system,
+                identity: file(&me).zip(file(&up)).map(|(a, b)| format!("{a}/{b}")),
             },
             None => Peer {
-                label: name,
-                identity: path,
+                label: me.name.clone(),
+                detail: shown(&me),
+                system: me.system,
+                identity: file(&me),
             },
         }
     }
@@ -710,7 +881,9 @@ fn finish(mut child: Child, wait: Duration) -> Option<std::process::ExitStatus> 
     }
 }
 
-/// "Allow `app` to use `key`?" — yes only on an explicit allow.
+/// "Allow `app` to use `key`?" — yes only on an explicit allow. The
+/// prompt shows the full paths too, and says when a program is not a
+/// system one: a same-uid program can take any name.
 ///
 /// - `EWE_SAFE_APPROVE_CMD` (tests, or a user's own prompt): `sh -c`;
 ///   exit 0 is Allow.
@@ -719,14 +892,21 @@ fn finish(mut child: Child, wait: Duration) -> Option<std::process::ExitStatus> 
 ///   ewe's notification server runs the default action on a click; closing
 ///   it, or no click in time, is Deny.
 ///
-/// The app and the key's name travel in `EWE_SAFE_APPROVE_APP` and
-/// `EWE_SAFE_APPROVE_KEY`, never on a command line (the notification's
-/// text excepted).
-fn ask(paths: &Paths, app: &str, key: &str) -> bool {
+/// The app, its paths, whether both are system programs (`1` or `0`) and
+/// the key's name travel in `EWE_SAFE_APPROVE_APP`, `EWE_SAFE_APPROVE_PATH`,
+/// `EWE_SAFE_APPROVE_SYSTEM` and `EWE_SAFE_APPROVE_KEY`, never on a
+/// command line (the notification's text excepted).
+fn ask(paths: &Paths, peer: &Peer, key: &str) -> bool {
     let wait = prompt_wait();
+    let app = peer.label.as_str();
     let mut env = display_env(paths);
     env.push(("EWE_SAFE_APPROVE_APP".into(), app.to_string()));
     env.push(("EWE_SAFE_APPROVE_KEY".into(), key.to_string()));
+    env.push(("EWE_SAFE_APPROVE_PATH".into(), peer.detail.clone()));
+    env.push((
+        "EWE_SAFE_APPROVE_SYSTEM".into(),
+        if peer.system { "1" } else { "0" }.to_string(),
+    ));
     let answered = |mut c: Command| {
         c.stdout(Stdio::null())
             .spawn()
@@ -746,6 +926,7 @@ fn ask(paths: &Paths, app: &str, key: &str) -> bool {
     if let Some(notify) = on_path("notify-send") {
         let expire = format!("--expire-time={}", wait.as_millis());
         let summary = format!("Allow {app} to use {key}?");
+        let body = format!("{}. Click to allow. Close it to deny.", peer.detail);
         let mut c = prompt(
             notify.as_os_str(),
             &[
@@ -757,7 +938,7 @@ fn ask(paths: &Paths, app: &str, key: &str) -> bool {
                 "--action=default=Allow",
                 "--action=deny=Deny",
                 &summary,
-                "Click to allow. Close it to deny.",
+                &body,
             ],
             &env,
         );
@@ -841,10 +1022,33 @@ mod tests {
 
     #[test]
     fn this_process_is_described() {
+        use std::os::unix::fs::MetadataExt;
         let p = Peer::of(std::process::id() as i32);
         assert!(!p.label.is_empty() && p.label != "an app");
-        assert!(p.identity.contains('/'));
-        assert_eq!(Peer::of(0).label, "an app");
+        // the test binary lives in target/, not a system folder
+        let exe = std::env::current_exe().unwrap();
+        assert!(
+            p.detail
+                .starts_with(&format!("{} (not a system program)", exe.display())),
+            "{}",
+            p.detail
+        );
+        assert!(!p.system);
+        // remembered by the file, not its name
+        let m = std::fs::metadata(&exe).unwrap();
+        let id = p.identity.expect("the file is known");
+        assert!(id.starts_with(&format!("{}:{}", m.dev(), m.ino())), "{id}");
+        let none = Peer::of(0);
+        assert_eq!((none.label.as_str(), none.identity), ("an app", None));
         assert!(parent_of(std::process::id() as i32).is_some());
+    }
+
+    #[test]
+    fn only_usr_and_opt_are_system_folders() {
+        assert!(system_path("/usr/bin/ssh"));
+        assert!(system_path("/opt/1Password/op"));
+        assert!(!system_path("/home/sam/.local/bin/git"));
+        assert!(!system_path("/tmp/ssh"));
+        assert!(!system_path("/usr/../home/sam/git"));
     }
 }

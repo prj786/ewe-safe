@@ -11,7 +11,8 @@
 //   &keychanged=1         unlocking says the master password changed elsewhere
 //   &wrong=1              the first unlock is a wrong password
 //   &mode=unlock          the compact `--unlock` window
-//   &mode=approve         the SSH agent's question (`--approve`)
+//   &mode=approve         the SSH agent's question (`--approve`); &system=0 a
+//                         program outside /usr and /opt
 //   &view=ssh             the SSH keys      &agent=1   the SSH agent on
 //   &view=settings|import|trash   &edit=github|new   &gen=1 (generator open)
 //   &import=old           the daemon has no `import` verb yet
@@ -305,7 +306,15 @@ export function install(params) {
     // the window's own commands
     launch_args: () => ({
       mode: ["unlock", "approve"].includes(params.get("mode")) ? params.get("mode") : "main",
-      approve: params.get("mode") === "approve" ? { app: "ssh (from git)", key: "GitHub key" } : null,
+      approve:
+        params.get("mode") === "approve"
+          ? {
+              app: "ssh (from git)",
+              key: "GitHub key",
+              path: params.get("system") === "0" ? "/home/sam/.local/bin/ssh (not a system program), started by /usr/bin/git" : "/usr/bin/ssh, started by /usr/bin/git",
+              system: params.get("system") !== "0"
+            }
+          : null,
       show: null,
       new: params.get("edit") === "new",
       import: params.get("view") === "import"

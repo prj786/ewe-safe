@@ -34,6 +34,7 @@ pub const SECRET_KEYS: &[&str] = &[
     "password_value",
     "notes",
     "passphrase",
+    "private_key",
 ];
 
 /// How long a verb may take: a key derivation or a talk with the place

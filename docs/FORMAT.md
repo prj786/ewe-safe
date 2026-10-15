@@ -102,7 +102,10 @@ end; `tests/ssh/KeeAgent.settings`):
   KeePassXC reads OpenSSH and PKCS#1 only, no PKCS#8. An OpenSSH key with a
   passphrase is stored as it is; its public part is readable without the
   passphrase. An encrypted PEM file is refused (`ssh-keygen -p` makes it
-  OpenSSH). Ed25519, ECDSA P-256/P-384 and RSA are read and used.
+  OpenSSH). Only Ed25519, ECDSA P-256/P-384 and RSA are taken in,
+  offered and signed with; DSA (deprecated by OpenSSH), P-521 and
+  security-key (`sk-`) keys are refused with the reason, and a KeePassXC
+  entry holding one is listed but not offered.
 - Safe never rewrites another app's `KeeAgent.settings`.
 
 **`ssh adopt`** finds a note an earlier import made from 1Password's SSH

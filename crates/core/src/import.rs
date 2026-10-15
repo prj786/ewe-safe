@@ -649,6 +649,30 @@ impl Builder {
             .push((section.trim().to_string(), label.trim().to_string(), value));
     }
 
+    /// Why an SSH Key item stays a Note (its key can't be read or used),
+    /// for the report; None when it becomes an SSH key.
+    fn ssh_problem(&self) -> Option<String> {
+        if self.kind != Kind::SshKey {
+            return None;
+        }
+        let read = |t: &Zeroizing<String>| ssh::read_key(t.as_bytes(), "");
+        if self.ssh_openssh.as_ref().is_some_and(|t| read(t).is_ok()) {
+            return None;
+        }
+        match &self.ssh_private {
+            Some((_, _, p)) => read(p).err().map(|e| e.0),
+            None => Some("the export holds no private key".to_string()),
+        }
+    }
+
+    /// The report's line for an SSH key kept as a Note.
+    fn ssh_note(&self) -> Option<Skipped> {
+        self.ssh_problem().map(|why| Skipped {
+            title: format!("{} — SSH key", self.title),
+            reason: format!("kept as a note: {why}"),
+        })
+    }
+
     /// An SSH key item whose key Safe can't read becomes the Note it was
     /// before SSH keys existed: nothing is lost.
     fn settle_ssh(&mut self) -> Option<KeyFile> {
@@ -932,6 +956,7 @@ fn item_1pux(
             }),
         }
     }
+    skipped.extend(b.ssh_note());
     Ok(b.finish())
 }
 
@@ -1382,6 +1407,7 @@ fn item_op(
             }),
         }
     }
+    skipped.extend(b.ssh_note());
     Ok(b.finish())
 }
 

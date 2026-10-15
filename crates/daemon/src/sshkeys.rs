@@ -21,6 +21,8 @@ type Args = Map<String, Value>;
 /// The environment.d file `enable` writes (and `disable` removes).
 const ENV_FILE: &str = "90-ewe-safe-ssh.conf";
 const ENV_MARK: &str = "# Written by `ewe-safe ssh enable`";
+/// What `enable` and `status` say when `ssh_confirm = never`.
+const NEVER_WARNING: &str = "ssh_confirm is never: any program running as you can use your SSH keys while Safe is unlocked, without a question.";
 
 fn s<'a>(a: &'a Args, k: &str) -> Option<&'a str> {
     a.get(k)
@@ -133,9 +135,24 @@ fn added(id: String, key: &keys::KeyFile, sync: Value) -> Value {
     })
 }
 
+/// The key's text as the client sent it (`private_key`, a secret), or the
+/// file the daemon reads itself (`file`, a full path), size-checked both ways.
+fn key_bytes(a: &mut Args) -> Result<Zeroizing<Vec<u8>>, Fail> {
+    match a.remove("private_key") {
+        Some(Value::String(text)) => {
+            let text = Zeroizing::new(text);
+            if text.len() as u64 > keys::MAX_KEY_FILE {
+                return Err(Fail::bad("That is too big to be a private key."));
+            }
+            Ok(Zeroizing::new(text.as_bytes().to_vec()))
+        }
+        _ => read_file(s(a, "file")),
+    }
+}
+
 fn add(d: &Arc<Daemon>, a: &mut Args) -> Result<Value, Fail> {
     let pass = secret(a, "passphrase");
-    let bytes = read_file(s(a, "file"))?;
+    let bytes = key_bytes(a)?;
     if keys::is_encrypted(&bytes) && pass.is_empty() {
         return Err(Fail::bad("This key has a passphrase: give it too.")
             .hint("ewe-safe ssh add FILE --passphrase-stdin"));
@@ -143,7 +160,8 @@ fn add(d: &Arc<Daemon>, a: &mut Args) -> Result<Value, Fail> {
     let key = keys::read_key(&bytes, &pass).map_err(bad_key)?;
     drop(bytes);
     known(d, &key)?;
-    let file_stem = s(a, "file")
+    let file_stem = s(a, "file_name")
+        .or_else(|| s(a, "file"))
         .and_then(|f| Path::new(f).file_name())
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| key.file_name.clone());
@@ -278,11 +296,15 @@ fn enable(d: &Arc<Daemon>, a: &Args) -> Result<Value, Fail> {
         "{ENV_MARK}: ssh and git use the keys in Safe.\n# `ewe-safe ssh disable` removes this file.\nSSH_AUTH_SOCK=${{XDG_RUNTIME_DIR}}/{}\n",
         config::SSH_SOCKET
     );
-    let written = file
-        .parent()
-        .map_or(Ok(()), std::fs::create_dir_all)
-        .and_then(|()| safe_core::atomic::write(&file, body.as_bytes()));
-    if let Err(e) = &written {
+    // no SSH_AUTH_SOCK pointing at an agent that stays off
+    let written = if recorded {
+        file.parent()
+            .map_or(Ok(()), std::fs::create_dir_all)
+            .and_then(|()| safe_core::atomic::write(&file, body.as_bytes()))
+    } else {
+        Err(std::io::Error::other("the setting was not recorded"))
+    };
+    if recorded && let Err(e) = &written {
         log(&format!("can't write {}: {e}", file.display()));
     }
     if let Some(ag) = agent::get() {
@@ -302,6 +324,9 @@ fn enable(d: &Arc<Daemon>, a: &Args) -> Result<Value, Fail> {
             "ewe-conf could not store [safe] ssh_agent = true, so the agent stays off: check that ewe-conf works"
         );
     }
+    if d.settings().ssh_confirm == "never" {
+        v["warning"] = json!(NEVER_WARNING);
+    }
     Ok(v)
 }
 
@@ -311,6 +336,9 @@ fn disable(d: &Arc<Daemon>) -> Result<Value, Fail> {
     let file = env_file();
     let ours = std::fs::read_to_string(&file).is_ok_and(|t| t.starts_with(ENV_MARK));
     let removed = ours && std::fs::remove_file(&file).is_ok();
+    if let Some(ag) = agent::get() {
+        ag.forget_cache();
+    }
     Ok(json!({
         "enabled": d.settings().ssh_agent,
         "recorded": recorded,
@@ -328,7 +356,7 @@ fn status(d: &Daemon, a: &Args) -> Value {
             || std::fs::canonicalize(p).ok() == std::fs::canonicalize(&socket).ok() && p.exists()
     });
     let file = env_file();
-    json!({
+    let mut v = json!({
         "enabled": st.ssh_agent,
         "confirm": st.ssh_confirm,
         "socket": socket,
@@ -340,5 +368,9 @@ fn status(d: &Daemon, a: &Args) -> Value {
         "env_file": file.exists().then_some(&file),
         "identity_agent": identity_agent(d),
         "ssh_config_agents": ssh_config_agents(),
-    })
+    });
+    if st.ssh_confirm == "never" {
+        v["warning"] = json!(NEVER_WARNING);
+    }
+    v
 }

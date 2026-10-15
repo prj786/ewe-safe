@@ -331,6 +331,39 @@ pub struct Info {
     pub agent: bool,
 }
 
+/// The keys Safe takes in, offers and signs with: Ed25519, ECDSA P-256 and
+/// P-384, RSA. DSA (deprecated by OpenSSH), P-521 and security-key (`sk-`)
+/// keys are refused.
+pub fn supported(alg: &Algorithm) -> bool {
+    matches!(
+        alg,
+        Algorithm::Ed25519
+            | Algorithm::Rsa { .. }
+            | Algorithm::Ecdsa {
+                curve: EcdsaCurve::NistP256 | EcdsaCurve::NistP384
+            }
+    )
+}
+
+/// [`supported`], for an OpenSSH public line.
+pub fn supported_line(line: &str) -> bool {
+    PublicKey::from_openssh(line.trim()).is_ok_and(|k| supported(&k.algorithm()))
+}
+
+fn unsupported(alg: &Algorithm) -> SshError {
+    let what = match alg {
+        Algorithm::Dsa => "a DSA key".to_string(),
+        Algorithm::Ecdsa { curve } => format!("an ECDSA {} key", curve.as_str()),
+        Algorithm::SkEd25519 | Algorithm::SkEcdsaSha2NistP256 => {
+            "a security-key (sk-) key, which needs its hardware".to_string()
+        }
+        other => format!("a {} key", other.as_str()),
+    };
+    err(format!(
+        "This is {what}: Safe uses Ed25519, ECDSA (P-256, P-384) and RSA keys"
+    ))
+}
+
 pub fn key_type(alg: &Algorithm) -> String {
     match alg {
         Algorithm::Ed25519 => "ed25519".to_string(),
@@ -473,6 +506,9 @@ pub fn read_key(bytes: &[u8], passphrase: &str) -> Result<KeyFile, SshError> {
     let text = std::str::from_utf8(bytes)
         .map_err(|_| err("This isn't a private key file: it isn't text"))?;
     let key = parse(text)?;
+    if !supported(&key.algorithm()) {
+        return Err(unsupported(&key.algorithm()));
+    }
     let (stored, comment) = if key.is_encrypted() {
         if !passphrase.is_empty() {
             let open = key
@@ -578,6 +614,9 @@ pub fn sign(
     use signature::Signer as _;
 
     let mut key = parse(key_text)?;
+    if !supported(&key.algorithm()) {
+        return Err(unsupported(&key.algorithm()));
+    }
     if key.is_encrypted() {
         key = key
             .decrypt(passphrase)
@@ -654,13 +693,16 @@ pub fn refine(e: &EntryRef<'_>, s: &mut Summary) {
             .to_string();
         info.fingerprint = k.fingerprint(HashAlg::Sha256).to_string();
     }
+    let mut usable_kind = false;
     if let Ok(k) = PublicKey::from_openssh(&info.public_key) {
         info.key_type = key_type(&k.algorithm());
+        usable_kind = supported(&k.algorithm());
         if info.fingerprint.is_empty() {
             info.fingerprint = k.fingerprint(HashAlg::Sha256).to_string();
         }
     }
-    info.agent = key.is_some() && settings.is_some_and(|st| st.usable());
+    // offered only when an agent may use it and Safe can sign with it
+    info.agent = usable_kind && key.is_some() && settings.is_some_and(|st| st.usable());
     s.ssh = Some(info);
 }
 
@@ -1013,6 +1055,31 @@ mod tests {
         ] {
             assert!(read_key(bad, "").is_err());
         }
+    }
+
+    #[test]
+    fn only_the_kinds_safe_signs_with_are_taken() {
+        use ssh_key::public::{Ed25519PublicKey, KeyData, SkEd25519};
+        for (kind, bits) in [("ed25519", None), ("ecdsa", Some(384)), ("rsa", Some(2048))] {
+            let kf = generate(kind, bits, "").expect(kind);
+            assert!(supported_line(&kf.public_key), "{kind}");
+        }
+        let sk = PublicKey::new(
+            KeyData::SkEd25519(SkEd25519::new(Ed25519PublicKey([7; 32]), "ssh:")),
+            "yubikey",
+        )
+        .to_openssh()
+        .unwrap();
+        assert!(sk.starts_with("sk-ssh-ed25519@openssh.com "));
+        assert!(
+            !supported_line(&sk),
+            "a security key is not signed with here"
+        );
+        assert!(!supported(&Algorithm::Dsa));
+        assert!(!supported(&Algorithm::Ecdsa {
+            curve: EcdsaCurve::NistP521
+        }));
+        assert!(unsupported(&Algorithm::Dsa).0.contains("DSA"));
     }
 
     #[test]

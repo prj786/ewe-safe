@@ -311,12 +311,23 @@ async fn import_items(
     .unwrap_or_else(|_| json!({"ok": false, "error": "internal", "message": "The import failed."}))
 }
 
+/// The SSH agent's question, from the daemon's environment: the app, the
+/// key's name, the app's full paths, and whether both are system programs
+/// (a same-uid program can take any name: the paths say which it is).
+#[derive(Clone, Debug, Default, PartialEq)]
+struct Approve {
+    app: String,
+    key: String,
+    path: String,
+    system: bool,
+}
+
 /// What this process was started with (see the module notes).
 #[derive(Clone, Debug, Default, PartialEq)]
 struct Launch {
     unlock: bool,
-    /// The SSH agent's question: (the app, the key's name).
-    approve: Option<(String, String)>,
+    /// The SSH agent's question.
+    approve: Option<Approve>,
     show: Option<String>,
     new: bool,
     import: bool,
@@ -331,7 +342,12 @@ impl Launch {
                 "--unlock" => l.unlock = true,
                 "--approve" => {
                     let env = |k: &str| std::env::var(k).unwrap_or_default();
-                    l.approve = Some((env("EWE_SAFE_APPROVE_APP"), env("EWE_SAFE_APPROVE_KEY")));
+                    l.approve = Some(Approve {
+                        app: env("EWE_SAFE_APPROVE_APP"),
+                        key: env("EWE_SAFE_APPROVE_KEY"),
+                        path: env("EWE_SAFE_APPROVE_PATH"),
+                        system: env("EWE_SAFE_APPROVE_SYSTEM") == "1",
+                    });
                 }
                 "--new" => l.new = true,
                 "--import" => l.import = true,
@@ -357,7 +373,7 @@ impl Launch {
         };
         json!({
             "mode": mode,
-            "approve": self.approve.as_ref().map(|(app, key)| json!({"app": app, "key": key})),
+            "approve": self.approve.as_ref().map(|a| json!({"app": a.app, "key": a.key, "path": a.path, "system": a.system})),
             "show": self.show,
             "new": self.new,
             "import": self.import,
@@ -684,6 +700,7 @@ mod tests {
             "password_value",
             "notes",
             "passphrase",
+            "private_key",
         ] {
             assert!(safe_client::SECRET_KEYS.contains(&k), "{k}");
         }
