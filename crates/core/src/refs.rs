@@ -17,8 +17,9 @@
 //! Fields: `password`, `username`, `otp` (the current code), `notes`, `url`
 //! (the first website), or a custom field's name; a name that is no field
 //! but an attached text file's gives the file. `public_key` and
-//! `private_key` are an SSH key item's (KeeAgent: a `public_key` field, and
-//! the key file its `KeeAgent.settings` names).
+//! `private_key` are an SSH key item's, as `reveal` and the agent read them
+//! ([`crate::ssh`]): its public line, and the key file its
+//! `KeeAgent.settings` names.
 
 use keepass::db::{EntryId, EntryRef, fields};
 use uuid::Uuid;
@@ -29,8 +30,6 @@ use crate::otp::Totp;
 use crate::safe::Safe;
 
 pub const SCHEME: &str = "safe://";
-/// The attachment KeePassXC's SSH agent reads (the KeeAgent format).
-const KEEAGENT: &str = "KeeAgent.settings";
 
 /// Which item a reference names.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -291,11 +290,21 @@ fn value_of(
             ));
         }
     }
-    // a file by its name; `private_key` is also an SSH key item's key file
-    let file = e
-        .attachment_by_name(field)
-        .map(|a| a.get().clone())
-        .or_else(|| (lower == "private_key").then(|| key_file(e)).flatten());
+    // an SSH key item's two parts, the same as `reveal` (crate::ssh): the
+    // public line (read from the key when the entry has no `public_key`
+    // field, as in one KeePassXC made) and the key file KeeAgent names
+    if lower == crate::ssh::PUBLIC_KEY
+        && let Some(info) = item.ssh.as_ref().filter(|i| !i.public_key.is_empty())
+    {
+        return Ok((Zeroizing::new(info.public_key.clone()), None));
+    }
+    if lower == crate::ssh::PRIVATE_KEY
+        && let Some(key) = crate::ssh::private_key_of(e)
+    {
+        return Ok((key, None));
+    }
+    // a file by its name
+    let file = e.attachment_by_name(field).map(|a| a.get().clone());
     match file {
         Some(bytes) => match String::from_utf8(bytes) {
             Ok(s) => Ok((Zeroizing::new(s), None)),
@@ -309,43 +318,6 @@ fn value_of(
         },
         None => Err(missing()),
     }
-}
-
-/// The key file of a KeeAgent entry: the attachment its settings name, or
-/// the only other attachment.
-fn key_file(e: &EntryRef<'_>) -> Option<Vec<u8>> {
-    let settings = e.attachment_by_name(KEEAGENT)?;
-    if let Some(name) = keeagent_attachment(settings.get())
-        && let Some(a) = e.attachment_by_name(&name)
-    {
-        return Some(a.get().clone());
-    }
-    let others: Vec<_> = e
-        .attachments_named()
-        .filter(|(n, _)| *n != KEEAGENT)
-        .collect();
-    match others.as_slice() {
-        [(_, a)] => Some(a.get().clone()),
-        _ => None,
-    }
-}
-
-/// `<AttachmentName>id_ed25519</AttachmentName>` from a KeeAgent.settings
-/// file (UTF-8, or UTF-16 with a byte-order mark as KeeAgent writes it).
-fn keeagent_attachment(xml: &[u8]) -> Option<String> {
-    let utf16 = |b: &[u8], unit: fn([u8; 2]) -> u16| {
-        let units: Vec<u16> = b.as_chunks::<2>().0.iter().map(|c| unit(*c)).collect();
-        String::from_utf16(&units).ok()
-    };
-    let text = match xml {
-        [0xFF, 0xFE, rest @ ..] => utf16(rest, u16::from_le_bytes)?,
-        [0xFE, 0xFF, rest @ ..] => utf16(rest, u16::from_be_bytes)?,
-        _ => String::from_utf8_lossy(xml.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(xml)).into_owned(),
-    };
-    let start = text.find("<AttachmentName>")? + "<AttachmentName>".len();
-    let end = start + text[start..].find("</AttachmentName>")?;
-    let name = text[start..end].trim();
-    (!name.is_empty()).then(|| name.to_string())
 }
 
 #[cfg(test)]
@@ -652,17 +624,5 @@ mod tests {
             value(&safe, "safe://GitHub/Title").err().map(|e| e.code()),
             Some("not-found")
         );
-    }
-
-    #[test]
-    fn keeagent_settings_in_both_encodings() {
-        let xml = "<EntrySettings><Location><AttachmentName> id_rsa </AttachmentName></Location></EntrySettings>";
-        assert_eq!(keeagent_attachment(xml.as_bytes()), Some("id_rsa".into()));
-        let be: Vec<u8> = [0xFE, 0xFF]
-            .into_iter()
-            .chain(xml.encode_utf16().flat_map(|u| u.to_be_bytes()))
-            .collect();
-        assert_eq!(keeagent_attachment(&be), Some("id_rsa".into()));
-        assert_eq!(keeagent_attachment(b"<EntrySettings/>"), None);
     }
 }

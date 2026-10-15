@@ -650,6 +650,14 @@ pub fn settings_of(e: &EntryRef<'_>) -> Option<KeeAgent> {
     KeeAgent::from_xml(a.data.get())
 }
 
+/// An SSH key entry's private key (OpenSSH; still encrypted when it has a
+/// passphrase): the attachment its `KeeAgent.settings` names. What the
+/// agent signs with, `reveal --field private_key` shows and a `safe://`
+/// reference's `private_key` gives ([`crate::refs`]).
+pub fn private_key_of(e: &EntryRef<'_>) -> Option<Zeroizing<String>> {
+    key_text_of(e, &settings_of(e)?)
+}
+
 /// The private key's text, from the attachment the settings name.
 fn key_text_of(e: &EntryRef<'_>, s: &KeeAgent) -> Option<Zeroizing<String>> {
     if s.selected_type != "attachment" || s.attachment_name.is_empty() {

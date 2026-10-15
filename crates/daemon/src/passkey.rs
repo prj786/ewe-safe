@@ -230,7 +230,9 @@ pub fn create(d: &Arc<Daemon>, a: &Args) -> Result<Value, Fail> {
         let id = match &item_id {
             Some(id) => {
                 if safe.summary(id)?.kind != Kind::Login {
-                    return Err(Fail::bad("A passkey goes on a login, not on a note."));
+                    return Err(Fail::bad(
+                        "A passkey goes on a login, not on a note or an SSH key.",
+                    ));
                 }
                 safe.set_passkey(id, &new)?;
                 id.clone()

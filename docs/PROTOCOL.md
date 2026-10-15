@@ -182,8 +182,8 @@ bytes. Anything else is `bad-request`.
   wins: ES256 (`-7`) or EdDSA (`-8`); none → `unsupported` (checked before
   `exclude`, WebAuthn's order). A credential in `exclude` that the safe has
   for `rp_id` → `excluded`. With `item_id` the passkey goes on that login,
-  replacing one it had (a note or an item in the recycle bin:
-  `bad-request` / `not-found`); without, a new login: title `rp_name` (else
+  replacing one it had (a note or an SSH key, or an item in the recycle
+  bin: `bad-request` / `not-found`); without, a new login: title `rp_name` (else
   the RP ID), username `user_name`, website the `origin` (else
   `https://<rp_id>`). Names longer than WebAuthn's 64 bytes are cut on a
   UTF-8 character boundary, as browsers and authenticators cut them
@@ -360,8 +360,10 @@ caller follows the same rules (`safe_core::refs`).
   its exact name first, then without case; several fields that differ only
   in case are `ambiguous`. A name that is no field but an attached file's
   (a text file) gives the file. `public_key` and `private_key` are an SSH
-  key item's: the `public_key` field, and the key file its
-  `KeeAgent.settings` names (or its only other file).
+  key item's, the same as `reveal` gives them: the public line (the
+  `public_key` field, else read from the key, as for a key KeePassXC
+  stored) and the key file its `KeeAgent.settings` names (OpenSSH; still
+  encrypted when the key has a passphrase).
 - **Names:** a folder path and a title compare exactly first; when nothing
   fits exactly, without case and outer spaces. More than one item that fits
   is `ambiguous` (exit 1 for `read`), never a guess; name it by its id.
