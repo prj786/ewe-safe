@@ -28,9 +28,13 @@ depends=(
 optdepends=(
   'ewe: the desktop — ewe-conf ([safe] settings), ewe-cloud (your Nextcloud), the Super+P picker (plugin ewe.passwords)'
   '1password-cli: import straight from the 1Password app (op)'
+  'openssh: use the SSH keys in Safe with ssh and git (ewe-safe ssh enable)'
   'kitty: the unlock prompt when the window is not installed'
 )
 makedepends=('rust' 'cargo' 'nodejs' 'npm')
+# check(): the SSH agent's tests drive OpenSSH's own ssh-add and ssh-keygen,
+# the git helper's tests drive git
+checkdepends=('openssh' 'git')
 install=ewe-safe.install
 # Arch's makepkg LTO breaks linking the `ring` crate's assembly (see Komble's
 # PKGBUILD); Rust-level LTO stays on in Cargo.toml.

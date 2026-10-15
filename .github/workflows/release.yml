@@ -20,7 +20,8 @@ jobs:
         run: |
           pacman -Syu --noconfirm --needed \
             git nodejs npm rust openssl pkgconf github-cli \
-            webkit2gtk-4.1 gtk3 librsvg wl-clipboard
+            webkit2gtk-4.1 gtk3 librsvg wl-clipboard \
+            openssh  # check(): the SSH agent's tests run ssh-add/ssh-keygen
 
       - name: Check out the tag
         uses: actions/checkout@v4
