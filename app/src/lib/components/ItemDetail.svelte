@@ -1,7 +1,9 @@
 <script>
   // One item (the mockup's Items screen, right half): its fields with the
   // password hidden until asked, copies through the daemon (the clipboard
-  // clears itself), a live one-time code, websites, apps, tags, notes.
+  // clears itself), a live one-time code, websites, apps, tags, notes. An
+  // SSH key shows its public key (Copy, kept on the clipboard), fingerprint,
+  // type and whether the agent offers it.
   // A revealed value lives here for 30 s at most and goes with the item.
   import Icon from "./Icon.svelte";
   import { api } from "../api.js";
@@ -20,8 +22,13 @@
   let hideTimer;
 
   const isLogin = $derived(item.kind === "login");
+  const isKey = $derived(item.kind === "ssh-key");
   const sub = $derived(
-    isLogin ? [item.urls?.[0] ? hostOf(item.urls[0]) : "", "Login"].filter(Boolean).join(" · ") : "Note"
+    isLogin
+      ? [item.urls?.[0] ? hostOf(item.urls[0]) : "", "Login"].filter(Boolean).join(" · ")
+      : isKey
+        ? ["SSH key", item.ssh?.key_type].filter(Boolean).join(" · ")
+        : "Note"
   );
   const C = 2 * Math.PI * 11; // the ring's circumference (r = 11 in a 24 box)
 
@@ -36,7 +43,7 @@
     clearTimeout(hideTimer);
     notes = "";
     (async () => {
-      const r = await api.show(id, item.kind === "note");
+      const r = await api.show(id, item.kind !== "login");
       if (r?.ok && item.id === id) notes = r.item?.notes ?? "";
     })();
     if (item.has_otp) loadOtp(id);
@@ -74,9 +81,15 @@
     hideTimer = setTimeout(() => (shown = ""), 30000);
   }
 
-  const WHAT = { password: "the password", username: "the username", otp: "the code" };
+  const WHAT = {
+    password: "the password",
+    username: "the username",
+    otp: "the code",
+    public_key: "the public key"
+  };
   async function copy(field) {
-    const r = await safe.copy(item.id, field);
+    // a public key isn't a secret: it stays on the clipboard
+    const r = await safe.copy(item.id, field, field === "public_key" ? 0 : undefined);
     if (!r?.ok) {
       toasts.show(r?.message ?? "Couldn't copy.", { icon: "circle-alert" });
       return;
@@ -125,6 +138,8 @@
 <div class="safe-dhead">
   {#if isLogin}
     <span class="safe-letter safe-letter--lg">{letter(item.title)}</span>
+  {:else if isKey}
+    <span class="safe-letter safe-letter--lg"><Icon name="terminal" /></span>
   {:else}
     <span class="safe-letter safe-letter--lg"><Icon name="sticky-note" /></span>
   {/if}
@@ -290,6 +305,77 @@
       </div>
     {/if}
   </div>
+{:else if isKey}
+  <div class="ewe-list">
+    <div class="ewe-row">
+      <span class="ewe-row__text">
+        <span class="ewe-row__title">Public key</span>
+        <span class="ewe-row__desc mono safe-key">{item.ssh?.public_key || "—"}</span>
+      </span>
+      {#if item.ssh?.public_key}
+        <span class="ewe-row__trail">
+          <button class="ewe-btn ewe-btn--secondary ewe-btn--sm" onclick={() => copy("public_key")}>
+            <Icon name="copy" />Copy
+          </button>
+        </span>
+      {/if}
+    </div>
+    <div class="ewe-list__divider"></div>
+    <div class="ewe-row">
+      <span class="ewe-row__text"><span class="ewe-row__title">Fingerprint</span></span>
+      <span class="ewe-row__trail"><span class="safe-val mono">{item.ssh?.fingerprint || "—"}</span></span>
+    </div>
+    <div class="ewe-list__divider"></div>
+    <div class="ewe-row">
+      <span class="ewe-row__text"><span class="ewe-row__title">Type</span></span>
+      <span class="ewe-row__trail"><span class="safe-val">{item.ssh?.key_type || "—"}</span></span>
+    </div>
+    {#if item.has_password}
+      <div class="ewe-list__divider"></div>
+      <div class="ewe-row">
+        <span class="ewe-row__text"><span class="ewe-row__title">Passphrase</span></span>
+        <span class="ewe-row__trail">
+          <span class="safe-val"><span class="mono safe-val--secret">{shown || "••••••••••••"}</span></span>
+          <button
+            class="ewe-iconbtn ewe-iconbtn--ghost ewe-iconbtn--sm"
+            aria-label={shown ? "Hide passphrase" : "Show passphrase"}
+            onclick={toggleReveal}><Icon name={shown ? "eye-off" : "eye"} /></button
+          >
+        </span>
+      </div>
+    {/if}
+    <div class="ewe-list__divider"></div>
+    <div class="ewe-row">
+      <span class="ewe-row__text">
+        <span class="ewe-row__title">SSH agent</span>
+        <span class="ewe-row__desc">{item.ssh?.agent ? "ssh and git can use this key through Safe" : "Agents may not use this key (its KeeAgent setting)"}</span>
+      </span>
+      <span class="ewe-row__trail"><Icon name={item.ssh?.agent ? "circle-check" : "circle-x"} /></span>
+    </div>
+  </div>
+  {#if item.tags?.length || notes}
+    <div class="ewe-list">
+      {#if item.tags?.length}
+        <div class="ewe-row">
+          <span class="ewe-row__text"><span class="ewe-row__title">Tags</span></span>
+          <span class="ewe-row__trail">
+            <span class="safe-chips">
+              {#each item.tags as tag (tag)}<span class="ewe-tag">{tag}</span>{/each}
+            </span>
+          </span>
+        </div>
+      {/if}
+      {#if notes}
+        {#if item.tags?.length}<div class="ewe-list__divider"></div>{/if}
+        <div class="ewe-row">
+          <span class="ewe-row__text">
+            <span class="ewe-row__title">Notes</span>
+            <span class="ewe-row__desc safe-notes">{notes}</span>
+          </span>
+        </div>
+      {/if}
+    </div>
+  {/if}
 {:else}
   <div class="ewe-list">
     <div class="ewe-row">

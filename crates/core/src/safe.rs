@@ -179,6 +179,24 @@ impl Safe {
         &self.db
     }
 
+    /// For the item kinds kept in their own modules (`ssh`).
+    pub(crate) fn db_mut(&mut self) -> &mut Database {
+        &mut self.db
+    }
+
+    /// `Meta/HistoryMaxItems`, KeePassXC's 10 when unset.
+    pub(crate) fn history_max(&self) -> usize {
+        self.db
+            .meta
+            .history_max_items
+            .and_then(|n| usize::try_from(n).ok())
+            .unwrap_or(HISTORY_MAX_ITEMS)
+    }
+
+    pub(crate) fn in_bin(&self, group: GroupId) -> bool {
+        self.in_recycle_bin(group)
+    }
+
     pub fn guard(&self) -> &Report {
         &self.guard
     }
@@ -270,7 +288,12 @@ impl Safe {
             .db
             .iter_all_entries()
             .filter(|e| self.in_recycle_bin(e.parent().id()) == deleted)
-            .map(|e| item::summary_of(e.id().to_string(), &e, self.folder_of(e.parent().id())))
+            .map(|e| {
+                let mut s =
+                    item::summary_of(e.id().to_string(), &e, self.folder_of(e.parent().id()));
+                crate::ssh::refine(&e, &mut s);
+                s
+            })
             .collect();
         out.sort_by_key(|s| s.title.to_lowercase());
         out
@@ -291,11 +314,9 @@ impl Safe {
             .db
             .entry(entry_id(id)?)
             .ok_or_else(|| Error::NotFound(id.to_string()))?;
-        Ok(item::summary_of(
-            id.to_string(),
-            &e,
-            self.folder_of(e.parent().id()),
-        ))
+        let mut s = item::summary_of(id.to_string(), &e, self.folder_of(e.parent().id()));
+        crate::ssh::refine(&e, &mut s);
+        Ok(s)
     }
 
     pub fn search(&self, query: &str) -> Vec<Summary> {
@@ -320,6 +341,20 @@ impl Safe {
             .entry(entry_id(id)?)
             .ok_or_else(|| Error::NotFound(id.to_string()))?;
         let missing = || Error::NotFound(format!("{id}: no such field"));
+        // an SSH key's private key is an attachment, and a key another app
+        // stored may have no public_key field (crate::ssh)
+        if let Field::Other(n) = field
+            && e.get(n).is_none()
+        {
+            if n == crate::ssh::PRIVATE_KEY {
+                return self.ssh_private(id).map(|(key, _)| key);
+            }
+            if n == crate::ssh::PUBLIC_KEY
+                && let Some(info) = self.summary(id)?.ssh.filter(|i| !i.public_key.is_empty())
+            {
+                return Ok(Zeroizing::new(info.public_key));
+            }
+        }
         let value = match field {
             Field::Username => e.get(fields::USERNAME),
             Field::Password => e.get(fields::PASSWORD),
@@ -372,7 +407,11 @@ impl Safe {
         self.writable()?;
         let plan = import::plan(batch, &self.items(), opts);
         for (i, folder) in &plan.add {
-            self.add_imported(&batch.items[*i], folder)?;
+            let it = &batch.items[*i];
+            let id = self.add_imported(it, folder)?;
+            if let Some(key) = &it.ssh {
+                self.put_imported_key(&id, key)?;
+            }
         }
         Ok(plan.report)
     }
@@ -698,7 +737,7 @@ impl Safe {
 /// After a tracked edit: keepass-rs put the old version first, but a
 /// KeePass file lists history oldest first, so it moves to the end; then
 /// the newest `max` versions stay (keepass-rs never trims).
-fn settle_history(entry: &mut keepass::db::Entry, max: usize) {
+pub(crate) fn settle_history(entry: &mut keepass::db::Entry, max: usize) {
     let Some(h) = entry.history.as_ref() else {
         return;
     };

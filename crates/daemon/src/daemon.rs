@@ -749,6 +749,7 @@ pub fn item_json(s: &Summary) -> Value {
         "has_otp": s.has_otp,
         "modified": s.modified.map(|t| t.format("%Y-%m-%dT%H:%M:%SZ").to_string()),
         "passkey": s.passkey.as_ref().map(|p| json!({"rp_id": p.rp_id, "username": p.username})),
+        "ssh": s.ssh.as_ref().map(crate::sshkeys::ssh_json),
     })
 }
 

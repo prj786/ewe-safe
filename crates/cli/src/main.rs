@@ -3,7 +3,8 @@
 //! stdin lines, never from the command line. Three exceptions to the JSON:
 //! `reveal` without `--json` prints the bare value (nothing and exit 1 when
 //! there is none), `unlock --ask` opens a prompt window and waits, and
-//! `watch` prints one line per event until the daemon goes away.
+//! `watch` prints one line per event until the daemon goes away. SSH keys
+//! and the agent are `ewe-safe ssh …` ([`ssh`]).
 //! `read`, `run`, `inject` and `git-credential` follow the tools they copy
 //! (1Password's `op`, git's helpers): [`scripts`] and [`git`].
 
@@ -20,6 +21,7 @@ use zeroize::Zeroizing;
 
 mod git;
 mod scripts;
+mod ssh;
 
 /// How long `unlock --ask` waits for the prompt.
 const ASK_WAIT: Duration = Duration::from_secs(300);
@@ -72,7 +74,7 @@ const WITH_ID: &[&str] = &["show", "reveal", "copy", "edit", "rm", "restore"];
 const VERBS: &[&str] = &[
     "status", "summary", "init", "open", "unlock", "lock", "list", "search", "match", "show",
     "reveal", "copy", "add", "edit", "rm", "restore", "generate", "sync", "place", "passwd",
-    "import", "watch", "ping", "version", "passkey",
+    "import", "watch", "ping", "version", "passkey", "ssh",
 ];
 
 struct Parsed {
@@ -229,6 +231,9 @@ fn ok(v: &Value) -> bool {
 fn run(argv: &[String]) -> (Value, ExitCode) {
     if let Some(out) = scripts::dispatch(argv) {
         return out;
+    }
+    if argv.first().map(String::as_str) == Some("ssh") {
+        return (ssh::run(&argv[1..]), ExitCode::SUCCESS);
     }
     let mut p = match parse(argv) {
         Ok(p) => p,

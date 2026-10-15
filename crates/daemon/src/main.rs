@@ -14,7 +14,10 @@
 //!   `op`, added in one edit.
 //! - [`resolve`]: the value a `safe://` reference names.
 //! - [`passkey`]: the passkey verbs (list, create, get) for the browser.
+//! - [`agent`]: the SSH agent on its own socket; [`sshkeys`]: the `ssh-*`
+//!   verbs.
 
+mod agent;
 mod clip;
 mod config;
 mod daemon;
@@ -24,6 +27,7 @@ mod logind;
 mod passkey;
 mod resolve;
 mod server;
+mod sshkeys;
 mod verbs;
 mod worker;
 
@@ -66,6 +70,7 @@ fn main() {
     d.start();
     worker::spawn(d.clone());
     logind::spawn(d.clone());
+    agent::spawn(d.clone());
     on_signals(d.clone(), bound.clone());
     log(&format!(
         "ready, protocol 1 ({})",
@@ -94,6 +99,7 @@ fn on_signals(d: Arc<daemon::Daemon>, bound: Option<PathBuf>) {
             if let Some(p) = bound {
                 let _ = std::fs::remove_file(p);
             }
+            agent::cleanup();
             std::process::exit(0);
         }
     });

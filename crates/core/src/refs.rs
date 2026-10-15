@@ -459,6 +459,7 @@ mod tests {
             has_otp: false,
             modified: None,
             passkey: None,
+            ssh: None,
         }
     }
 
@@ -541,6 +542,7 @@ mod tests {
                 .collect(),
             created: None,
             modified: None,
+            ssh: None,
         }
     }
 

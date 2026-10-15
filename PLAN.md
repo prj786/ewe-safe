@@ -486,6 +486,10 @@ connection.
 | Nextcloud app password | unchanged: keyring, service `ewe-cloud` (read through `ewe-cloud token`) | — |
 | Google / Dropbox refresh tokens | keyring, `ewe-auth` only | — |
 | socket | `$XDG_RUNTIME_DIR/ewe-safe.sock` (0600) | — |
+| SSH agent socket | `$XDG_RUNTIME_DIR/ewe-safe-ssh.sock` (0600; TRIO.md S2) | — |
+| SSH agent's public keys (for the list while locked) | `~/.local/state/ewe/safe/ssh-public.json` (public keys and titles) | never |
+| agent settings | `ewe.conf` `[safe]`: `ssh_agent`, `ssh_confirm` | yes |
+| `SSH_AUTH_SOCK` for new sessions | `~/.config/environment.d/90-ewe-safe-ssh.conf` (`ewe-safe ssh enable`) | never |
 
 **A new machine:** restore `ewe.conf` in ewe-sync, open Safe, and you see
 *Open your safe from Your ewe account*. Type the master password once.
@@ -710,7 +714,7 @@ does. The contract between the repos is [docs/TRIO.md](docs/TRIO.md).
 | Shared / family safes | later, as a second safe file in a Nextcloud shared folder; needs "several safes" first |
 | Several safes open at once | simplicity first |
 | KeePassXC-Browser protocol (Firefox, Chromium) | the ewe browser comes first; this is a whole extra protocol surface |
-| SSH agent | ewe has the SSH plugin; KeePassXC already does this |
+| ~~SSH agent~~ | **moved 2026-10-15** (the owner pushes with 1Password's agent and wants Safe to do it): SSH keys in Safe and an agent in `ewe-safed`, TRIO.md S2; docs/PROTOCOL.md "SSH keys and the agent", docs/FORMAT.md "SSH keys" |
 | YubiKey challenge-response | `keepass-rs` supports it (`challenge_response`); adds UI and hardware testing |
 | S3-compatible place (MinIO, Garage) | possible later; S3 has conditional writes now |
 | Our own phone app | **rejected**: KeePassDX, Strongbox and KeePassium exist and open the file |

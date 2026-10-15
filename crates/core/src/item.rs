@@ -1,5 +1,5 @@
-//! Safe's two kinds of item, Login and Note, and how they sit in KDBX
-//! fields (PLAN.md §5). The field names follow KeePassXC's conventions so
+//! Safe's kinds of item, Login, Note and SSH key, and how they sit in KDBX
+//! fields (PLAN.md §5; an SSH key's own parts are in [`crate::ssh`]). The field names follow KeePassXC's conventions so
 //! every other KeePass app understands them:
 //!
 //! | Safe | KDBX |
@@ -9,6 +9,7 @@
 //! | one-time code | `otp` (an `otpauth://` URI, protected) |
 //! | apps (the `Super+P` pins) | tags `app:<window-class>` |
 //! | kind Note | custom data `ewe.kind = note`; its text is protected |
+//! | kind SSH key | custom data `ewe.kind = ssh-key` (or a `KeeAgent.settings` attachment); its text is protected |
 //! | passkey | KeePassXC's `KPEX_PASSKEY_*` fields ([`crate::passkey`]) |
 //!
 //! Everything else in an entry (custom fields, attachments, history, icons,
@@ -23,6 +24,7 @@ use zeroize::Zeroizing;
 
 pub const KIND_KEY: &str = "ewe.kind";
 pub const KIND_NOTE: &str = "note";
+pub const KIND_SSH: &str = "ssh-key";
 pub const OTP: &str = "otp";
 pub const EXTRA_URL: &str = "KP2A_URL_";
 pub const APP_TAG: &str = "app:";
@@ -32,6 +34,8 @@ pub enum Kind {
     #[default]
     Login,
     Note,
+    /// A KeeAgent entry (crate::ssh).
+    SshKey,
 }
 
 impl Kind {
@@ -39,6 +43,16 @@ impl Kind {
         match self {
             Kind::Login => "login",
             Kind::Note => "note",
+            Kind::SshKey => KIND_SSH,
+        }
+    }
+
+    pub fn parse(name: &str) -> Option<Kind> {
+        match name {
+            "login" => Some(Kind::Login),
+            "note" => Some(Kind::Note),
+            KIND_SSH => Some(Kind::SshKey),
+            _ => None,
         }
     }
 }
@@ -60,6 +74,8 @@ pub struct Summary {
     pub modified: Option<NaiveDateTime>,
     /// The item's passkey (KeePassXC's fields), never its key.
     pub passkey: Option<crate::passkey::Info>,
+    /// An SSH key's public part; None for the other kinds.
+    pub ssh: Option<crate::ssh::Info>,
 }
 
 /// An item as the editor fills it in. The secret parts are wiped from
@@ -120,13 +136,18 @@ pub fn custom_text(value: &CustomDataValue) -> String {
     }
 }
 
+/// The kind the entry's marker names. An SSH key another app made has no
+/// marker: [`crate::ssh::refine`] knows it by its `KeeAgent.settings`.
 pub fn kind_of(entry: &Entry) -> Kind {
     match entry
         .custom_data
         .get(KIND_KEY)
         .and_then(|i| i.value.as_ref())
+        .map(custom_text)
+        .as_deref()
     {
-        Some(v) if custom_text(v) == KIND_NOTE => Kind::Note,
+        Some(KIND_NOTE) => Kind::Note,
+        Some(KIND_SSH) => Kind::SshKey,
         _ => Kind::Login,
     }
 }
@@ -183,6 +204,8 @@ pub fn summary_of(id: String, entry: &Entry, folder: String) -> Summary {
         has_otp: entry.get(OTP).is_some_and(|p| !p.is_empty()),
         modified: entry.times.last_modification,
         passkey: crate::passkey::info_of(entry),
+        // filled by crate::ssh::refine, which needs the entry's attachments
+        ssh: None,
     }
 }
 
@@ -220,12 +243,17 @@ pub fn apply(entry: &mut Entry, draft: &Draft) {
     }
 
     match draft.kind {
-        Kind::Note => {
+        Kind::Note | Kind::SshKey => {
             entry.set_protected(fields::NOTES, draft.notes.as_str());
+            let marker = if draft.kind == Kind::Note {
+                KIND_NOTE
+            } else {
+                KIND_SSH
+            };
             entry.custom_data.insert(
                 KIND_KEY.to_string(),
                 CustomDataItem {
-                    value: Some(custom_value(KIND_NOTE)),
+                    value: Some(custom_value(marker)),
                     last_modification_time: Some(keepass::db::Times::now()),
                 },
             );

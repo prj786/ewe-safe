@@ -11,6 +11,8 @@ use serde_json::{Value, json};
 
 use crate::log;
 
+pub const SSH_SOCKET: &str = "ewe-safe-ssh.sock";
+
 pub struct Paths {
     /// `$XDG_STATE_HOME/ewe/safe`: the sync engine's files and `machine.json`.
     pub state: PathBuf,
@@ -49,6 +51,17 @@ impl Paths {
         self.runtime.join("ewe-safe.sock")
     }
 
+    /// The SSH agent's socket (agent.rs).
+    pub fn ssh_socket(&self) -> PathBuf {
+        self.runtime.join(SSH_SOCKET)
+    }
+
+    /// `$XDG_STATE_HOME/ewe/safe/ssh-public.json`: the agent's keys while
+    /// the safe is locked (public keys and their names only).
+    pub fn ssh_public(&self) -> PathBuf {
+        self.state.join("ssh-public.json")
+    }
+
     pub fn machine(&self) -> PathBuf {
         self.state.join("machine.json")
     }
@@ -67,6 +80,11 @@ pub struct Settings {
     pub clipboard_clear_seconds: u64,
     pub generator_length: usize,
     pub generator_words: usize,
+    /// `ssh_agent`: the agent answers (`ewe-safe ssh enable`); off, it
+    /// lists no key and signs nothing.
+    pub ssh_agent: bool,
+    /// `ssh_confirm`: `first-use` | `every-time` | `never`.
+    pub ssh_confirm: String,
 }
 
 impl Default for Settings {
@@ -78,7 +96,26 @@ impl Default for Settings {
             clipboard_clear_seconds: 30,
             generator_length: 20,
             generator_words: 5,
+            ssh_agent: false,
+            ssh_confirm: CONFIRM_FIRST_USE.to_string(),
         }
+    }
+}
+
+pub const CONFIRM_FIRST_USE: &str = "first-use";
+pub const CONFIRMS: [&str; 3] = [CONFIRM_FIRST_USE, "every-time", "never"];
+
+/// A boolean as JSON or as text ("true", "yes", "on", "1").
+fn truthy(v: Option<&Value>, dflt: bool) -> bool {
+    match v {
+        Some(Value::Bool(b)) => *b,
+        Some(Value::String(t)) => match t.trim().to_lowercase().as_str() {
+            "true" | "yes" | "on" | "1" => true,
+            "false" | "no" | "off" | "0" => false,
+            _ => dflt,
+        },
+        Some(Value::Number(n)) => n.as_u64().map_or(dflt, |n| n != 0),
+        _ => dflt,
     }
 }
 
@@ -94,6 +131,13 @@ impl Settings {
             clipboard_clear_seconds: num("clipboard_clear_seconds", d.clipboard_clear_seconds),
             generator_length: num("generator_length", d.generator_length as u64) as usize,
             generator_words: num("generator_words", d.generator_words as u64) as usize,
+            ssh_agent: truthy(t.get("ssh_agent"), d.ssh_agent),
+            ssh_confirm: t
+                .get("ssh_confirm")
+                .and_then(Value::as_str)
+                .map(|c| c.trim().to_lowercase())
+                .filter(|c| CONFIRMS.contains(&c.as_str()))
+                .unwrap_or(d.ssh_confirm),
         }
     }
 
@@ -116,6 +160,15 @@ pub fn conf_set(key: &str, value: &str) {
     if ewe_conf(&["set", &format!("safe.{key}"), value]).is_none() {
         log(&format!("ewe-conf could not store safe.{key}"));
     }
+}
+
+/// [`conf_set`], answering whether `ewe-conf` stored it.
+pub fn conf_store(key: &str, value: &str) -> bool {
+    let ok = ewe_conf(&["set", &format!("safe.{key}"), value]).is_some();
+    if !ok {
+        log(&format!("ewe-conf could not store safe.{key}"));
+    }
+    ok
 }
 
 fn ewe_conf(args: &[&str]) -> Option<Vec<u8>> {
@@ -206,6 +259,22 @@ mod tests {
         assert!(s.lock_on_screen_lock);
         assert_eq!(s.clipboard_clear_seconds, 30);
         assert_eq!(Settings::from_table(&json!({})), Settings::default());
+    }
+
+    #[test]
+    fn ssh_settings_read_as_json_or_text() {
+        let d = Settings::default();
+        assert!(!d.ssh_agent);
+        assert_eq!(d.ssh_confirm, "first-use");
+        let s = Settings::from_table(&json!({"ssh_agent": true, "ssh_confirm": "Every-Time"}));
+        assert!(s.ssh_agent);
+        assert_eq!(s.ssh_confirm, "every-time");
+        let s = Settings::from_table(&json!({"ssh_agent": "true", "ssh_confirm": "sometimes"}));
+        assert!(s.ssh_agent, "a fake ewe-conf stores text");
+        assert_eq!(
+            s.ssh_confirm, "first-use",
+            "an unknown value is the default"
+        );
     }
 
     #[test]

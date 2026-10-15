@@ -5,19 +5,11 @@
 
 use keepass::db::{Times, fields};
 
-use super::{Error, HISTORY_MAX_ITEMS, Safe, entry_id, settle_history};
+use super::{Error, Safe, entry_id, settle_history};
 use crate::item::{self, Draft};
 use crate::passkey::{self, New, Secret};
 
 impl Safe {
-    fn history_max(&self) -> usize {
-        self.db
-            .meta
-            .history_max_items
-            .and_then(|n| usize::try_from(n).ok())
-            .unwrap_or(HISTORY_MAX_ITEMS)
-    }
-
     /// Put a passkey on an item outside the recycle bin, replacing the one
     /// it had (one per entry). An empty username takes the passkey's, as
     /// KeePassDX does.

@@ -1,7 +1,7 @@
 //! safe-core — the safe itself, with no network and no daemon.
 //!
 //! - [`safe`]: one KDBX file opened, read, edited and written (PLAN.md §5).
-//! - [`item`]: Safe's two kinds of item and how they map onto KDBX fields.
+//! - [`item`]: Safe's kinds of item and how they map onto KDBX fields.
 //! - [`guard`]: what keepass-rs can write back, checked before any write
 //!   (docs/SPIKE-0.md, C1).
 //! - [`search`]: ranking items for what the user typed.
@@ -18,6 +18,8 @@
 //! - [`hygiene`]: no core dumps, no ptrace, buffers out of swap.
 //! - [`passkey`]: passkeys in KeePassXC's fields, their keys, and what an
 //!   authenticator answers (docs/FORMAT.md).
+//! - [`ssh`]: SSH keys as KeeAgent entries (KeePassXC's format), and
+//!   signing with them for the daemon's agent.
 
 pub mod atomic;
 pub mod digest;
@@ -33,6 +35,7 @@ pub mod passkey;
 pub mod refs;
 pub mod safe;
 pub mod search;
+pub mod ssh;
 
 pub use item::{Draft, Field, Kind, Summary};
 pub use safe::{Error, Safe};
