@@ -366,6 +366,16 @@ async fn settings_set(key: String, value: Value) -> Value {
 }
 
 #[tauri::command]
+async fn passwords_provider() -> Value {
+    blocking(tools::passwords_provider).await
+}
+
+#[tauri::command]
+async fn use_safe_for_passwords() -> Value {
+    blocking(tools::use_safe_for_passwords).await
+}
+
+#[tauri::command]
 async fn cloud_status() -> Value {
     blocking(tools::cloud_status).await
 }
@@ -553,6 +563,8 @@ pub fn run() {
             theme_key,
             settings_get,
             settings_set,
+            passwords_provider,
+            use_safe_for_passwords,
             cloud_status,
             window_classes,
             open_url,

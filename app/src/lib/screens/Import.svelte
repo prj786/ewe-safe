@@ -40,6 +40,10 @@
   let done = $state(null); // the import's reply
   let error = $state("");
   let importBtn = $state();
+  // Super+P after an import: the Passwords plugin's provider when it isn't
+  // Safe (auto picks Safe once a safe is set up), and the switch
+  let superP = $state(null);
+  let superPState = $state(""); // "" | "busy" | "done" | an error sentence
 
   const needsFile = $derived(format !== "op");
   const ready = $derived(!needsFile || !!file);
@@ -87,7 +91,19 @@
       // keyboard first: the "Check first" button is gone, Enter imports
       await tick();
       importBtn?.focus();
-    } else done = r;
+    } else {
+      done = r;
+      const p = await api.passwordsProvider();
+      superP = p?.ok && p.provider && !["ewe", "auto"].includes(p.provider) ? p.provider : null;
+    }
+  }
+
+  const PROVIDERS = { "1password": "1Password", bitwarden: "Bitwarden", pass: "pass" };
+
+  async function useSafeForSuperP() {
+    superPState = "busy";
+    const r = await api.useSafeForPasswords();
+    superPState = r?.ok ? "done" : r?.message || "Couldn't change what Super+P fills from.";
   }
 </script>
 
@@ -119,6 +135,24 @@
           <div class="ewe-alert__body">
             <div class="ewe-alert__title">Delete the export file now</div>
             <div class="ewe-alert__desc">{done.hint ?? "Anyone who gets it can read every password."} <span class="mono">{file}</span></div>
+          </div>
+        </div>
+      {/if}
+      {#if superP && superPState === "done"}
+        <div class="ewe-alert ewe-alert--success" role="status">
+          <Icon name="circle-check" />
+          <div class="ewe-alert__body"><div class="ewe-alert__title">Super+P now fills from Safe</div></div>
+        </div>
+      {:else if superP}
+        <div class="ewe-alert ewe-alert--info" role="status">
+          <Icon name="key-round" />
+          <div class="ewe-alert__body">
+            <div class="ewe-alert__title">Super+P still uses {PROVIDERS[superP] ?? superP}</div>
+            <div class="ewe-alert__desc">Fill logins into any window from Safe instead.</div>
+            {#if superPState && superPState !== "busy"}<div class="ewe-alert__desc">{superPState}</div>{/if}
+            <div class="ewe-alert__actions">
+              <button class="ewe-btn ewe-btn--secondary ewe-btn--sm" disabled={superPState === "busy"} onclick={useSafeForSuperP}>Use Safe for Super+P</button>
+            </div>
           </div>
         </div>
       {/if}

@@ -78,6 +78,9 @@ export const api = {
   themeKey: () => invoke("theme_key"),
   settingsGet: () => invoke("settings_get"),
   settingsSet: (key, value) => invoke("settings_set", { key, value }),
+  // Super+P: the Passwords plugin's provider, and switching it to Safe
+  passwordsProvider: () => invoke("passwords_provider"),
+  useSafeForPasswords: () => invoke("use_safe_for_passwords"),
   cloudStatus: () => invoke("cloud_status"),
   windowClasses: () => invoke("window_classes"),
   openUrl: (url) => invoke("open_url", { url }),

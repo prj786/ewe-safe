@@ -446,6 +446,10 @@ search <text>
 match  [--class C] [--title T] [--url U]    best first, no secrets (the picker's verb)
 show   <id>                  fields, secrets masked
 reveal <id> --field password|username|otp|<name>   bare value on stdout
+read   "safe://<folder>/<title>/<field>"   bare value, like `op read` (2026-10-15)
+run    [--env-file F] -- <cmd>   safe:// values in its environment, like `op run`
+inject -i <template> [-o F]  {{ safe://… }} filled in, like `op inject`
+git-credential get|store|erase   git's helper: strict host match, asks before saving
 copy   <id> --field …        wl-copy with the password-manager hint, auto-clear
 add    --kind login|note --title … [--username …] [--url …] [--app CLASS]
        [--generate | --password-stdin]

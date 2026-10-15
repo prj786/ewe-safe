@@ -555,6 +555,7 @@ dependencies = [
 name = "ewe-safe"
 version = "0.1.0-beta"
 dependencies = [
+ "libc",
  "rpassword",
  "safe-client",
  "safe-core",
@@ -1345,6 +1346,7 @@ dependencies = [
  "chrono",
  "getrandom 0.4.3",
  "keepass",
+ "libc",
  "quick-xml",
  "rust-argon2",
  "serde_json",
