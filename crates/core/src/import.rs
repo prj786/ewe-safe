@@ -8,6 +8,7 @@
 //! |---|---|
 //! | Login, Password | a Login: username, password, every website, the first one-time code, tags, notes; other fields become custom fields, protected when 1Password conceals them |
 //! | Secure Note | a Note |
+//! | SSH Key | an SSH key item (crate::ssh); a Note as below when Safe can't read the key |
 //! | every other category (Credit Card, Identity, …) | a Note listing its fields; the secret ones are also kept as protected custom fields |
 //! | vault | a folder |
 //! | archived item | the folder `Archive` |
@@ -26,6 +27,7 @@ use zeroize::{Zeroize, Zeroizing};
 use crate::item::{Draft, Kind, Summary};
 use crate::otp::Totp;
 use crate::search;
+use crate::ssh::{self, KeyFile};
 
 /// An attachment bigger than this stays out: the whole safe travels to its
 /// place on every save.
@@ -111,6 +113,8 @@ pub struct Imported {
     pub files: Vec<File>,
     pub created: Option<NaiveDateTime>,
     pub modified: Option<NaiveDateTime>,
+    /// An SSH key item's key (crate::ssh), ready to store.
+    pub ssh: Option<KeyFile>,
 }
 
 /// Something left out, and why. Never a value: the title says which.
@@ -139,6 +143,7 @@ pub struct Options {
 pub struct Report {
     pub logins: usize,
     pub notes: usize,
+    pub ssh_keys: usize,
     pub attachments: usize,
     pub otps: usize,
     /// Items whose website and username an item in the safe already has.
@@ -231,7 +236,7 @@ fn category_1pux(id: &str) -> (Kind, &'static str) {
         "111" => (Kind::Note, "Email account"),
         "112" => (Kind::Note, "API credential"),
         "113" => (Kind::Note, "Medical record"),
-        "114" => (Kind::Note, "SSH key"),
+        "114" => (Kind::SshKey, "SSH key"),
         "115" => (Kind::Note, "Crypto wallet"),
         _ => (Kind::Note, "Item"),
     }
@@ -282,6 +287,13 @@ enum Rendered {
     Otp(Zeroizing<String>),
     /// A file to attach: (1PUX document id or `op` file id, its name).
     File(String, String),
+    /// An SSH key: the private key (PKCS#8 or OpenSSH), and what 1Password
+    /// says of its public part.
+    SshKey {
+        private: Zeroizing<String>,
+        public: String,
+        fingerprint: String,
+    },
 }
 
 fn text(value: &str, secret: bool) -> Option<Rendered> {
@@ -345,7 +357,7 @@ fn address(v: &Value) -> String {
 }
 
 /// A 1PUX section field's value (`{"concealed": "…"}`, `{"email": {…}}`, …),
-/// as (label suffix, value) pairs: an SSH key is three.
+/// as (label suffix, value) pairs.
 fn render_1pux(value: &Value) -> Vec<(&'static str, Rendered)> {
     let Some((key, v)) = value.as_object().and_then(|o| o.iter().next()) else {
         return Vec::new();
@@ -382,14 +394,23 @@ fn render_1pux(value: &Value) -> Vec<(&'static str, Rendered)> {
             let private = Some(st(v, "privateKey"))
                 .filter(|s| !s.is_empty())
                 .unwrap_or_else(|| st(meta, "privateKey"));
-            [
-                ("", text(private, true)),
-                (" (public key)", text(st(meta, "publicKey"), false)),
-                (" (fingerprint)", text(st(meta, "fingerprint"), false)),
-            ]
-            .into_iter()
-            .filter_map(|(s, r)| r.map(|r| (s, r)))
-            .collect()
+            if private.trim().is_empty() {
+                return [
+                    (" (public key)", text(st(meta, "publicKey"), false)),
+                    (" (fingerprint)", text(st(meta, "fingerprint"), false)),
+                ]
+                .into_iter()
+                .filter_map(|(s, r)| r.map(|r| (s, r)))
+                .collect();
+            }
+            vec![(
+                "",
+                Rendered::SshKey {
+                    private: Zeroizing::new(private.to_string()),
+                    public: st(meta, "publicKey").trim().to_string(),
+                    fingerprint: st(meta, "fingerprint").trim().to_string(),
+                },
+            )]
         }
         // a link to another 1Password item, by its 1Password id: nothing
         // to keep once the items live in Safe
@@ -451,6 +472,13 @@ struct Builder {
     folder: String,
     created: Option<NaiveDateTime>,
     modified: Option<NaiveDateTime>,
+    /// An SSH key item's key as the export holds it: (section, label, key).
+    ssh_private: Option<(String, String, Zeroizing<String>)>,
+    /// The same key in OpenSSH form, when `op` gave it.
+    ssh_openssh: Option<Zeroizing<String>>,
+    /// Fields an SSH key item derives from its key (public key,
+    /// fingerprint): listed only if the item falls back to a Note.
+    held: Vec<(String, String, Rendered)>,
 }
 
 impl Builder {
@@ -475,6 +503,9 @@ impl Builder {
             folder: folder.to_string(),
             created: None,
             modified: None,
+            ssh_private: None,
+            ssh_openssh: None,
+            held: Vec::new(),
         }
     }
 
@@ -523,6 +554,37 @@ impl Builder {
                 self.custom(name, &raw, true);
             }
             Rendered::File(..) => {}
+            Rendered::SshKey {
+                private,
+                public,
+                fingerprint,
+            } => {
+                let derived = [(" (public key)", public), (" (fingerprint)", fingerprint)];
+                if self.kind == Kind::SshKey && self.ssh_private.is_none() {
+                    self.ssh_private = Some((section.to_string(), label.to_string(), private));
+                    for (suffix, v) in derived {
+                        if let Some(r) = text(&v, false) {
+                            self.held
+                                .push((section.to_string(), format!("{label}{suffix}"), r));
+                        }
+                    }
+                    return;
+                }
+                // a second key, or one on another kind: listed as before
+                self.field(
+                    section,
+                    label,
+                    Rendered::Text {
+                        value: private,
+                        secret: true,
+                    },
+                );
+                for (suffix, v) in derived {
+                    if let Some(r) = text(&v, false) {
+                        self.field(section, &format!("{label}{suffix}"), r);
+                    }
+                }
+            }
             Rendered::Text { value, secret } => {
                 let shown = if label.is_empty() { "Field" } else { label };
                 match self.kind {
@@ -534,7 +596,7 @@ impl Builder {
                         };
                         self.custom(&name, &value, secret);
                     }
-                    Kind::Note => {
+                    Kind::Note | Kind::SshKey => {
                         if !section.is_empty() && self.section_shown != section {
                             if !self.lines.is_empty() {
                                 self.lines.push('\n');
@@ -580,13 +642,55 @@ impl Builder {
         });
     }
 
+    /// A field an SSH key item derives from its key: listed only if the
+    /// item falls back to a Note.
+    fn hold(&mut self, section: &str, label: &str, value: Rendered) {
+        self.held
+            .push((section.trim().to_string(), label.trim().to_string(), value));
+    }
+
+    /// An SSH key item whose key Safe can't read becomes the Note it was
+    /// before SSH keys existed: nothing is lost.
+    fn settle_ssh(&mut self) -> Option<KeyFile> {
+        if self.kind != Kind::SshKey {
+            return None;
+        }
+        let read = |t: &Zeroizing<String>| ssh::read_key(t.as_bytes(), "").ok();
+        let key = self
+            .ssh_openssh
+            .as_ref()
+            .and_then(read)
+            .or_else(|| self.ssh_private.as_ref().and_then(|(_, _, p)| read(p)));
+        if key.is_some() {
+            self.held.clear();
+            return key;
+        }
+        self.kind = Kind::Note;
+        if let Some((section, label, private)) = self.ssh_private.take() {
+            self.field(
+                &section,
+                &label,
+                Rendered::Text {
+                    value: private,
+                    secret: true,
+                },
+            );
+        }
+        for (section, label, r) in std::mem::take(&mut self.held) {
+            self.field(&section, &label, r);
+        }
+        None
+    }
+
     fn finish(mut self) -> Imported {
         self.history.sort_by_key(|h| h.time);
+        let ssh = self.settle_ssh();
         let notes = match self.kind {
             Kind::Login => self.notes.clone(),
-            Kind::Note => {
+            Kind::Note | Kind::SshKey => {
                 let mut text = Zeroizing::new(String::new());
-                let secure_note = self.category == "Secure note";
+                // an SSH key says what it is itself: no category line
+                let secure_note = self.category == "Secure note" || self.kind == Kind::SshKey;
                 if secure_note {
                     text.push_str(self.notes.trim_end());
                     if !self.lines.is_empty() {
@@ -607,8 +711,9 @@ impl Builder {
                 Zeroizing::new(text.trim().to_string())
             }
         };
-        // a password on a Note (a Server's, a router's) stays a field
-        if self.kind == Kind::Note && !self.password.is_empty() {
+        // a password on a Note (a Server's, a router's) stays a field; an
+        // SSH key's password is its passphrase
+        if self.kind != Kind::Login && !self.password.is_empty() {
             let pw = self.password.clone();
             self.custom("Login password", &pw, true);
         }
@@ -634,6 +739,7 @@ impl Builder {
             files: self.files,
             created: self.created,
             modified: self.modified,
+            ssh,
         }
     }
 }
@@ -1034,6 +1140,13 @@ pub struct OpFile {
     pub size: Option<u64>,
 }
 
+fn vault_id(item: &Value) -> String {
+    item.get("vault")
+        .map(|v| st(v, "id"))
+        .unwrap_or("")
+        .to_string()
+}
+
 /// One `op item get --format json` item.
 fn item_op(
     item: &Value,
@@ -1058,6 +1171,7 @@ fn item_op(
         "LOGIN" => (Kind::Login, "Login".to_string()),
         "PASSWORD" => (Kind::Login, "Password".to_string()),
         "SECURE_NOTE" => (Kind::Note, "Secure note".to_string()),
+        "SSH_KEY" => (Kind::SshKey, "SSH key".to_string()),
         other => (Kind::Note, pretty(other)),
     };
     let folder = if state == "ARCHIVED" { ARCHIVE } else { folder };
@@ -1141,9 +1255,29 @@ fn item_op(
                 .as_str()
                 .filter(|s| !s.trim().is_empty())
                 .map(|s| Rendered::Otp(Zeroizing::new(s.to_string()))),
-            "CONCEALED" | "CREDIT_CARD_NUMBER" | "SSHKEY" => {
-                value.as_str().and_then(|s| text(s, true))
+            // op gives the key as PKCS#8, and newer versions the OpenSSH form too
+            "SSHKEY" => {
+                let openssh = f
+                    .get("ssh_formats")
+                    .and_then(|x| x.get("openssh"))
+                    .map(|x| st(x, "value"))
+                    .filter(|v| !v.trim().is_empty());
+                if kind == Kind::SshKey
+                    && b.ssh_openssh.is_none()
+                    && let Some(o) = openssh
+                {
+                    b.ssh_openssh = Some(Zeroizing::new(o.to_string()));
+                }
+                value
+                    .as_str()
+                    .filter(|s| !s.trim().is_empty())
+                    .map(|s| Rendered::SshKey {
+                        private: Zeroizing::new(s.to_string()),
+                        public: String::new(),
+                        fingerprint: String::new(),
+                    })
             }
+            "CONCEALED" | "CREDIT_CARD_NUMBER" => value.as_str().and_then(|s| text(s, true)),
             "DATE" => date(value).and_then(|d| text(&d, false)),
             "MONTH_YEAR" => month_year(value).and_then(|d| text(&d, false)),
             "REFERENCE" => None,
@@ -1154,17 +1288,41 @@ fn item_op(
                 other => text(&other.to_string(), false),
             },
         };
-        if let Some(r) = r {
-            b.field(&section, label, r);
+        let derived = matches!(st(f, "id"), "public_key" | "fingerprint" | "key_type");
+        match r {
+            Some(r) if kind == Kind::SshKey && derived => b.hold(&section, label, r),
+            Some(r) => b.field(&section, label, r),
+            None => {}
         }
     }
 
-    let vault = item
-        .get("vault")
-        .map(|v| st(v, "id"))
-        .unwrap_or("")
-        .to_string();
+    let vault = vault_id(item);
     let id = st(item, "id").to_string();
+    // a key Safe can't read as op printed it: op's own OpenSSH form
+    // (`op read "op://<vault>/<item>/private key?ssh-format=openssh"`)
+    if b.ssh_openssh.is_none()
+        && let Some((_, label, private)) = &b.ssh_private
+        && ssh::read_key(private.as_bytes(), "").is_err()
+    {
+        let label = if label.is_empty() {
+            "private key"
+        } else {
+            label
+        };
+        let asked = OpFile {
+            vault: vault_id(item),
+            item: id.clone(),
+            file: format!("{label}?ssh-format=openssh"),
+            name: label.to_string(),
+            document: false,
+            size: None,
+        };
+        if let Ok(bytes) = fetch(&asked)
+            && let Ok(text) = std::str::from_utf8(&bytes)
+        {
+            b.ssh_openssh = Some(Zeroizing::new(text.to_string()));
+        }
+    }
     let files: Vec<&Value> = item
         .get("files")
         .and_then(Value::as_array)
@@ -1287,6 +1445,7 @@ pub fn plan(batch: &Batch, existing: &[Summary], opts: &Options) -> Plan {
         match d.kind {
             Kind::Login => report.logins += 1,
             Kind::Note => report.notes += 1,
+            Kind::SshKey => report.ssh_keys += 1,
         }
         if !d.otp.is_empty() {
             report.otps += 1;
@@ -1363,7 +1522,10 @@ mod tests {
             ("1 Hill Rd\nEwetown, 123\nnz".into(), false)
         );
         assert!(render_1pux(&serde_json::json!({"reference": "abc"})).is_empty());
-        assert_eq!(render_1pux(&serde_json::json!({"sshKey": {"privateKey": "k", "metadata": {"publicKey": "p", "fingerprint": "f"}}})).len(), 3);
+        assert!(matches!(
+            &render_1pux(&serde_json::json!({"sshKey": {"privateKey": "k", "metadata": {"publicKey": "p", "fingerprint": "f"}}}))[..],
+            [("", Rendered::SshKey { public, fingerprint, .. })] if public == "p" && fingerprint == "f"
+        ));
     }
 
     #[test]

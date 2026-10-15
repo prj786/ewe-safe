@@ -465,6 +465,11 @@ button.ewe-choice {
   white-space: pre-wrap;
   user-select: text;
 }
+/* an SSH public key: one long word, wrapped anywhere, selectable */
+.safe-key {
+  word-break: break-all;
+  user-select: text;
+}
 .safe-toasts {
   position: absolute;
   right: calc(var(--space-md) + var(--space-s));

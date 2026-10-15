@@ -3,7 +3,10 @@
 //! stdin lines, never from the command line. Three exceptions to the JSON:
 //! `reveal` without `--json` prints the bare value (nothing and exit 1 when
 //! there is none), `unlock --ask` opens a prompt window and waits, and
-//! `watch` prints one line per event until the daemon goes away.
+//! `watch` prints one line per event until the daemon goes away. SSH keys
+//! and the agent are `ewe-safe ssh …` ([`ssh`]).
+
+mod ssh;
 
 use std::collections::HashSet;
 use std::io::{IsTerminal, Read, Write};
@@ -65,7 +68,7 @@ const WITH_ID: &[&str] = &["show", "reveal", "copy", "edit", "rm", "restore"];
 const VERBS: &[&str] = &[
     "status", "summary", "init", "open", "unlock", "lock", "list", "search", "match", "show",
     "reveal", "copy", "add", "edit", "rm", "restore", "generate", "sync", "place", "passwd",
-    "import", "watch", "ping", "version",
+    "import", "watch", "ping", "version", "ssh",
 ];
 
 struct Parsed {
@@ -211,6 +214,9 @@ fn ok(v: &Value) -> bool {
 }
 
 fn run(argv: &[String]) -> (Value, ExitCode) {
+    if argv.first().map(String::as_str) == Some("ssh") {
+        return (ssh::run(&argv[1..]), ExitCode::SUCCESS);
+    }
     let mut p = match parse(argv) {
         Ok(p) => p,
         Err(v) => return (v, ExitCode::SUCCESS),

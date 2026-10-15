@@ -207,6 +207,7 @@ pub fn dispatch(d: &Arc<Daemon>, verb: &str, a: &mut Args) -> Result<Value, Fail
             }))
         }
         "import" => crate::import::import(d, a),
+        v if v.starts_with("ssh-") => crate::sshkeys::dispatch(d, v, a),
         "passwd" => {
             let new = secret(a, "new_password")
                 .ok_or_else(|| Fail::bad("The new master password is missing."))?;
@@ -255,9 +256,9 @@ fn summary(d: &Daemon) -> Value {
 fn list_items(d: &Daemon, a: &Args) -> Result<Value, Fail> {
     let kind = match s(a, "kind") {
         None => None,
-        Some("login") => Some(Kind::Login),
-        Some("note") => Some(Kind::Note),
-        Some(_) => return Err(Fail::bad("--kind is login or note")),
+        Some(k) => {
+            Some(Kind::parse(k).ok_or_else(|| Fail::bad("--kind is login, note or ssh-key"))?)
+        }
     };
     let tag = s(a, "tag").map(str::to_lowercase);
     let snap = open_snap(d)?;

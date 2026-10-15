@@ -38,7 +38,8 @@ says so. The `op` way never writes one.
 |---|---|
 | **Login**, **Password** | a **Login**: username, password, every website (the first is `URL`, the rest `KP2A_URL_1…`), the first one-time code (`otp`, as an `otpauth://` URI — a bare secret is turned into one), tags, notes. Every other field becomes a **custom field**, named `Section: label`, protected when 1Password conceals it (a PIN, a security answer). Web-form fields the browser extension saved become `Web form: <name>`; check boxes stay out |
 | **Secure Note** | a **Note**: its text, then any extra fields listed below it |
-| **every other category** (Credit Card, Identity, Bank Account, Server, Database, Software License, SSH Key, Document, …) | a **Note** whose text starts with the category and lists every field as `label: value`, by section. The **secret** fields (concealed, a card number, an SSH private key) are also kept as **protected custom fields**, so a script or `reveal --field` can still read them |
+| **SSH Key** | an **SSH key** item, as KeePassXC stores one (docs/FORMAT.md, "SSH keys"): the key as an OpenSSH attachment (1Password exports PKCS#8, which Safe turns into OpenSSH; through `op`, op's own OpenSSH form when its value can't be read: `op read "op://<vault>/<item>/private key?ssh-format=openssh"`), `KeeAgent.settings`, `public_key` and `fingerprint`; its notes and other fields as a Note lists them. A key Safe can't read stays a **Note** as below, so nothing is lost |
+| **every other category** (Credit Card, Identity, Bank Account, Server, Database, Software License, Document, …) | a **Note** whose text starts with the category and lists every field as `label: value`, by section. The **secret** fields (concealed, a card number, an SSH private key) are also kept as **protected custom fields**, so a script or `reveal --field` can still read them |
 | vault | a **folder** with the vault's name (below `--folder`; below the account's name when one 1PUX holds several accounts) |
 | archived item | the folder **Archive** |
 | item in the trash | **skipped** (listed in the report) |
@@ -49,7 +50,12 @@ says so. The `op` way never writes one.
 | a second one-time code, or one Safe can't read | kept as a protected custom field |
 | an address | one field, `street` / `city, state zip` / `country` |
 | a date, a month and year | `YYYY-MM-DD`, `YYYY-MM` |
-| an SSH key | the private key (protected), the public key and the fingerprint |
+| an SSH key in a Note (a key Safe can't read) | the private key (protected), the public key and the fingerprint |
+
+**Imported before SSH keys existed?** The owner's safe got its SSH keys as
+Notes. `ewe-safe ssh adopt --dry-run` lists them, `ewe-safe ssh adopt`
+turns them into SSH key items in place: same item, the note text and
+every field kept (docs/PROTOCOL.md, "SSH keys and the agent").
 
 **Duplicates:** an item whose website host (without `www.`) and username an
 item already in the safe has. They are counted in the report and imported
@@ -72,7 +78,9 @@ anyway, unless `--skip-duplicates`, which lists them under `skipped`.
   bytes and the parsed JSON are wiped once the items are built.
 - `op` runs as argv from the daemon and is asked **by id** (`vault list`,
   `item list --include-archive`, `item get`, `read op://<vault>/<item>/<file>`,
-  `document get`); no value ever goes on a command line.
+  `read op://<vault>/<item>/private key?ssh-format=openssh` for a key it
+  printed in a form Safe can't read, `document get`); no value ever goes
+  on a command line.
 - The report holds counts, folder names and titles — never a value.
 - **One save** for the whole import: one verified write, one upload, one
   merge if another machine saved meanwhile.
@@ -89,7 +97,10 @@ anyway, unless `--skip-duplicates`, which lists them under `skipped`.
   read for the corners (file names `files/<documentId>__<name>` and `___`,
   e-mail and address objects). `tests/import/make_fixtures.py` makes them;
   no real data was ever used. pykeepass reads every imported field back.
+- SSH keys (`crates/core/tests/ssh.rs`): PKCS#8 keys made by the tests,
+  in a 1PUX and in `op`'s JSON (with and without `ssh_formats`, and through
+  `op read …?ssh-format=openssh`); a key Safe can't read stays a Note.
 - **Not yet verified:** a 1PUX or CSV from the current 1Password app, and
   the real `op` (attachments through `op read`, the approval prompt when op
-  is run by a user service). The first real import should be a
+  is run by a user service, the exact JSON op prints for an SSH key). The first real import should be a
   `--dry-run`, compared with what 1Password shows.

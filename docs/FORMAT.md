@@ -29,6 +29,7 @@ The reference the daemon is built against. The decisions are in PLAN.md
 | one-time code | `otp`: an `otpauth://` URI, protected; codes computed by Safe (F7) |
 | apps (the `Super+P` pins) | tags `app:<window-class>` |
 | kind Note | custom data `ewe.kind = note`; its notes are protected |
+| kind SSH key | a KeeAgent entry, below; custom data `ewe.kind = ssh-key`, its notes protected |
 
 Everything else in an entry (custom fields, attachments, icons, colours,
 auto-type) is left as it was.
@@ -39,6 +40,82 @@ ewe-sync's "last saved by"; the merge keeps the newer stamp). Read it with
 `Safe::saved_by`, which survives F6. `Safe::newest_change` (items and
 folders changed or moved, recorded deletions) is what the rollback check
 compares (docs/PLACES.md).
+
+## SSH keys
+
+An SSH key is stored the way **KeeAgent** (KeePass 2) and **KeePassXC**
+store one, so KeePassXC's SSH agent support uses the same entries. Read
+from KeePassXC's `src/sshagent/` (`KeeAgentSettings.cpp`,
+`OpenSSHKey.cpp`, `SSHAgent.cpp`) and `src/gui/entry/EditEntryWidget.cpp`
+at `52e2743b3a77`. Code: `safe_core::ssh`.
+
+| what | where |
+|---|---|
+| the private key | an **attachment**, OpenSSH format, named as ssh-keygen names the file: `id_ed25519`, `id_ecdsa`, `id_rsa` (`id_ed25519.1`, `.2`, … when the entry already has that name — KeePassXC's own rule) |
+| the settings | the attachment **`KeeAgent.settings`** (XML, below) naming the key's attachment |
+| the key's passphrase | the entry's **password** (KeePassXC opens the key with it) |
+| the public key, the fingerprint | unprotected custom fields **`public_key`** (the OpenSSH line, with the key's comment) and **`fingerprint`** (`SHA256:…`), so a list never opens the key |
+| the kind | custom data `ewe.kind = ssh-key` (other apps ignore it) |
+
+**`KeeAgent.settings`** as Safe writes it, byte for byte what KeePassXC's
+`toXml()` writes (UTF-8, indent 2, `<Name/>` when empty, a newline at the
+end; `tests/ssh/KeeAgent.settings`):
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<EntrySettings xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <AllowUseOfSshKey>true</AllowUseOfSshKey>
+  <AddAtDatabaseOpen>true</AddAtDatabaseOpen>
+  <RemoveAtDatabaseClose>true</RemoveAtDatabaseClose>
+  <UseConfirmConstraintWhenAdding>false</UseConfirmConstraintWhenAdding>
+  <UseLifetimeConstraintWhenAdding>false</UseLifetimeConstraintWhenAdding>
+  <LifetimeConstraintDuration>600</LifetimeConstraintDuration>
+  <Location>
+    <SelectedType>attachment</SelectedType>
+    <AttachmentName>id_ed25519</AttachmentName>
+    <SaveAttachmentToTempFile>false</SaveAttachmentToTempFile>
+    <FileName/>
+  </Location>
+</EntrySettings>
+```
+
+- KeePassXC's defaults are all `false`, `600` and `SelectedType = file`.
+  Safe sets `AllowUseOfSshKey`, and also `AddAtDatabaseOpen` and
+  `RemoveAtDatabaseClose`: KeePassXC's entry editor recomputes
+  `AllowUseOfSshKey` as "add at open **or** remove at close" on every
+  save, so with both off one edit in KeePassXC would take the key out of
+  every agent. With them on, KeePassXC (when its SSH agent integration is
+  on) adds the key to the running agent when it unlocks the file and takes
+  it out when it locks.
+- **Reading** is KeePassXC's: the root must be `EntrySettings`, unknown
+  elements are skipped (KeeAgent on Windows writes more), a boolean is true
+  when its text starts with `t`, any order. UTF-16 with a byte-order mark
+  (KeeAgent's `XmlSerializer`) is read too.
+- **Which entries are SSH keys:** the marker, or — for an entry another app
+  made — a `KeeAgent.settings` attachment. The agent offers a key when the
+  settings allow it (`AllowUseOfSshKey`), name an attachment
+  (`SelectedType = attachment`) and the entry has it. A key in a file on
+  one computer (`SelectedType = file`) is listed but not offered.
+- **Key forms:** OpenSSH, and PEM: PKCS#8 (`BEGIN PRIVATE KEY`, what
+  1Password exports), PKCS#1 (`BEGIN RSA PRIVATE KEY`), SEC1 (`BEGIN EC
+  PRIVATE KEY`). A PEM key is stored as an unencrypted OpenSSH key:
+  KeePassXC reads OpenSSH and PKCS#1 only, no PKCS#8. An OpenSSH key with a
+  passphrase is stored as it is; its public part is readable without the
+  passphrase. An encrypted PEM file is refused (`ssh-keygen -p` makes it
+  OpenSSH). Ed25519, ECDSA P-256/P-384 and RSA are read and used.
+- Safe never rewrites another app's `KeeAgent.settings`.
+
+**`ssh adopt`** finds a note an earlier import made from 1Password's SSH
+Key category: its text starts with `SSH key` (a 1PUX) or `Ssh key`
+(`op`), and exactly one protected field holds a private key Safe can read.
+In one tracked edit it adds the marker, the key's attachment,
+`KeeAgent.settings`, `public_key` and `fingerprint`. The id, the title,
+the note text, every field (the old `private key` one too), tags and
+folder stay; the note as it was goes to the entry's history.
+
+**`ssh-public.json`** (`$XDG_STATE_HOME/ewe/safe/`, `0600`, never synced)
+is what the agent lists while the safe is locked: each offered key's
+public line and its item's title, nothing else.
 
 ## History
 
@@ -159,3 +236,6 @@ through the verified write.
 | F10 | keepass-rs removed an attachment from the database when the current version dropped it, though a history version still used it | fixed in the vendored keepass-rs (`vendor/keepass/PATCHED.md`) |
 | F11 | after a file is read, keepass-rs's attachment back-references are empty, so deleting one item took a file another item shares | same fix; `tests/corpus.rs` guards it |
 | F12 | keepass-rs's reader files a history version under the entry its own UUID names, not the entry it sits in | never put a version in another entry's history, not even in memory |
+| K1 | KeePassXC's entry editor sets `AllowUseOfSshKey` = add at open or remove at close | Safe writes both on (above) |
+| K2 | KeePassXC reads no PKCS#8 key | every key is stored as OpenSSH |
+| K3 | not yet checked against a file a real KeePassXC wrote: `tests/ssh/KeeAgent.settings` follows its writer's source | add a KeePassXC-made `.kdbx` with an SSH key to the corpus |

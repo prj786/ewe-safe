@@ -195,8 +195,9 @@ class Safe {
     return r?.ok ? r.value : null;
   }
 
-  copy(id, field) {
-    return this.#run("copy", () => api.copy(id, field));
+  /** `clearAfter` 0 keeps it on the clipboard (a public key). */
+  copy(id, field, clearAfter) {
+    return this.#run("copy", () => api.copy(id, field, clearAfter));
   }
 
   add(item) {
@@ -217,6 +218,27 @@ class Safe {
 
   generate(opts) {
     return api.generate(opts);
+  }
+
+  /** A key file in (its passphrase is passed straight through). */
+  async sshAdd(opts) {
+    const r = await this.#run("ssh-add", () => api.sshAdd(opts));
+    if (r?.ok) await this.loadItems();
+    return r;
+  }
+
+  async sshNew(opts) {
+    const r = await this.#run("ssh-new", () => api.sshNew(opts));
+    if (r?.ok) await this.loadItems();
+    return r;
+  }
+
+  sshStatus() {
+    return api.sshStatus();
+  }
+
+  sshEnable(confirm) {
+    return this.#run("ssh-enable", () => api.sshEnable(confirm));
   }
 
   sync() {

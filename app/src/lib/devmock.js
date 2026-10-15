@@ -11,6 +11,8 @@
 //   &keychanged=1         unlocking says the master password changed elsewhere
 //   &wrong=1              the first unlock is a wrong password
 //   &mode=unlock          the compact `--unlock` window
+//   &mode=approve         the SSH agent's question (`--approve`)
+//   &view=ssh             the SSH keys      &agent=1   the SSH agent on
 //   &view=settings|import|trash   &edit=github|new   &gen=1 (generator open)
 //   &import=old           the daemon has no `import` verb yet
 //   &light=1              Ewe Light (the real token map, .dev-mock/theme-light.json)
@@ -39,8 +41,31 @@ export function install(params) {
       generator_length: 20,
       generator_words: 5,
       ...(params.get("known") ? { place: params.get("known"), location: "ewe/safe/passwords.kdbx" } : {})
-    }
+    },
+    agent: flag("agent", false)
   };
+  // an SSH key (TRIO.md S2): the fixture has none
+  const sshKey = (title, type, n) => ({
+    id: crypto.randomUUID(),
+    kind: "ssh-key",
+    title,
+    username: "",
+    urls: [],
+    apps: [],
+    tags: [],
+    folder: "",
+    has_password: false,
+    has_otp: false,
+    modified: new Date().toISOString().replace(/\.\d+Z$/, "Z"),
+    ssh: {
+      public_key: `${type === "rsa" ? "ssh-rsa" : "ssh-ed25519"} AAAAC3NzaC1lZDI1NTE5AAAAIMock${n}KeyForTheWindowOnlyXXXXXXXXXXXXXXXX ${title}`,
+      fingerprint: `SHA256:mock${n}Kp3zQ9xVt1bW7uYc2nRj8eLh5aGfD0sT4oM6iN`,
+      key_type: type,
+      agent: true
+    },
+    _notes: ""
+  });
+  if (!flag("empty", false)) s.items.push(sshKey("GitHub key", "ed25519", 1));
   const listeners = { "safe-event": new Set(), "safe-daemon": new Set(), "safe-args": new Set() };
   const emit = (name, payload) => listeners[name]?.forEach((fn) => fn(payload));
   const fail = (error, message, hint) => ({ ok: false, error, message, ...(hint ? { hint } : {}) });
@@ -144,6 +169,7 @@ export function install(params) {
       if (field === "password") return { ok: true, value: i._password ?? "" };
       if (field === "username") return { ok: true, value: i.username };
       if (field === "notes") return { ok: true, value: i._notes ?? "" };
+      if (field === "public_key" && i.ssh) return { ok: true, value: i.ssh.public_key };
       return fail("not-found", `No field ${field}.`);
     },
     copy: ({ id }) => (find(id) ? { ok: true, copied: true, cleared_after: s.settings.clipboard_clear_seconds } : fail("not-found", `No item ${id}.`)),
@@ -238,9 +264,48 @@ export function install(params) {
       };
     },
 
+    ssh_new: ({ title, keyType }) => {
+      if (!title) return fail("bad-request", "ssh new needs --title");
+      const k = sshKey(title, keyType ?? "ed25519", s.items.length);
+      s.items.push(k);
+      changed();
+      return { ok: true, item_id: k.id, ssh: k.ssh, sync };
+    },
+    ssh_add: ({ file, title }) => {
+      if (!file) return fail("bad-request", "ssh add needs the private key's file");
+      const k = sshKey(title || file.split("/").pop(), "ed25519", s.items.length);
+      s.items.push(k);
+      changed();
+      return { ok: true, item_id: k.id, ssh: k.ssh, sync };
+    },
+    ssh_adopt: ({ dryRun }) => ({ ok: true, adopted: [], skipped: [], ...(dryRun ? { dry_run: true } : { sync }) }),
+    ssh_enable: () => {
+      s.agent = true;
+      return { ok: true, enabled: true, recorded: true, socket: "/run/user/1000/ewe-safe-ssh.sock", identity_agent: "IdentityAgent /run/user/1000/ewe-safe-ssh.sock" };
+    },
+    ssh_disable: () => {
+      s.agent = false;
+      return { ok: true, enabled: false, recorded: true, env_file_removed: true };
+    },
+    ssh_status: () => ({
+      ok: true,
+      enabled: s.agent,
+      confirm: "first-use",
+      socket: "/run/user/1000/ewe-safe-ssh.sock",
+      listening: true,
+      keys: s.items.filter((i) => i.kind === "ssh-key").length,
+      locked: s.locked,
+      ssh_auth_sock: s.agent ? "/run/user/1000/ewe-safe-ssh.sock" : null,
+      points_here: s.agent,
+      env_file: null,
+      identity_agent: "IdentityAgent /run/user/1000/ewe-safe-ssh.sock",
+      ssh_config_agents: []
+    }),
+
     // the window's own commands
     launch_args: () => ({
-      mode: params.get("mode") === "unlock" ? "unlock" : "main",
+      mode: ["unlock", "approve"].includes(params.get("mode")) ? params.get("mode") : "main",
+      approve: params.get("mode") === "approve" ? { app: "ssh (from git)", key: "GitHub key" } : null,
       show: null,
       new: params.get("edit") === "new",
       import: params.get("view") === "import"
@@ -259,12 +324,15 @@ export function install(params) {
     window_classes: () => ({ ok: true, classes: ["code", "discord", "firefox", "kitty", "slack", "steam"] }),
     open_url: () => ({ ok: true }),
     open_ewe_sync: () => ({ ok: true }),
-    pick_file: ({ kind }) => ({ ok: true, path: `/home/sam/Downloads/1PasswordExport.${kind === "csv" ? "csv" : kind}` }),
+    pick_file: ({ kind }) =>
+      kind === "ssh-key"
+        ? { ok: true, path: "/home/sam/.ssh/id_ed25519" }
+        : { ok: true, path: `/home/sam/Downloads/1PasswordExport.${kind === "csv" ? "csv" : kind}` },
     print_page: () => ({ ok: true }),
     quit_app: () => ({ ok: true })
   };
   const local = new Set(["daemon_state", "launch_args", "theme_tokens", "theme_key", "settings_get", "settings_set", "cloud_status", "window_classes", "open_url", "open_ewe_sync", "pick_file", "print_page", "quit_app"]);
-  const needsUnlock = new Set(["list", "search", "match_items", "show", "reveal", "copy", "add", "edit", "rm", "restore", "import_items"]);
+  const needsUnlock = new Set(["list", "search", "match_items", "show", "reveal", "copy", "add", "edit", "rm", "restore", "import_items", "ssh_new", "ssh_add", "ssh_adopt"]);
 
   window.__SAFE_MOCK__ = {
     async invoke(cmd, args) {
@@ -296,6 +364,7 @@ export async function arrange(params, ui) {
   const view = params.get("view");
   if (view === "settings" || view === "import") ui.go(view);
   if (view === "trash") ui.pick({ trash: true });
+  if (view === "ssh") ui.pick({ kind: "ssh-key" });
   const edit = params.get("edit");
   if (edit && edit !== "new") {
     ui.selected = fixture.items.find((i) => i.title.toLowerCase() === edit)?.id ?? null;

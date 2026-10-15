@@ -1,7 +1,7 @@
 //! safe-core — the safe itself, with no network and no daemon.
 //!
 //! - [`safe`]: one KDBX file opened, read, edited and written (PLAN.md §5).
-//! - [`item`]: Safe's two kinds of item and how they map onto KDBX fields.
+//! - [`item`]: Safe's kinds of item and how they map onto KDBX fields.
 //! - [`guard`]: what keepass-rs can write back, checked before any write
 //!   (docs/SPIKE-0.md, C1).
 //! - [`search`]: ranking items for what the user typed.
@@ -14,6 +14,8 @@
 //!   own merge loses data (SPIKE-0, M1/M2), so this one is Safe's.
 //! - [`import`]: another password manager's export (1Password: 1PUX, CSV,
 //!   `op`) turned into items (docs/IMPORT.md).
+//! - [`ssh`]: SSH keys as KeeAgent entries (KeePassXC's format), and
+//!   signing with them for the daemon's agent.
 
 pub mod atomic;
 pub mod digest;
@@ -26,6 +28,7 @@ pub mod merge;
 pub mod otp;
 pub mod safe;
 pub mod search;
+pub mod ssh;
 
 pub use item::{Draft, Field, Kind, Summary};
 pub use safe::{Error, Safe};

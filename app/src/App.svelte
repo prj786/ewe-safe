@@ -1,18 +1,22 @@
 <script>
   // The window's states: Safe's service unreachable, no safe on this
   // machine (setup), locked, or open. The `--unlock` process (`mode:
-  // "unlock"`) shows only the compact prompt and quits once the safe opens.
+  // "unlock"`) shows only the compact prompt and quits once the safe opens;
+  // the `--approve` process (`mode: "approve"`) only asks the SSH agent's
+  // question.
   import { onMount } from "svelte";
   import Icon from "$lib/components/Icon.svelte";
   import Setup from "$lib/screens/Setup.svelte";
   import Unlock from "$lib/screens/Unlock.svelte";
   import Main from "$lib/screens/Main.svelte";
+  import Approve from "$lib/screens/Approve.svelte";
   import { api, listen } from "$lib/api.js";
   import { safe } from "$lib/safe.svelte.js";
   import { ui } from "$lib/ui.svelte.js";
   import { watchTheme } from "$lib/theme.js";
 
   let mode = $state("main");
+  let approve = $state(null);
 
   function follow(a) {
     if (!a) return;
@@ -32,6 +36,7 @@
     (async () => {
       const a = await api.launchArgs();
       if (a?.mode) mode = a.mode;
+      if (a?.approve) approve = a.approve;
       follow(a);
       off.push(await listen("safe-args", follow));
       await safe.start();
@@ -48,7 +53,9 @@
   });
 </script>
 
-{#if mode === "unlock"}
+{#if mode === "approve"}
+  <Approve app={approve?.app || "An app"} key={approve?.key || "an SSH key"} />
+{:else if mode === "unlock"}
   {#if !safe.daemon.available || (safe.status && !safe.status.set_up)}
     <div class="safe-compact">
       <span class="ewe-appicon safe-tile"><Icon name="lock" /></span>

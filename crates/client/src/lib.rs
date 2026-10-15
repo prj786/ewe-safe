@@ -28,7 +28,13 @@ pub const SLOW: Duration = Duration::from_secs(300);
 /// `import`: `op` asks the 1Password app for every item, one by one.
 pub const IMPORT: Duration = Duration::from_secs(1800);
 /// The arg keys that carry a secret (PROTOCOL.md, "The socket").
-pub const SECRET_KEYS: &[&str] = &["password", "new_password", "password_value", "notes"];
+pub const SECRET_KEYS: &[&str] = &[
+    "password",
+    "new_password",
+    "password_value",
+    "notes",
+    "passphrase",
+];
 
 /// How long a verb may take: a key derivation or a talk with the place
 /// gets [`SLOW`], an import [`IMPORT`], everything else [`FAST`].
@@ -37,6 +43,8 @@ pub fn wait_for(verb: &str) -> Duration {
         "import" => IMPORT,
         "init" | "open" | "unlock" | "passwd" | "add" | "edit" | "rm" | "restore" | "sync"
         | "place" => SLOW,
+        // saves; `ssh-enable` and `ssh-disable` wait for ewe-conf
+        "ssh-add" | "ssh-new" | "ssh-adopt" | "ssh-enable" | "ssh-disable" => SLOW,
         _ => FAST,
     }
 }
