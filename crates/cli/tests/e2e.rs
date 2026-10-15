@@ -443,7 +443,20 @@ fn a_safe_on_this_computer_from_init_to_restart() {
         (shown["username"].clone(), shown["apps"].clone()),
         (json!("sam2"), json!(["discord"]))
     );
-    let before = std::fs::metadata(&file).unwrap().modified().unwrap();
+    // the edit is in the cache when it answers; the file (the place) gets it
+    // moments later, so wait for that write before measuring — reading the
+    // time at once raced it on a slow builder (the 0.2.0-beta package build)
+    wait_until(
+        "the edit to reach the file",
+        Duration::from_secs(10),
+        || s.ok(&["status"])["sync"]["pending"] == json!(false),
+    );
+    let mut before = std::fs::metadata(&file).unwrap().modified().unwrap();
+    wait_until("the file to settle", Duration::from_secs(10), || {
+        std::thread::sleep(Duration::from_millis(300));
+        let now = std::fs::metadata(&file).unwrap().modified().unwrap();
+        std::mem::replace(&mut before, now) == now
+    });
     std::thread::sleep(Duration::from_millis(1100));
     s.ok(&["edit", &discord, "--app", "Discord"]);
     std::thread::sleep(Duration::from_millis(500));
