@@ -30,7 +30,7 @@ password.
 | in (v1) | out (on purpose) |
 |---|---|
 | One safe per person, one master password | Several vaults, shared vaults, families, teams |
-| Two kinds of item: **Login**, **Note** | Cards, identities, documents, SSH keys |
+| Kinds of item: **Login**, **Note**, **SSH key** (2026-10-15); a login may hold a **passkey** | Cards, identities, documents |
 | Search-first window, tags, folders shown if the file has them | Collections, Watchtower dashboards, travel mode |
 | Fill any app with `Super+P` (exists today) | A browser extension for every browser |
 | Generator (characters or words) | |
@@ -441,7 +441,7 @@ init  --place P [--location L]   create (password twice on tty/stdin)
 open  --place P [--location L]   use an existing .kdbx
 unlock [--ask]               tty/stdin password; --ask = system auth or the window
 lock
-list   [--kind login|note] [--tag T]
+list   [--kind login|note|ssh-key] [--tag T]
 search <text>
 match  [--class C] [--title T] [--url U]    best first, no secrets (the picker's verb)
 show   <id>                  fields, secrets masked
@@ -450,6 +450,8 @@ read   "safe://<folder>/<title>/<field>"   bare value, like `op read` (2026-10-1
 run    [--env-file F] -- <cmd>   safe:// values in its environment, like `op run`
 inject -i <template> [-o F]  {{ safe://… }} filled in, like `op inject`
 git-credential get|store|erase   git's helper: strict host match, asks before saving
+passkey list [--rp R]        the passkeys (made and used by the browser, over the socket)
+ssh list|add|new|adopt|enable|disable|status   SSH keys and the agent (TRIO.md S2)
 copy   <id> --field …        wl-copy with the password-manager hint, auto-clear
 add    --kind login|note --title … [--username …] [--url …] [--app CLASS]
        [--generate | --password-stdin]
@@ -674,7 +676,19 @@ does. The contract between the repos is [docs/TRIO.md](docs/TRIO.md).
       (docs/PROTOCOL.md); the window's passkey row, list badge and the
       Import screen's line. Tested against a file KeePassXC 2.7.12 wrote,
       OpenSSL and KeePassXC's own test vectors. *Open:* the browser side
-      (TRIO.md B1) and a real site (webauthn.io, GitHub) end to end.
+      (TRIO.md B1) and a real site (webauthn.io, GitHub) end to end. PR #11.
+- [x] **SSH keys and the agent** (TRIO.md S2, branch `feat/ssh`): KeeAgent
+      entries as KeePassXC stores them (docs/FORMAT.md, "SSH keys"),
+      `ewe-safe ssh …`, the agent on `ewe-safe-ssh.sock` with a first-use
+      question per app, 1Password's SSH keys imported as SSH keys and
+      `ssh adopt` for a safe imported before. *Open:* the owner's real
+      `git push` through it. PR #13.
+- [x] **A CLI like `op`** (TRIO.md S3, branch `feat/cli-power`): `read`,
+      `run`, `inject`, `git-credential`, the socket's `resolve`, and the
+      window's *Use Safe for Super+P*. PR #10.
+- The three, with the edit hotfix (PR #12), are merged and tested together
+  on `integrate/trio` (one PR); `crates/core/tests/together.rs` checks
+  where they meet.
 
 ### Before calling it 1.0
 

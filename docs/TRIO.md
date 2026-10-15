@@ -142,8 +142,9 @@ Check the XML shape and names against KeePassXC's `src/sshagent/` before
 writing code; keep a KeePassXC-made fixture.
 
 The summary's `kind` gets a third value, `"ssh-key"`, plus
-`"ssh": {"public_key": "…", "fingerprint": "SHA256:…", "key_type": "ed25519"}`
-(null for other kinds). `match` keeps answering logins only.
+`"ssh": {"public_key": "…", "fingerprint": "SHA256:…", "key_type": "ed25519",
+"agent": true}` (null for other kinds; `agent`: an agent may use it, as
+built). `match` keeps answering logins only.
 
 ### Getting keys in
 
@@ -336,12 +337,16 @@ phone) and the browser (history, sync, Safe in the browser).
 
 | stream | repo | branch / worktree | depends on |
 |---|---|---|---|
-| S1 passkeys | ewe-safe | `feat/passkeys` · `.wt/safe-passkeys` | — |
-| S2 SSH keys + agent | ewe-safe | `feat/ssh` · `.wt/safe-ssh` | — |
-| S3 CLI + `Super+P` fix | ewe-safe, ewe-plugin-passwords | `feat/cli-power` · `.wt/safe-cli`, `.wt/passwords-safe` | — |
+| S1 passkeys | ewe-safe | `feat/passkeys` · `.wt/safe-passkeys` · PR #11 | — |
+| S2 SSH keys + agent | ewe-safe | `feat/ssh` · `.wt/safe-ssh` · PR #13 | — |
+| S3 CLI + `Super+P` fix | ewe-safe, ewe-plugin-passwords | `feat/cli-power` · `.wt/safe-cli`, `.wt/passwords-safe` · PR #10 | — |
 | B1 inline + passkeys | ewe-browser | `feat/safe` · `.wt/ewe-browser-safe` | S1's contract (a fake daemon in tests) |
 | B2 history + sync | ewe-browser | `feat/history` · `.wt/ewe-browser-history` | — |
 | C1 companion powers | ewe-companion, ewe-plugin-companion | `feat/powers` · `.wt/companion-powers` | the CLI contracts above |
+
+S1, S2 and S3 meet in ewe-safe: `integrate/trio` (`.wt/safe-integrate`)
+merges the three and the window's edit hotfix (PR #12) and tests them
+together, as one PR; merging it lands all four.
 
 Then: an independent review pass (DeepSeek reviewers through `opencode`, plus
 the security reviewer on S1, S2 and B1's WebAuthn code), merge, the owner's
