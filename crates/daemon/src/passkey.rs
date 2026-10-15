@@ -22,10 +22,17 @@ type Args = Map<String, Value>;
 
 /// When this daemon last used each credential: a sign-in moves a passkey up
 /// the list without a save (the file's own `LastAccessTime` counts too).
-/// Keyed by a hash, so no credential id stays here after a lock.
+/// Keyed by a hash, written only while the safe is held (under its lock) and
+/// emptied by [`forget_used`] on every lock, so nothing of a credential stays
+/// here once the safe is locked.
 fn used() -> &'static Mutex<HashMap<[u8; 32], NaiveDateTime>> {
     static USED: OnceLock<Mutex<HashMap<[u8; 32], NaiveDateTime>>> = OnceLock::new();
     USED.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// The lock path's: forget which passkeys were used.
+pub fn forget_used() {
+    lk(used()).clear();
 }
 
 fn used_key(credential_id: &str) -> [u8; 32] {
@@ -157,8 +164,11 @@ pub fn create(d: &Arc<Daemon>, a: &Args) -> Result<Value, Fail> {
         .and_then(passkey::from_b64)
         .filter(|u| !u.is_empty() && u.len() <= passkey::USER_HANDLE_MAX)
         .ok_or_else(|| Fail::bad("user_id must be 1 to 64 bytes, base64url."))?;
-    let user_name = s(a, "user_name").unwrap_or("").to_string();
-    let title = s(a, "rp_name").unwrap_or(&rp_id).to_string();
+    // names longer than WebAuthn's 64 bytes are cut, as browsers and
+    // authenticators do (§6.4.1), never refused; `user_display_name` is
+    // taken but not stored (KeePassXC keeps none either)
+    let user_name = passkey::truncate_name(s(a, "user_name").unwrap_or("")).to_string();
+    let title = passkey::truncate_name(s(a, "rp_name").unwrap_or(&rp_id)).to_string();
     let algorithms: Vec<i64> = match a.get("algorithms") {
         None | Some(Value::Null) => Vec::new(),
         Some(Value::Array(v)) => v
@@ -236,9 +246,10 @@ pub fn create(d: &Arc<Daemon>, a: &Args) -> Result<Value, Fail> {
                 safe.add_passkey_login(&draft, &new)?
             }
         };
+        // under the safe's lock, so a lock can't come in between and miss it
+        lk(used()).insert(used_key(&credential_id), now());
         Ok((id, true))
     })?;
-    lk(used()).insert(used_key(&credential_id), now());
 
     let auth = passkey::attested_data(&rp_id, flags, &passkey::AAGUID, &raw_id, &key.cose);
     Ok(json!({
@@ -289,9 +300,9 @@ pub fn get(d: &Daemon, a: &Args) -> Result<Value, Fail> {
         };
         let auth = passkey::assertion_data(&rp_id, flags);
         let (_, sig) = passkey::sign(&secret.pem, &auth, &hash).map_err(failed)?;
+        lk(used()).insert(used_key(&credential_id), now());
         Ok((auth, sig, secret.user_handle))
     })?;
-    lk(used()).insert(used_key(&credential_id), now());
     Ok(json!({
         "item_id": item_id,
         "credential_id": credential_id,
@@ -299,4 +310,17 @@ pub fn get(d: &Daemon, a: &Args) -> Result<Value, Fail> {
         "signature": passkey::b64url(&signature),
         "user_handle": if user_handle.is_empty() { Value::Null } else { json!(user_handle) },
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_lock_forgets_which_passkeys_were_used() {
+        lk(used()).insert(used_key("Y3JlZA"), now());
+        assert!(!lk(used()).is_empty());
+        forget_used();
+        assert!(lk(used()).is_empty());
+    }
 }

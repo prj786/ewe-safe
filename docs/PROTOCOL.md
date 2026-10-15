@@ -139,7 +139,7 @@ protected custom field are.
 | `edit` | `<id> --remove-passkey` | `sync`. Removes the item's passkey: every `KPEX_PASSKEY_*` field and the tag `Passkey` (docs/FORMAT.md). The login and its password stay; the item's history keeps the old version. An item without one saves nothing |
 | `passkey list` | `[--rp R]` | the socket's `passkey-list` (below), every passkey without `--rp` |
 | `passkey-list` | **socket only.** `rp_id` (absent: every passkey), optional `allow` (credential ids) | `passkeys: [{item_id, title, username, rp_id, credential_id}]`, best first (last used, then title); only those `allow` names when it names any. From memory, like `match`. `username` is the site's `user.name` (the item's username when that is empty) |
-| `passkey-create` | **socket only.** `rp_id`, `rp_name`, `user_id`, `user_name`, `user_display_name`, `client_data_hash`, `algorithms` (COSE ids, the site's order; empty = ES256), `exclude` (credential ids), optional `item_id`, `origin`, `user_verified` | `item_id`, `credential_id`, `attestation_object`, `authenticator_data`, `public_key` (SPKI DER), `public_key_algorithm` (`-7` or `-8`), `sync`. One save, like `add` |
+| `passkey-create` | **socket only.** `rp_id`, `rp_name`, `user_id`, `user_name`, `user_display_name`, `client_data_hash`, `algorithms` (COSE ids, the site's order; empty = ES256), `exclude` (credential ids), optional `item_id`, `origin`, `user_verified` | `item_id`, `credential_id`, `attestation_object`, `authenticator_data`, `public_key` (SPKI DER), `public_key_algorithm` (`-7` or `-8`), `sync`. One save, like `add`. `user_display_name` is taken but not stored (KeePassXC keeps none either); `rp_name` and `user_name` longer than 64 UTF-8 bytes are cut on a character boundary, not refused |
 | `passkey-get` | **socket only.** `rp_id`, `credential_id`, `client_data_hash`, `user_verified` | `item_id`, `credential_id`, `authenticator_data`, `signature`, `user_handle` (`null` when the passkey has none). Saves nothing |
 | `watch` | | **CLI only, a stream** for shells and scripts that can't hold a socket (the desktop plugin's bridge). The first line is `{"v": 1, "event": "status", "status": {…}}` — the `status` verb's reply object, as the `sync` event carries `"sync": {…}`; then every socket event as-is, one per line (the `subscribe` stream below); the last line is `{"v": 1, "event": "daemon-gone"}` — also the only line when the daemon can't be reached — and `watch` exits 0. It runs until killed or the daemon goes away |
 | `ping` | | `pong: true` |
@@ -165,7 +165,9 @@ bytes. Anything else is `bad-request`.
   replacing one it had (a note or an item in the recycle bin:
   `bad-request` / `not-found`); without, a new login: title `rp_name` (else
   the RP ID), username `user_name`, website the `origin` (else
-  `https://<rp_id>`). The attestation is `none`; `authenticator_data` is the
+  `https://<rp_id>`). Names longer than WebAuthn's 64 bytes are cut on a
+  UTF-8 character boundary, as browsers and authenticators cut them
+  (WebAuthn §6.4.1), never refused. The attestation is `none`; `authenticator_data` is the
   one inside `attestation_object` (with the credential), so the browser's
   `getAuthenticatorData()` returns it.
 - **`passkey-get`:** a passkey that isn't in the safe for that RP (or is in

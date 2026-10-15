@@ -53,6 +53,9 @@ pub const AAGUID: [u8; 16] = [
 pub const CREDENTIAL_ID_LEN: usize = 32;
 /// WebAuthn's limit for `user.id`.
 pub const USER_HANDLE_MAX: usize = 64;
+/// WebAuthn's limit for `rp.name`, `user.name` and `user.displayName`,
+/// UTF-8 bytes (§6.4.1).
+pub const NAME_MAX: usize = 64;
 
 const PEM_BEGIN: &str = "-----BEGIN PRIVATE KEY-----";
 const PEM_END: &str = "-----END PRIVATE KEY-----";
@@ -144,6 +147,20 @@ pub fn normalize_id(text: &str) -> String {
     }
 }
 
+/// A name cut to [`NAME_MAX`] UTF-8 bytes on a character boundary, as
+/// WebAuthn lets an authenticator truncate one (§6.4.1.2); browsers cut,
+/// they don't refuse.
+pub fn truncate_name(name: &str) -> &str {
+    if name.len() <= NAME_MAX {
+        return name;
+    }
+    let mut end = NAME_MAX;
+    while !name.is_char_boundary(end) {
+        end -= 1;
+    }
+    &name[..end]
+}
+
 /// A syntactically valid host name for an RP ID: lowercase ASCII labels
 /// (punycode for the others), no trailing dot, not an IP address. Whether
 /// the page may use it is the browser's check.
@@ -157,7 +174,7 @@ pub fn valid_rp_id(id: &str) -> bool {
             && !l.starts_with('-')
             && !l.ends_with('-')
             && l.bytes()
-                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_')
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
     };
     let labels: Vec<&str> = id.split('.').collect();
     labels.iter().all(|l| label_ok(l))
@@ -748,9 +765,23 @@ mod tests {
             "a..example",
             "https://github.com",
             "github.com:443",
+            "my_site.example",
         ] {
             assert!(!valid_rp_id(bad), "{bad}");
         }
+    }
+
+    #[test]
+    fn long_names_are_cut_on_a_character_boundary() {
+        assert_eq!(truncate_name("sam"), "sam");
+        let exact = "a".repeat(NAME_MAX);
+        assert_eq!(truncate_name(&exact), exact);
+        assert_eq!(truncate_name(&"b".repeat(100)).len(), NAME_MAX);
+        // 63 ASCII bytes then a 2-byte "é": byte 64 falls inside it
+        let split = format!("{}é", "c".repeat(63));
+        assert_eq!(truncate_name(&split), "c".repeat(63));
+        let wide = "🐑".repeat(20); // 4 bytes each
+        assert_eq!(truncate_name(&wide), "🐑".repeat(16));
     }
 
     #[test]

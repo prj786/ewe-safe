@@ -350,6 +350,7 @@ impl Daemon {
         if was {
             self.refresh_held(None);
             clip::clear_if_ours(self);
+            crate::passkey::forget_used();
             log(&format!("locked ({reason})"));
             self.emit(json!({"v": 1, "event": "locked", "reason": reason}));
         }

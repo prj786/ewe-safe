@@ -428,12 +428,22 @@ fn passkeys_over_the_socket() {
     // used last comes first
     let mut work = base.clone();
     work["user_id"] = json!(b64url(b"github-user-43"));
-    work["user_name"] = json!("sam-work");
+    // names past WebAuthn's 64 bytes are cut, not refused
+    work["user_name"] = json!(format!("sam-work-{}", "é".repeat(40)));
+    work["rp_name"] = json!("G".repeat(80));
     work.as_object_mut().unwrap().remove("item_id");
     let r3 = s.sock("passkey-create", work);
     assert_eq!(r3["ok"], true, "{r3}");
     let cred3 = r3["credential_id"].as_str().unwrap().to_string();
     assert_ne!(r3["item_id"], gh.as_str());
+    let work_item = &s.ok(&["show", r3["item_id"].as_str().unwrap()], None)["item"];
+    assert_eq!(work_item["title"], "G".repeat(64));
+    let cut = work_item["passkey"]["username"].as_str().unwrap();
+    assert_eq!(
+        cut,
+        format!("sam-work-{}", "é".repeat(27)),
+        "63 bytes: é is 2"
+    );
     let order = || -> Vec<String> {
         s.sock("passkey-list", json!({"rp_id": "github.com"}))["passkeys"]
             .as_array()
