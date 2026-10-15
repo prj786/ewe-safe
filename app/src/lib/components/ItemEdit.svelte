@@ -118,9 +118,9 @@
           it.clear_url = true;
           it.url = urls;
         }
-        const was = new Set(was.apps ?? []);
-        const addA = apps.filter((a) => !was.has(a));
-        const remA = [...was].filter((a) => !apps.includes(a));
+        const hadApps = new Set(was.apps ?? []);
+        const addA = apps.filter((a) => !hadApps.has(a));
+        const remA = [...hadApps].filter((a) => !apps.includes(a));
         if (addA.length) it.app = addA;
         if (remA.length) it.remove_app = remA;
       }
@@ -134,7 +134,8 @@
       return;
     }
     toasts.show(isNew ? `Added “${title.trim()}”.` : "Saved.", { icon: "circle-check" });
-    if (isNew && r.id) ui.selected = r.id;
+    // add answers `item_id`; `id` is the socket's own request id
+    if (isNew && r.item_id) ui.selected = r.item_id;
     ui.editing = null;
   }
 
