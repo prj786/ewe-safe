@@ -559,3 +559,46 @@ fn git_takes_its_login_from_safe() {
     );
     assert!(out.contains(&format!("password={GH_PW}\n")), "{out}");
 }
+
+/// No core dump of a process that holds values: the CLI is not dumpable (so
+/// its /proc entries belong to root) and has no soft core limit; `run`
+/// gives its command the limit back.
+#[test]
+fn the_cli_keeps_no_core_and_run_gives_the_limit_back() {
+    use std::os::unix::fs::MetadataExt;
+    let s = Sandbox::new("hygiene");
+    let mut child = Command::new(cli_exe())
+        .arg("inject")
+        .env_clear()
+        .envs(s.env())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("ewe-safe inject");
+    let environ = PathBuf::from(format!("/proc/{}/environ", child.id()));
+    let start = Instant::now();
+    let mut owner = None;
+    while start.elapsed() < Duration::from_secs(5) {
+        owner = std::fs::metadata(&environ).ok().map(|m| m.uid());
+        if owner == Some(0) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    drop(child.stdin.take());
+    let _ = child.wait();
+    assert_eq!(owner, Some(0), "not dumpable: /proc/<pid> belongs to root");
+
+    let own = Command::new("sh")
+        .args(["-c", "ulimit -c"])
+        .output()
+        .expect("sh");
+    let (out, _, code) = s.raw(&["run", "--", "sh", "-c", "ulimit -c"], "");
+    assert_eq!(code, 0);
+    assert_eq!(
+        out,
+        String::from_utf8_lossy(&own.stdout),
+        "the command's own limit"
+    );
+}

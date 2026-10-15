@@ -232,9 +232,10 @@ pub fn candidates(all: &[Login], r: &Request, username: Option<&str>) -> Vec<Log
     hits.into_iter().map(|(_, l)| l.clone()).collect()
 }
 
-/// A value git can take: no newline, no NUL.
+/// A value that survives git's `key=value` lines whole: no control
+/// character but a tab (a `\r` would be cut off, a newline or NUL ends it).
 fn sendable(v: &str) -> bool {
-    !v.contains(['\n', '\0'])
+    !v.chars().any(|c| c.is_control() && c != '\t')
 }
 
 pub fn main(argv: &[String]) -> ExitCode {
@@ -362,17 +363,23 @@ fn store(r: &Request) {
     }
 }
 
-/// The answer file the prompt writes `yes` into.
-fn answer_file() -> std::path::PathBuf {
-    let dir = std::env::var_os("XDG_RUNTIME_DIR")
+/// A new private folder (mkdtemp: 0700, a fresh random name) for the
+/// answer file, so no other path can be planted in its place.
+fn answer_dir() -> Option<std::path::PathBuf> {
+    use std::os::unix::ffi::OsStringExt;
+    let base = std::env::var_os("XDG_RUNTIME_DIR")
         .filter(|v| !v.is_empty())
         .map(std::path::PathBuf::from)
         .unwrap_or_else(std::env::temp_dir);
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.subsec_nanos())
-        .unwrap_or(0);
-    dir.join(format!("ewe-safe-answer-{}-{nanos}", std::process::id()))
+    let template = base.join("ewe-safe-ask-XXXXXX").into_os_string().into_vec();
+    let mut template = std::ffi::CString::new(template).ok()?.into_bytes_with_nul();
+    // SAFETY: a NUL-terminated template mkdtemp may rewrite in place
+    let made = unsafe { libc::mkdtemp(template.as_mut_ptr().cast()) };
+    if made.is_null() {
+        return None;
+    }
+    template.pop();
+    Some(std::ffi::OsString::from_vec(template).into())
 }
 
 /// Yes or no from the user: the test hook, the terminal, or a window.
@@ -425,8 +432,10 @@ fn ask_tty(question: &str) -> Option<bool> {
 
 /// Run a prompt that writes `yes` into `$EWE_SAFE_ANSWER`; wait for it.
 fn ask_with(mut c: Command, question: &str) -> bool {
-    let answer = answer_file();
-    let _ = std::fs::remove_file(&answer);
+    let Some(dir) = answer_dir() else {
+        return false;
+    };
+    let answer = dir.join("answer");
     let spawned = c
         .env("EWE_SAFE_QUESTION", question)
         .env("EWE_SAFE_ANSWER", &answer)
@@ -435,6 +444,7 @@ fn ask_with(mut c: Command, question: &str) -> bool {
         .stderr(Stdio::null())
         .spawn();
     let Ok(mut child) = spawned else {
+        let _ = std::fs::remove_dir(&dir);
         return false;
     };
     let start = Instant::now();
@@ -451,6 +461,7 @@ fn ask_with(mut c: Command, question: &str) -> bool {
     }
     let yes = std::fs::read_to_string(&answer).is_ok_and(|a| a.trim() == "yes");
     let _ = std::fs::remove_file(&answer);
+    let _ = std::fs::remove_dir(&dir);
     yes
 }
 
@@ -466,7 +477,16 @@ fn ask_here() {
     let mut line = String::new();
     let _ = std::io::stdin().read_line(&mut line);
     let yes = matches!(line.trim(), "y" | "Y" | "yes" | "Yes" | "YES");
-    let _ = std::fs::write(answer, if yes { "yes" } else { "no" });
+    // a new file only, private (its folder is too)
+    use std::os::unix::fs::OpenOptionsExt;
+    let file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(answer);
+    if let Ok(mut f) = file {
+        let _ = f.write_all(if yes { b"yes" } else { b"no" });
+    }
 }
 
 #[cfg(test)]
@@ -623,6 +643,30 @@ mod tests {
         assert_eq!(l.len(), 1);
         assert_eq!((l[0].id.as_str(), l[0].urls.len()), ("1", 1));
         assert!(logins(&json!({"ok": false, "error": "locked"})).is_empty());
-        assert!(sendable("p@ss w=rd") && !sendable("a\nb") && !sendable("a\0b"));
+    }
+
+    #[test]
+    fn the_answer_folder_is_new_and_private() {
+        use std::os::unix::fs::PermissionsExt;
+        let (a, b) = (
+            answer_dir().expect("a folder"),
+            answer_dir().expect("another"),
+        );
+        assert_ne!(a, b);
+        let mode = std::fs::metadata(&a).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o700);
+        assert!(
+            a.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("ewe-safe-ask-")
+        );
+        for d in [a, b] {
+            std::fs::remove_dir(d).unwrap();
+        }
+        assert!(sendable("p@ss w=rd") && sendable("tab\there") && sendable("Pässwörd"));
+        for bad in ["a\nb", "a\0b", "pw\r", "a\x1bb", "a\x7fb", "a\u{85}b"] {
+            assert!(!sendable(bad), "{bad:?}");
+        }
     }
 }

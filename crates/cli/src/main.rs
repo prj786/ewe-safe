@@ -493,6 +493,9 @@ fn unlock_ask() -> Value {
 }
 
 fn main() -> ExitCode {
+    // no core dump, no ptrace: reveal, read, run, inject and the git helper
+    // hold values (`run` gives its command the core limit back)
+    safe_core::hygiene::harden_soft();
     let argv: Vec<String> = std::env::args().skip(1).collect();
     let (v, code) = run(&argv);
     if !v.is_null() {

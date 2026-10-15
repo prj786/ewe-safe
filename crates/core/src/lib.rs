@@ -15,11 +15,13 @@
 //! - [`import`]: another password manager's export (1Password: 1PUX, CSV,
 //!   `op`) turned into items (docs/IMPORT.md).
 //! - [`refs`]: secret references, `safe://<folder>/<title>/<field>`.
+//! - [`hygiene`]: no core dumps, no ptrace, buffers out of swap.
 
 pub mod atomic;
 pub mod digest;
 pub mod generator;
 pub mod guard;
+pub mod hygiene;
 pub mod import;
 pub mod item;
 pub mod kdf;

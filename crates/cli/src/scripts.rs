@@ -10,15 +10,15 @@
 //! stdout, one line on stderr, and exits non-zero.
 
 use std::collections::HashMap;
-use std::ffi::OsString;
+use std::ffi::{CString, OsString};
 use std::io::{Read, Write};
-use std::os::unix::process::CommandExt;
-use std::process::{Command, ExitCode};
+use std::os::unix::ffi::OsStrExt;
+use std::process::ExitCode;
 
 use safe_client as client;
 use safe_core::refs::is_reference;
 use serde_json::{Value, json};
-use zeroize::Zeroizing;
+use zeroize::{Zeroize, Zeroizing};
 
 /// The verbs this module answers (the CLI lists them with its own).
 pub const VERBS: &[&str] = &["read", "run", "inject", "git-credential"];
@@ -391,11 +391,16 @@ fn run(args: &[String]) -> (Value, ExitCode) {
     }
     let mut r = Resolver::default();
     let mut resolve = |reference: &str| r.value(reference);
-    for (k, v) in env.iter_mut() {
-        let Some(text) = v.to_str() else { continue };
-        match fill_value(text, &mut resolve) {
-            Ok(Some(filled)) => *v = OsString::from(filled.as_str()),
-            Ok(None) => {}
+    // the values stay in wiped buffers until the exec takes them; a value
+    // that starts with safe:// and doesn't resolve fails closed
+    let mut filled: Vec<Option<Zeroizing<String>>> = Vec::with_capacity(env.len());
+    for (k, v) in &env {
+        let got = match v.to_str() {
+            Some(text) => fill_value(text, &mut resolve),
+            None => Ok(None),
+        };
+        match got {
+            Ok(x) => filled.push(x),
             Err(e) => {
                 let msg = e
                     .get("message")
@@ -405,18 +410,115 @@ fn run(args: &[String]) -> (Value, ExitCode) {
             }
         }
     }
-    let err = Command::new(cmd)
-        .args(cmd_args)
-        .env_clear()
-        .envs(env)
-        .exec();
+    let (err, code) = exec_as(cmd, cmd_args, &env, &filled);
     eprintln!("ewe-safe run: can't run {cmd}: {err}");
+    (Value::Null, ExitCode::from(code))
+}
+
+/// A C string for the exec, wiped when dropped (an environment line holds a
+/// value).
+struct Wiped(Option<CString>);
+
+impl Drop for Wiped {
+    fn drop(&mut self) {
+        if let Some(c) = self.0.take() {
+            c.into_bytes_with_nul().zeroize();
+        }
+    }
+}
+
+impl Wiped {
+    /// The parts joined, made a C string in place: the buffer has room for
+    /// the NUL, so no copy is left behind. `None` when a part holds a NUL.
+    fn new(parts: &[&[u8]]) -> Option<Wiped> {
+        let len: usize = parts.iter().map(|p| p.len()).sum();
+        let mut v = Vec::with_capacity(len + 1);
+        for p in parts {
+            v.extend_from_slice(p);
+        }
+        match CString::new(v) {
+            Ok(c) => Some(Wiped(Some(c))),
+            Err(e) => {
+                e.into_vec().zeroize();
+                None
+            }
+        }
+    }
+
+    fn ptr(&self) -> *const libc::c_char {
+        self.0.as_ref().map_or(std::ptr::null(), |c| c.as_ptr())
+    }
+}
+
+unsafe extern "C" {
+    /// The environment execvp searches PATH in and hands on.
+    static mut environ: *const *const libc::c_char;
+}
+
+/// Become `cmd` with `env` (a filled value replaces the one at its index).
+/// What std's exec does — the new environment in `environ`, then execvp, so
+/// a PATH from an env file is the one searched, and SIGPIPE back to the
+/// default — but every copy is this process's own, so when the exec fails
+/// (the only way this returns) they are wiped.
+fn exec_as(
+    cmd: &str,
+    args: &[String],
+    env: &[(OsString, OsString)],
+    filled: &[Option<Zeroizing<String>>],
+) -> (std::io::Error, u8) {
+    let nul = |what: String| {
+        let e = std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("{what} holds a NUL byte"),
+        );
+        (e, RUN_FAILED)
+    };
+    let mut argv = Vec::with_capacity(args.len() + 1);
+    for a in std::iter::once(cmd).chain(args.iter().map(String::as_str)) {
+        match Wiped::new(&[a.as_bytes()]) {
+            Some(c) => argv.push(c),
+            None => return nul(format!("{a:?}")),
+        }
+    }
+    let mut envp = Vec::with_capacity(env.len());
+    for (i, (k, v)) in env.iter().enumerate() {
+        let value = match filled.get(i).and_then(Option::as_ref) {
+            Some(f) => f.as_bytes(),
+            None => v.as_bytes(),
+        };
+        match Wiped::new(&[k.as_bytes(), b"=", value]) {
+            Some(c) => envp.push(c),
+            None => return nul(k.to_string_lossy().into_owned()),
+        }
+    }
+    let ptrs = |v: &[Wiped]| -> Vec<*const libc::c_char> {
+        v.iter()
+            .map(Wiped::ptr)
+            .chain(std::iter::once(std::ptr::null()))
+            .collect()
+    };
+    let (argv_p, envp_p) = (ptrs(&argv), ptrs(&envp));
+    // SAFETY: the CLI runs one thread, so nothing else reads `environ` while
+    // it points at `envp_p`; it is put back before the strings it points
+    // into are wiped. Both arrays end in a null pointer.
+    let err = unsafe {
+        let saved = environ;
+        environ = envp_p.as_ptr();
+        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+        safe_core::hygiene::restore_core();
+        libc::execvp(argv[0].ptr(), argv_p.as_ptr());
+        let err = std::io::Error::last_os_error();
+        environ = saved;
+        libc::signal(libc::SIGPIPE, libc::SIG_IGN);
+        err
+    };
+    safe_core::hygiene::harden_soft();
     let code = if err.kind() == std::io::ErrorKind::NotFound {
         RUN_NOT_FOUND
     } else {
         RUN_CANNOT_EXEC
     };
-    (Value::Null, ExitCode::from(code))
+    (err, code)
 }
 
 // ── inject ──────────────────────────────────────────────────────────────
