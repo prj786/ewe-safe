@@ -43,6 +43,12 @@ and **your ewe account's Nextcloud**.
 The Passwords plugin (`ewe.passwords` 1.2.0, provider `ewe`) fills from it
 with `Super+P`; a locked safe opens a small unlock prompt.
 
+**Passkeys:** the ewe browser makes and uses passkeys in Safe over the
+socket (`passkey-create`, `passkey-get`; ES256 and EdDSA). They are kept in
+KeePassXC's own fields, so KeePassXC, KeePassDX and Strongbox use them too
+(docs/FORMAT.md). `ewe-safe passkey list [--rp github.com]` lists them;
+`ewe-safe edit <id> --remove-passkey` removes one.
+
 ## Use Safe from scripts
 
 No 1Password CLI needed. A **reference** names one value:
@@ -99,6 +105,8 @@ test switches: `EWE_SAFE_KDF_ITERATIONS` (cheap keys),
 `EWE_SAFE_SYNC_SECONDS`; the CLI's: `EWE_SAFE_ASK_CMD` (the unlock prompt), `EWE_SAFE_SOCKET`
 (another socket than `$XDG_RUNTIME_DIR/ewe-safe.sock`),
 `EWE_SAFE_CONFIRM_CMD` (the git helper's "save this login?" question).
+The passkey tests also run OpenSSL when it is installed, and KeePassXC's
+CLI when `SAFE_KEEPASSXC_CLI` names it (or `keepassxc-cli` is on the PATH).
 
 Never enable quick-xml's `overlapped-lists` feature anywhere in the tree: it
 corrupts every password keepass-rs reads (SPIKE-0, F2). CI checks for it.

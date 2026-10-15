@@ -208,6 +208,9 @@ pub fn dispatch(d: &Arc<Daemon>, verb: &str, a: &mut Args) -> Result<Value, Fail
         }
         "import" => crate::import::import(d, a),
         "resolve" => crate::resolve::resolve(d, a),
+        "passkey-list" => crate::passkey::list(d, a),
+        "passkey-create" => crate::passkey::create(d, a),
+        "passkey-get" => crate::passkey::get(d, a),
         "passwd" => {
             let new = secret(a, "new_password")
                 .ok_or_else(|| Fail::bad("The new master password is missing."))?;
@@ -417,6 +420,7 @@ fn edit(d: &Arc<Daemon>, a: &mut Args) -> Result<Value, Fail> {
         None => None,
     };
     let notes = secret(a, "notes");
+    let no_passkey = b(a, "remove_passkey");
     let ((), sync) = d.mutate(|safe| {
         let mut draft = safe.draft(&id)?;
         let mut changed = false;
@@ -454,7 +458,8 @@ fn edit(d: &Arc<Daemon>, a: &mut Args) -> Result<Value, Fail> {
             safe.move_to(&id, &f)?;
             moved = safe.summary(&id)?.folder != before;
         }
-        Ok(((), changed || moved))
+        let unkeyed = no_passkey && safe.remove_passkey(&id)?;
+        Ok(((), changed || moved || unkeyed))
     })?;
     Ok(json!({"sync": sync}))
 }

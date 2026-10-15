@@ -46,6 +46,7 @@ const VALUES: &[&str] = &[
     "remove-tag",
     "vault",
     "account",
+    "rp",
 ];
 const FLAGS: &[&str] = &[
     "json",
@@ -60,6 +61,7 @@ const FLAGS: &[&str] = &[
     "notes-stdin",
     "dry-run",
     "skip-duplicates",
+    "remove-passkey",
 ];
 /// Read here, never sent.
 const LOCAL_FLAGS: &[&str] = &["json", "ask", "password-stdin", "notes-stdin"];
@@ -70,7 +72,7 @@ const WITH_ID: &[&str] = &["show", "reveal", "copy", "edit", "rm", "restore"];
 const VERBS: &[&str] = &[
     "status", "summary", "init", "open", "unlock", "lock", "list", "search", "match", "show",
     "reveal", "copy", "add", "edit", "rm", "restore", "generate", "sync", "place", "passwd",
-    "import", "watch", "ping", "version",
+    "import", "watch", "ping", "version", "passkey",
 ];
 
 struct Parsed {
@@ -171,6 +173,15 @@ fn parse(argv: &[String]) -> Result<Parsed, Value> {
             }
             [] => return Err(bad("import needs a format: 1pux, 1password-csv or op")),
             [_, _, extra, ..] => return Err(bad(format!("import takes no {extra:?}"))),
+        }
+    } else if verb == "passkey" {
+        // `passkey list`; making and using a passkey is the browser's, over
+        // the socket (passkey-create, passkey-get)
+        if !matches!(positional.as_slice(), [sub] if sub == "list") {
+            return Err(bad("Usage: ewe-safe passkey list [--rp R]"));
+        }
+        if let Some(rp) = args.remove("rp") {
+            args.insert("rp_id".into(), rp);
         }
     } else if let Some(p) = positional.first() {
         return Err(bad(format!("{verb} takes no {p:?}")));
@@ -280,6 +291,7 @@ fn run(argv: &[String]) -> (Value, ExitCode) {
         }
         "sync" | "rm" | "restore" => done(client::call(&p.verb, Value::Object(p.args), SLOW)),
         "import" => done(client::call("import", Value::Object(p.args), IMPORT)),
+        "passkey" => done(client::call("passkey-list", Value::Object(p.args), FAST)),
         "watch" => (Value::Null, watch()),
         verb => done(client::call(verb, Value::Object(p.args), FAST)),
     }
@@ -584,6 +596,23 @@ mod tests {
         for argv in [&["import"][..], &["import", "op", "a", "b"]] {
             assert_eq!(p(argv).err().expect("an error")["error"], "bad-request");
         }
+    }
+
+    #[test]
+    fn passkey_list_and_remove() {
+        let x = p(&["passkey", "list", "--rp", "github.com"]).unwrap();
+        assert_eq!(x.args["rp_id"], "github.com");
+        assert!(x.args.get("rp").is_none());
+        assert!(p(&["passkey", "list"]).unwrap().args.is_empty());
+        for argv in [
+            &["passkey"][..],
+            &["passkey", "add"],
+            &["passkey", "list", "x"],
+        ] {
+            assert_eq!(p(argv).err().expect("an error")["error"], "bad-request");
+        }
+        let x = p(&["edit", "4f9c", "--remove-passkey"]).unwrap();
+        assert_eq!(x.args["remove_passkey"], true);
     }
 
     #[test]

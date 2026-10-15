@@ -13,6 +13,7 @@
 //! - [`import`]: another password manager's export, or 1Password through
 //!   `op`, added in one edit.
 //! - [`resolve`]: the value a `safe://` reference names.
+//! - [`passkey`]: the passkey verbs (list, create, get) for the browser.
 
 mod clip;
 mod config;
@@ -20,6 +21,7 @@ mod daemon;
 mod hygiene;
 mod import;
 mod logind;
+mod passkey;
 mod resolve;
 mod server;
 mod verbs;

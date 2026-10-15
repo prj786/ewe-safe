@@ -49,6 +49,7 @@ const ITEM_KEYS: &[&str] = &[
     "clear_url",
     "remove_app",
     "remove_tag",
+    "remove_passkey",
 ];
 const PLACE_KEYS: &[&str] = &["place", "location", "url", "user"];
 

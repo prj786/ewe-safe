@@ -51,6 +51,8 @@ Every reply has `"ok"`. A failure is:
 | `cancelled` | the user dismissed a prompt (`unlock --ask`) |
 | `ambiguous` | a `safe://` reference fits more than one item (or field): `hint` lists the items' ids. Never a guess |
 | `source-error` | an import's source can't be read: not a 1PUX/CSV export, unreadable, or `op` failed (`message` has op's own words) |
+| `excluded` | `passkey-create`: a credential in `exclude` is already in the safe (the browser answers `InvalidStateError`) |
+| `unsupported` | `passkey-create`: no algorithm in the site's list is one Safe makes; `passkey-get`: the stored key is a type Safe can't sign with (RSA). The browser answers `NotSupportedError` |
 | `internal` | a bug; `message` has the detail |
 
 ### Shapes
@@ -71,7 +73,8 @@ protected custom field are.
   "folder": "Internet",
   "has_password": true,
   "has_otp": false,
-  "modified": "2026-10-14T16:02:11Z"
+  "modified": "2026-10-14T16:02:11Z",
+  "passkey": {"rp_id": "discord.com", "username": "sam"}
 }
 ```
 
@@ -80,6 +83,9 @@ protected custom field are.
 - `apps`: window classes, from the entry's `app:<class>` tags; `tags` are the
   other tags (`app:*` excluded).
 - `folder`: the group path below the root, `""` at the root.
+- `passkey`: the item's passkey, `{"rp_id", "username"}` (the site's
+  `user.name`), or `null`. Never the key, the credential id or the user
+  handle.
 
 **Place** — never contains a secret.
 
@@ -138,6 +144,11 @@ protected custom field are.
 | `place` | | `place`, `sync`, `probe` (`{guarded, checked_at}`) |
 | `passwd` | new password twice on tty/stdin (current one first if locked) | `sync`. Needs the place: the other machines' changes come in under the old password first (`place-error` while offline) |
 | `import` | `<format> [<file>] [--dry-run] [--folder F] [--skip-duplicates] [--vault V]… [--account A]` — formats: `1pux` (1Password's export), `1password-csv` (1Password 8's CSV: logins and passwords only), `op` (live from the 1Password app through its `op` CLI: no file; `--vault` (repeatable, a name or an id) picks vaults, default all; `--account` when `op` knows several accounts); more formats later (Bitwarden, browsers, KeePass, pass). docs/IMPORT.md has the mapping | `report`: `{logins, notes, attachments, otps, duplicates, skipped: [{title, reason}], folders}`; with `--dry-run` also `dry_run: true` and nothing changes, without it `sync`. One save for the whole import (one merge, one upload); an import that adds nothing saves nothing. Duplicate = a website host (without `www.`) and a username an item already in the safe has; kept unless `--skip-duplicates`, which lists them under `skipped`. Items 1Password calls Credit Card, Identity, Bank Account, … become **Notes** whose text lists their fields; their secret fields are also kept as protected custom fields. Vaults become folders (below `--folder`); 1Password's trash is skipped, its archive goes to the folder `Archive`. `skipped` also names attachments left out (`"<title> — <file>"`: missing, or bigger than 25 MB). The file is a plaintext export: for `1pux` and `1password-csv` the reply's `hint` says to delete it. The daemon reads the file itself (same uid; the CLI sends the full path); `op` runs as argv from the daemon (`vault list`, `item list --include-archive`, `item get`, `read` for attachments, `document get`), and its first call may wait for the user to approve Safe in 1Password. Needs the safe unlocked, a dry run too (duplicates are counted against it) |
+| `edit` | `<id> --remove-passkey` | `sync`. Removes the item's passkey: every `KPEX_PASSKEY_*` field and the tag `Passkey` (docs/FORMAT.md). The login and its password stay; the item's history keeps the old version. An item without one saves nothing |
+| `passkey list` | `[--rp R]` | the socket's `passkey-list` (below), every passkey without `--rp` |
+| `passkey-list` | **socket only.** `rp_id` (absent: every passkey), optional `allow` (credential ids) | `passkeys: [{item_id, title, username, rp_id, credential_id}]`, best first (last used, then title); only those `allow` names when it names any. From memory, like `match`. `username` is the site's `user.name` (the item's username when that is empty) |
+| `passkey-create` | **socket only.** `rp_id`, `rp_name`, `user_id`, `user_name`, `user_display_name`, `client_data_hash`, `algorithms` (COSE ids, the site's order; empty = ES256), `exclude` (credential ids), optional `item_id`, `origin`, `user_verified` | `item_id`, `credential_id`, `attestation_object`, `authenticator_data`, `public_key` (SPKI DER), `public_key_algorithm` (`-7` or `-8`), `sync`. One save, like `add`. `user_display_name` is taken but not stored (KeePassXC keeps none either); `rp_name` and `user_name` longer than 64 UTF-8 bytes are cut on a character boundary, not refused |
+| `passkey-get` | **socket only.** `rp_id`, `credential_id`, `client_data_hash`, `user_verified` | `item_id`, `credential_id`, `authenticator_data`, `signature`, `user_handle` (`null` when the passkey has none). Saves nothing |
 | `watch` | | **CLI only, a stream** for shells and scripts that can't hold a socket (the desktop plugin's bridge). The first line is `{"v": 1, "event": "status", "status": {…}}` — the `status` verb's reply object, as the `sync` event carries `"sync": {…}`; then every socket event as-is, one per line (the `subscribe` stream below); the last line is `{"v": 1, "event": "daemon-gone"}` — also the only line when the daemon can't be reached — and `watch` exits 0. It runs until killed or the daemon goes away |
 | `read` | `<safe://…> [--json] [-n\|--no-newline]` | **CLI**, like `op read`: the bare value and a newline; nothing (exit 1) when there is none. `--json`: `resolve`'s reply. A locked safe opens the unlock prompt once (`unlock --ask`), then tries again |
 | `run` | `[--env-file F]… [--] <command> [args…]` | **CLI**, like `op run`: every environment value that is a `safe://` reference, or holds `{{ safe://… }}`, is resolved — in the command's environment only — and ewe-safe becomes the command (exec), so the exit code is the command's. ewe-safe's own failures exit 125, a command that can't run 126 or 127 (as `env` does). It fails closed: a value that starts with `safe://` (or holds `{{ safe://… }}`) and doesn't resolve — a typo, an `ambiguous` name, a safe left locked — is never passed on as text; the command never runs and the exit is 125. ewe-safe itself is not dumpable and has no core limit; the command gets its own core limit back `--env-file` (repeatable) is a dotenv file and wins over the inherited environment. The output is **not** masked: the command can print what it got |
@@ -148,6 +159,39 @@ protected custom field are.
 | `version` | | `version`, `protocol: 1` |
 
 Ids are full UUIDs. A UI may shorten them for display, but always sends the full id.
+
+### Passkeys (for the ewe browser)
+
+The browser's main process calls the three passkey verbs on the socket.
+The browser checks the origin and the RP ID against the page (Safe never
+trusts a page); Safe checks only their shape: `rp_id` must be a lowercase
+host name (`github.com`, no port, no IP address) and `client_data_hash` 32
+bytes. Anything else is `bad-request`.
+
+- **Bytes** travel as base64url without padding (`user_id`,
+  `client_data_hash`, credential ids, and every byte field in a reply).
+  Safe also reads padded or standard base64.
+- **`passkey-create`:** the first algorithm in `algorithms` that Safe makes
+  wins: ES256 (`-7`) or EdDSA (`-8`); none → `unsupported` (checked before
+  `exclude`, WebAuthn's order). A credential in `exclude` that the safe has
+  for `rp_id` → `excluded`. With `item_id` the passkey goes on that login,
+  replacing one it had (a note or an item in the recycle bin:
+  `bad-request` / `not-found`); without, a new login: title `rp_name` (else
+  the RP ID), username `user_name`, website the `origin` (else
+  `https://<rp_id>`). Names longer than WebAuthn's 64 bytes are cut on a
+  UTF-8 character boundary, as browsers and authenticators cut them
+  (WebAuthn §6.4.1), never refused. The attestation is `none`; `authenticator_data` is the
+  one inside `attestation_object` (with the credential), so the browser's
+  `getAuthenticatorData()` returns it.
+- **`passkey-get`:** a passkey that isn't in the safe for that RP (or is in
+  the recycle bin) → `not-found`. The signature covers `authenticator_data
+  || client_data_hash`: DER for ES256, 64 bytes for EdDSA.
+- **Flags:** UP always; UV when `user_verified` is true; BE and BS set (the
+  passkey is in the synced file; for `get`, as the entry's
+  `KPEX_PASSKEY_FLAG_BE`/`_BS` say); AT on create. Sign count 0. AAGUID
+  `452b824e-42d3-4324-bc6c-581888ca2851`.
+- Errors as everywhere: `locked`, `not-set-up`, `read-only` (create). Nothing
+  a passkey verb receives or answers is logged.
 
 **Places in this version:** `local` and `nextcloud`. `init`/`open` with any
 other kind PROTOCOL.md names answer `bad-request` ("not in this version").
@@ -200,7 +244,8 @@ Events never carry a title, a username or a value.
 ## Calls that must stay fast
 
 `status`, `summary`, `match` and `list` answer from memory (or "locked")
-without touching the place or the disk, so the picker opens instantly. Only
+without touching the place or the disk, so the picker opens instantly.
+So does `passkey-list`; `passkey-get` reads the unlocked safe like `reveal`. Only
 `unlock`, `open`, `init`, saves and `sync` talk to the place.
 
 `show`, `reveal`, `copy` and `resolve` read the unlocked safe and never

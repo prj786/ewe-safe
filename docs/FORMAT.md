@@ -29,6 +29,7 @@ The reference the daemon is built against. The decisions are in PLAN.md
 | one-time code | `otp`: an `otpauth://` URI, protected; codes computed by Safe (F7) |
 | apps (the `Super+P` pins) | tags `app:<window-class>` |
 | kind Note | custom data `ewe.kind = note`; its notes are protected |
+| passkey | KeePassXC's `KPEX_PASSKEY_*` fields and the tag `Passkey` (below) |
 
 Everything else in an entry (custom fields, attachments, icons, colours,
 auto-type) is left as it was.
@@ -39,6 +40,70 @@ ewe-sync's "last saved by"; the merge keeps the newer stamp). Read it with
 `Safe::saved_by`, which survives F6. `Safe::newest_change` (items and
 folders changed or moved, recorded deletions) is what the rollback check
 compares (docs/PLACES.md).
+
+## Passkeys
+
+A passkey is stored exactly as **KeePassXC** stores it (checked in its
+source, `develop` at `52e2743b3a77`, 2026-10-14: `BrowserService::
+addPasskeyToEntry`, `BrowserPasskeys`, `PasskeyUtils`, `EntryAttributes`).
+**KeePassDX** (`PasskeyEntryFields.kt`) and Strongbox read the same fields,
+so a passkey made in Safe works in them, and theirs work in Safe.
+
+| field | value | protected |
+|---|---|---|
+| `KPEX_PASSKEY_USERNAME` | the site's `user.name` | no |
+| `KPEX_PASSKEY_CREDENTIAL_ID` | credential id, base64url, no padding (32 random bytes) | **yes** |
+| `KPEX_PASSKEY_PRIVATE_KEY_PEM` | the private key, PKCS#8 PEM | **yes** |
+| `KPEX_PASSKEY_RELYING_PARTY` | the RP ID (`github.com`) | no |
+| `KPEX_PASSKEY_USER_HANDLE` | the site's `user.id`, base64url, no padding | **yes** |
+| `KPEX_PASSKEY_FLAG_BE`, `KPEX_PASSKEY_FLAG_BS` | `1` (backup eligible, backed up) | no |
+| tag `Passkey` | on the entry | — |
+
+- **The credential id is protected.** KeePassXC and KeePassDX both write it
+  that way (TRIO.md's first table said "no"; the apps win).
+- **Reading,** Safe does what KeePassXC does: Strongbox's
+  `KPEX_PASSKEY_GENERATED_USER_ID` and `KPXC_PASSKEY_USERNAME` win when
+  present; a flag reads `1` or `true` as set, and a missing flag as set.
+  Ids are compared as base64url, so padded or standard base64 from another
+  app still matches. A PEM without line breaks still reads (KeePassXC's
+  own tests store keys that way). KeePassDX needs all five fields: Safe
+  always writes all five.
+- **Keys:** ES256 is a P-256 key in PKCS#8 v0 with the public point inside
+  (`MIGHAgEAMBMG…`), EdDSA an Ed25519 seed in PKCS#8 v1 (48 bytes): the
+  shapes Botan (KeePassXC's library) and OpenSSL write. No RS256: Safe makes
+  none, and signing with one another app made answers `unsupported`.
+- **One passkey per entry.** Putting one on an entry that has one replaces
+  it; the old one goes with every `KPEX_PASSKEY_*` field and Strongbox's
+  names. **Removing** takes every `KPEX_PASSKEY_*` field (KeePassXC's
+  rule), `KPXC_PASSKEY_USERNAME` and the tag. Both are tracked edits: the
+  item's history keeps the old version.
+- **A new login for a passkey** (the browser named none): title = the RP's
+  name, else the RP ID; username = `user.name`; URL = the page's origin,
+  else `https://<rp_id>`. KeePassXC's own new entries are titled "<name>
+  (Passkey)" in a group "KeePassXC-Browser Passkeys" with icon 13; Safe
+  keeps its own items plain and top-level. On an existing login with an
+  empty username, the username becomes `user.name`, as KeePassDX does.
+- **What Safe answers** is what KeePassXC answers, byte for byte, apart from
+  the AAGUID (Safe's is `452b824e-42d3-4324-bc6c-581888ca2851`): checked
+  once against KeePassXC's own test vectors (its two ECDSA signatures, the
+  authenticator data, the SPKI and the whole attestation object). ECDSA
+  signatures are deterministic (RFC 6979) and DER, as Botan makes them.
+  Sign count 0; BE and BS set.
+- **Merge** (rule 3a below): a passkey survives another machine's or a
+  phone's rewrite (the fields, their protection, the tag), and also two
+  machines changing **the same login** before they sync: one adds a passkey
+  at sign-in, the other changes the password. The passkey stays current
+  whichever was newer; the password follows rule 3 (the newer version's
+  stays, the other is in history). Both sides adding **different**
+  passkeys to one login: the newer version's passkey stays, the other is in
+  the item's history (the site has both; remove the lost one there).
+- **Tested:** `crates/core/src/passkey.rs` (keys, CBOR with a separate
+  reader, flags, the fields), `crates/core/tests/passkey.rs` (a file
+  KeePassXC 2.7.12 wrote, `tests/passkeys/`, password `fixture`: Safe signs
+  with its ES256 and EdDSA passkeys; OpenSSL reads Safe's keys and checks
+  its signatures; merges; with `SAFE_KEEPASSXC_CLI` or `keepassxc-cli` on
+  the PATH, KeePassXC shows a Safe passkey field by field and its rewrite
+  keeps it), `crates/cli/tests/passkeys.rs` (the daemon over the socket).
 
 ## History
 
@@ -74,6 +139,20 @@ key and opens it first.
    `LastModificationTime` wins. Equal times go to the larger SHA-256 of the
    content, so both machines pick the same version. The other version
    joins the entry's history.
+
+   **3a. The passkey inside an entry.** Its fields (`KPEX_PASSKEY_*`,
+   `KPXC_PASSKEY_USERNAME`) and the tag `Passkey` are looked at on their
+   own. The base is the newest version both copies have (current or in
+   history). When only the losing version changed the passkey since the
+   base (added, replaced or removed it), its passkey goes onto the winner,
+   and the winner's own version joins the history too, so no version is
+   lost. When both changed it, the winner (the newer version) keeps its
+   own. With no shared version (a copy that keeps no history), a passkey
+   only the loser has is kept: losing one breaks a sign-in, keeping one
+   breaks nothing. On a tie of times, the content without the passkey is
+   compared first, so the result still wins when merged again (for an entry
+   without a passkey this is rule 3's hash, unchanged). Other fields are not
+   merged one by one: rule 3 decides them.
 4. **History** is the union of both copies' histories plus the losing
    version. Identical versions are kept once. It is sorted oldest first by
    time (content hash on a tie). It grows to the cap and no further, but is
@@ -133,8 +212,13 @@ groups_added, groups_deleted.
 - the spike's 14 cases, all passing (keepass-rs's own merge passed 10);
 - the loser's file kept in history;
 - two bins, a deleted group, icons by picture, the history cap;
-- 300 seeded random pairs of copies (`SAFE_MERGE_SEEDS`, `SAFE_MERGE_SALT`
-  for longer hunts). Each pair checks that merging both ways gives the same
+- passkeys (3a), both merge directions and both clock orders: added here
+  and password changed there; replaced here, password changed there;
+  removed here, password changed there; removed here, replaced there; both
+  added; a copy without history. Each case also checks the laws below;
+- 300 seeded random pairs of copies, with passkeys added and removed among
+  the edits (`SAFE_MERGE_SEEDS`, `SAFE_MERGE_SALT` for longer hunts: 3,000
+  seeds with two salts passed on 2026-10-15). Each pair checks that merging both ways gives the same
   safe, that merging a copy with itself or merging an input again changes
   nothing, that nothing disappears without a deletion record, and that no
   version of a surviving item is lost.

@@ -16,6 +16,8 @@
 //!   `op`) turned into items (docs/IMPORT.md).
 //! - [`refs`]: secret references, `safe://<folder>/<title>/<field>`.
 //! - [`hygiene`]: no core dumps, no ptrace, buffers out of swap.
+//! - [`passkey`]: passkeys in KeePassXC's fields, their keys, and what an
+//!   authenticator answers (docs/FORMAT.md).
 
 pub mod atomic;
 pub mod digest;
@@ -27,6 +29,7 @@ pub mod item;
 pub mod kdf;
 pub mod merge;
 pub mod otp;
+pub mod passkey;
 pub mod refs;
 pub mod safe;
 pub mod search;

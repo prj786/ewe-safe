@@ -350,6 +350,7 @@ impl Daemon {
         if was {
             self.refresh_held(None);
             clip::clear_if_ours(self);
+            crate::passkey::forget_used();
             log(&format!("locked ({reason})"));
             self.emit(json!({"v": 1, "event": "locked", "reason": reason}));
         }
@@ -747,6 +748,7 @@ pub fn item_json(s: &Summary) -> Value {
         "has_password": s.has_password,
         "has_otp": s.has_otp,
         "modified": s.modified.map(|t| t.format("%Y-%m-%dT%H:%M:%SZ").to_string()),
+        "passkey": s.passkey.as_ref().map(|p| json!({"rp_id": p.rp_id, "username": p.username})),
     })
 }
 

@@ -9,6 +9,7 @@
 //! | one-time code | `otp` (an `otpauth://` URI, protected) |
 //! | apps (the `Super+P` pins) | tags `app:<window-class>` |
 //! | kind Note | custom data `ewe.kind = note`; its text is protected |
+//! | passkey | KeePassXC's `KPEX_PASSKEY_*` fields ([`crate::passkey`]) |
 //!
 //! Everything else in an entry (custom fields, attachments, history, icons,
 //! auto-type) is left exactly as it was.
@@ -57,6 +58,8 @@ pub struct Summary {
     pub has_password: bool,
     pub has_otp: bool,
     pub modified: Option<NaiveDateTime>,
+    /// The item's passkey (KeePassXC's fields), never its key.
+    pub passkey: Option<crate::passkey::Info>,
 }
 
 /// An item as the editor fills it in. The secret parts are wiped from
@@ -179,6 +182,7 @@ pub fn summary_of(id: String, entry: &Entry, folder: String) -> Summary {
         has_password: entry.get(fields::PASSWORD).is_some_and(|p| !p.is_empty()),
         has_otp: entry.get(OTP).is_some_and(|p| !p.is_empty()),
         modified: entry.times.last_modification,
+        passkey: crate::passkey::info_of(entry),
     }
 }
 

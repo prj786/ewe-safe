@@ -35,6 +35,10 @@ zip = { version = "8.6", default-features = false, features = ["deflate-flate2"]
 # no core dumps, no ptrace, buffers out of swap (hygiene: the daemon's and
 # the CLI's)
 libc = "0.2"
+# passkeys (docs/FORMAT.md): ES256 and EdDSA keys, PKCS#8 PEM as KeePassXC
+# stores them; RustCrypto, like the rest of the tree
+p256 = { version = "0.14", default-features = false, features = ["ecdsa", "pem", "std"] }
+ed25519-dalek = { version = "3", default-features = false, features = ["fast", "zeroize", "pem"] }
 
 [dev-dependencies]
 

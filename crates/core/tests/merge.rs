@@ -1,7 +1,7 @@
 //! Merge (PLAN.md §7, docs/FORMAT.md "Merge"): the spike's 14 cases
 //! (docs/SPIKE-0.md §2), then properties over seeded random edits of two
-//! copies, then deletions through `Safe` (C3). Every merged result must
-//! survive a write and a read back unchanged.
+//! copies, then deletions through `Safe` (C3), then passkeys (rule 3a).
+//! Every merged result must survive a write and a read back unchanged.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -11,6 +11,7 @@ use keepass::db::{EntryId, EntryRef, GroupId, Value, fields};
 use keepass::{Database, DatabaseKey};
 use safe_core::digest::Digester;
 use safe_core::merge::{Report, merge};
+use safe_core::passkey;
 use safe_core::safe::key;
 use safe_core::{Draft, Kind, Safe};
 use zeroize::Zeroizing;
@@ -608,7 +609,7 @@ fn random_edit(db: &mut Database, rng: &mut Rng, hour: u32, n: u32) {
     let entries = ids(db);
     let groups = group_ids(db);
     let pick_entry = |rng: &mut Rng| entries.get(rng.below(entries.len().max(1))).copied();
-    match rng.below(8) {
+    match rng.below(10) {
         0 | 1 => {
             if let Some(id) = pick_entry(rng) {
                 set_password(db, id, &format!("p{hour}-{n}"), hour);
@@ -690,6 +691,16 @@ fn random_edit(db: &mut Database, rng: &mut Rng, hour: u32, n: u32) {
                     e.move_to(bin).expect("move");
                     e.times.location_changed = Some(t(hour));
                 }
+            }
+        }
+        8 => {
+            if let Some(id) = pick_entry(rng) {
+                set_passkey(db, id, &format!("cred-{hour}-{n}"), hour);
+            }
+        }
+        9 => {
+            if let Some(id) = pick_entry(rng) {
+                remove_passkey(db, id, hour);
             }
         }
         _ => {
@@ -918,6 +929,25 @@ fn random_edits_merge_the_same_both_ways_and_lose_nothing() {
     assert!(seen.groups_deleted > 0, "two recycle bins never met");
 }
 
+/// The merge laws for two copies: the same safe both ways, merging either
+/// input again changes nothing, and no version of either side is lost.
+fn lawful(a: &Database, b: &Database, id: EntryId) -> Database {
+    let (ab, _) = merged(a, b);
+    let (ba, _) = merged(b, a);
+    same(&ab, &ba, "merge(a,b) vs merge(b,a)");
+    for x in [a, b] {
+        let (again, _) = merged(&ab, x);
+        same(&again, &ab, "merging an input again");
+    }
+    let kept = versions_of(&ab, id);
+    for side in [a, b] {
+        for v in versions_of(side, id) {
+            assert!(kept.contains(&v), "lost a version: {v}\n  kept: {kept:?}");
+        }
+    }
+    ab
+}
+
 // ── deletions through Safe (C3) ─────────────────────────────────────────────
 
 fn login(title: &str, password: &str) -> Draft {
@@ -993,4 +1023,202 @@ fn trash_and_restore_add_no_history() {
     let eid = EntryId::from_uuid(uuid::Uuid::parse_str(&id).expect("uuid"));
     let e = a.database().entry(eid).expect("entry");
     assert_eq!(e.history.as_ref().map_or(0, |h| h.get_entries().len()), 0);
+}
+
+// ── passkeys (rule 3a): the loser's own passkey change comes along ──────────
+
+/// A passkey put on the entry (an old one replaced) exactly as Safe and
+/// KeePassXC write it, as a tracked edit stamped at `hour`.
+fn set_passkey(db: &mut Database, id: EntryId, credential: &str, hour: u32) {
+    let mut e = db.entry_mut(id).expect("entry");
+    e.edit_tracking(|e| {
+        passkey::store(
+            e,
+            &passkey::New {
+                rp_id: "mail.example".into(),
+                username: "sam".into(),
+                credential_id: credential.into(),
+                pem: Zeroizing::new(format!("-----BEGIN PRIVATE KEY-----\n{credential}")),
+                user_handle: "aGFuZGxl".into(),
+            },
+        );
+    });
+    e.times.last_modification = Some(t(hour));
+    settle(db, id);
+}
+
+fn remove_passkey(db: &mut Database, id: EntryId, hour: u32) {
+    if db.entry(id).is_some_and(|e| passkey::has_any(&e)) {
+        let mut e = db.entry_mut(id).expect("entry");
+        e.edit_tracking(|e| {
+            passkey::remove(e);
+        });
+        e.times.last_modification = Some(t(hour));
+        settle(db, id);
+    }
+}
+
+/// The current passkey's credential id, checked whole: every field with
+/// its protection and the tag, or nothing of it at all.
+fn credential(db: &Database, id: EntryId) -> Option<String> {
+    let e = db.entry(id).expect("entry");
+    let Some(cred) = e.get(passkey::CREDENTIAL_ID) else {
+        assert!(
+            !passkey::has_any(&e),
+            "half a passkey: {:?}",
+            e.fields.keys()
+        );
+        return None;
+    };
+    assert_eq!(
+        e.get(passkey::PRIVATE_KEY_PEM),
+        Some(format!("-----BEGIN PRIVATE KEY-----\n{cred}").as_str())
+    );
+    for (k, protected) in [
+        (passkey::CREDENTIAL_ID, true),
+        (passkey::PRIVATE_KEY_PEM, true),
+        (passkey::USER_HANDLE, true),
+        (passkey::RELYING_PARTY, false),
+        (passkey::USERNAME, false),
+        (passkey::FLAG_BE, false),
+        (passkey::FLAG_BS, false),
+    ] {
+        assert_eq!(e.fields[k].is_protected(), protected, "{k}");
+    }
+    assert!(e.tags.iter().any(|t| t == passkey::TAG));
+    Some(cred.to_string())
+}
+
+/// The credential ids the entry's history holds.
+fn history_credentials(db: &Database, id: EntryId) -> Vec<String> {
+    db.entry(id)
+        .and_then(|e| e.history.clone())
+        .map(|h| {
+            h.get_entries()
+                .iter()
+                .filter_map(|v| v.get(passkey::CREDENTIAL_ID).map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+#[test]
+fn passkey_added_here_password_changed_there_both_stay() {
+    // the owner adds a passkey at sign-in on one machine; another machine
+    // changes the same login's password before they sync
+    for (key_hour, pw_hour) in [(2, 3), (3, 2)] {
+        let b = base();
+        let mut with_key = b.db.clone();
+        let mut new_pw = b.db.clone();
+        set_passkey(&mut with_key, b.entry, "cred-A", key_hour);
+        set_password(&mut new_pw, b.entry, "two", pw_hour);
+        let m = lawful(&with_key, &new_pw, b.entry);
+        assert_eq!(
+            credential(&m, b.entry).as_deref(),
+            Some("cred-A"),
+            "passkey at {key_hour}, password at {pw_hour}"
+        );
+        // the password follows rule 3: the newer version's stays, the
+        // other is in history
+        let want = if pw_hour > key_hour { "two" } else { "one" };
+        assert_eq!(password(&m, b.entry).as_deref(), Some(want));
+        assert!(history_passwords(&m, b.entry).contains(&"two".to_string()) || want == "two");
+        let (_, r) = merged(&new_pw, &with_key);
+        assert_eq!(r.updated, 1, "the passkey (or the newer version) came over");
+    }
+}
+
+#[test]
+fn a_replaced_passkey_comes_over_a_newer_password_change() {
+    let mut b = base();
+    set_passkey(&mut b.db, b.entry, "cred-1", 1);
+    let mut replaced = b.db.clone();
+    let mut new_pw = b.db.clone();
+    set_passkey(&mut replaced, b.entry, "cred-2", 2);
+    set_password(&mut new_pw, b.entry, "two", 3);
+    let m = lawful(&replaced, &new_pw, b.entry);
+    assert_eq!(credential(&m, b.entry).as_deref(), Some("cred-2"));
+    assert_eq!(password(&m, b.entry).as_deref(), Some("two"));
+    assert!(history_credentials(&m, b.entry).contains(&"cred-1".to_string()));
+}
+
+#[test]
+fn passkey_removed_here_password_changed_there_the_removal_stays() {
+    for (rm_hour, pw_hour) in [(2, 3), (3, 2)] {
+        let mut b = base();
+        set_passkey(&mut b.db, b.entry, "cred-1", 1);
+        let mut removed = b.db.clone();
+        let mut new_pw = b.db.clone();
+        remove_passkey(&mut removed, b.entry, rm_hour);
+        set_password(&mut new_pw, b.entry, "two", pw_hour);
+        let m = lawful(&removed, &new_pw, b.entry);
+        assert_eq!(
+            credential(&m, b.entry),
+            None,
+            "removed at {rm_hour}, password at {pw_hour}"
+        );
+        let want = if pw_hour > rm_hour { "two" } else { "one" };
+        assert_eq!(password(&m, b.entry).as_deref(), Some(want));
+        assert!(history_credentials(&m, b.entry).contains(&"cred-1".to_string()));
+    }
+}
+
+#[test]
+fn passkey_removed_here_replaced_there_the_newer_action_wins() {
+    for (rm_hour, new_hour) in [(2, 3), (3, 2)] {
+        let mut b = base();
+        set_passkey(&mut b.db, b.entry, "cred-1", 1);
+        let mut removed = b.db.clone();
+        let mut replaced = b.db.clone();
+        remove_passkey(&mut removed, b.entry, rm_hour);
+        set_passkey(&mut replaced, b.entry, "cred-2", new_hour);
+        let m = lawful(&removed, &replaced, b.entry);
+        let want = (new_hour > rm_hour).then(|| "cred-2".to_string());
+        assert_eq!(credential(&m, b.entry), want, "removed at {rm_hour}");
+    }
+}
+
+#[test]
+fn both_add_a_passkey_the_newer_stays_the_other_is_in_history() {
+    // one passkey per entry: the newer version keeps its own, the other
+    // passkey is kept in the item's history (never lost)
+    for (a_hour, b_hour) in [(2, 3), (3, 2)] {
+        let b = base();
+        let mut a = b.db.clone();
+        let mut other = b.db.clone();
+        set_passkey(&mut a, b.entry, "cred-A", a_hour);
+        set_passkey(&mut other, b.entry, "cred-B", b_hour);
+        let m = lawful(&a, &other, b.entry);
+        let (newer, older) = if a_hour > b_hour {
+            ("cred-A", "cred-B")
+        } else {
+            ("cred-B", "cred-A")
+        };
+        assert_eq!(credential(&m, b.entry).as_deref(), Some(newer));
+        assert!(history_credentials(&m, b.entry).contains(&older.to_string()));
+    }
+}
+
+#[test]
+fn without_a_shared_history_a_passkey_is_kept_not_dropped() {
+    // a copy that keeps no history (a phone app, or history turned off):
+    // which side changed the passkey can't be told, so it stays
+    for (key_hour, pw_hour) in [(2, 3), (3, 2)] {
+        let b = base();
+        let mut with_key = b.db.clone();
+        let mut no_history = b.db.clone();
+        set_passkey(&mut with_key, b.entry, "cred-A", key_hour);
+        {
+            let mut e = no_history.entry_mut(b.entry).expect("entry");
+            e.set_protected(fields::PASSWORD, "two");
+            e.times.last_modification = Some(t(pw_hour));
+        }
+        with_key
+            .entry_mut(b.entry)
+            .expect("entry")
+            .history
+            .replace(keepass::db::History::default());
+        let m = lawful(&with_key, &no_history, b.entry);
+        assert_eq!(credential(&m, b.entry).as_deref(), Some("cred-A"));
+    }
 }

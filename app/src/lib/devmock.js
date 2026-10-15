@@ -163,6 +163,7 @@ export function install(params) {
         has_password: !!(item?.password_value || item?.generate),
         has_otp: false,
         modified: minsAgo(0),
+        passkey: null,
         _notes: item?.notes ?? "",
         _password: item?.password_value ?? ""
       });
@@ -182,6 +183,10 @@ export function install(params) {
       i.apps = i.apps.filter((a) => !(item?.remove_app ?? []).includes(a));
       for (const t of item?.tag ?? []) if (!i.tags.includes(t)) i.tags.push(t);
       i.tags = i.tags.filter((t) => !(item?.remove_tag ?? []).includes(t));
+      if (item?.remove_passkey && i.passkey) {
+        i.passkey = null;
+        i.tags = i.tags.filter((t) => t !== "Passkey");
+      }
       i.modified = minsAgo(0);
       changed();
       return { ok: true, sync };

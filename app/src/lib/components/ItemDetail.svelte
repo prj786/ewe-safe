@@ -16,6 +16,7 @@
   let shown = $state(""); // the revealed password, briefly
   let otp = $state(null); // {code, left}
   let menu = $state(false);
+  let unkey = $state(false); // asking before the passkey goes
   let hideTimer;
 
   const isLogin = $derived(item.kind === "login");
@@ -31,6 +32,7 @@
     shown = "";
     otp = null;
     menu = false;
+    unkey = false;
     clearTimeout(hideTimer);
     notes = "";
     (async () => {
@@ -93,6 +95,15 @@
       toasts.show(`Moved “${item.title}” to Trash.`, { icon: "trash-2" });
       ui.selected = null;
     }
+  }
+
+  // the fields and the tag go; the login and its password stay, and the
+  // item's history keeps the old version
+  async function removePasskey() {
+    const r = await safe.edit(item.id, { remove_passkey: true });
+    unkey = false;
+    if (r?.ok) toasts.show(`Removed the passkey from “${item.title}”.`, { icon: "key-round" });
+    else toasts.show(r?.message ?? "Couldn't remove the passkey.", { icon: "circle-alert" });
   }
 
   async function restore() {
@@ -212,6 +223,21 @@
         </span>
       </div>
     {/if}
+    {#if item.passkey}
+      <div class="ewe-list__divider"></div>
+      <div class="ewe-row">
+        <span class="ewe-row__lead ewe-row__lead--tile"><Icon name="key-round" /></span>
+        <span class="ewe-row__text">
+          <span class="ewe-row__title">Passkey</span>
+          <span class="ewe-row__desc">{[item.passkey.rp_id, item.passkey.username].filter(Boolean).join(" · ")}</span>
+        </span>
+        {#if !trash}
+          <span class="ewe-row__trail">
+            <button class="ewe-btn ewe-btn--ghost ewe-btn--sm" disabled={safe.readOnly} onclick={() => (unkey = true)}>Remove</button>
+          </span>
+        {/if}
+      </div>
+    {/if}
   </div>
 
   <div class="ewe-list">
@@ -288,4 +314,25 @@
 
 {#if item.modified}
   <div class="safe-foot caption"><span>Changed {day(item.modified)}</span>{#if item.folder}<span>In {item.folder}</span>{/if}</div>
+{/if}
+
+{#if unkey}
+  <div class="safe-scrim">
+    <div class="ewe-dialog" role="dialog" aria-modal="true" aria-label="Remove the passkey">
+      <div class="ewe-dialog__head">
+        <span class="ewe-dialog__icon"><Icon name="key-round" /></span>
+        <div class="ewe-dialog__titles">
+          <h3 class="ewe-dialog__title">Remove the passkey?</h3>
+          <p class="ewe-dialog__desc">
+            You won't be able to sign in to {item.passkey?.rp_id} with it. The login and its password stay. Remove the passkey on the
+            site too.
+          </p>
+        </div>
+      </div>
+      <div class="ewe-dialog__foot">
+        <button class="ewe-btn ewe-btn--ghost" onclick={() => (unkey = false)}>Keep it</button>
+        <button class="ewe-btn ewe-btn--danger" disabled={safe.busy === "edit"} onclick={removePasskey}>Remove passkey</button>
+      </div>
+    </div>
+  </div>
 {/if}
