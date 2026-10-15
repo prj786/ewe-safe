@@ -89,13 +89,14 @@ so a passkey made in Safe works in them, and theirs work in Safe.
   authenticator data, the SPKI and the whole attestation object). ECDSA
   signatures are deterministic (RFC 6979) and DER, as Botan makes them.
   Sign count 0; BE and BS set.
-- **Merge:** the passkey is fields of the entry, so the entry-level rules
-  above apply. Another machine's or a phone's rewrite keeps it (the fields,
-  their protection, the tag). One case to know: when two machines change
-  **the same login** before they sync — one adds a passkey, the other
-  changes the password — the newer version wins and the other joins the
-  item's history. If the passkey's version lost, it is in history, not
-  current: add the passkey again on the site.
+- **Merge** (rule 3a below): a passkey survives another machine's or a
+  phone's rewrite (the fields, their protection, the tag), and also two
+  machines changing **the same login** before they sync: one adds a passkey
+  at sign-in, the other changes the password. The passkey stays current
+  whichever was newer; the password follows rule 3 (the newer version's
+  stays, the other is in history). Both sides adding **different**
+  passkeys to one login: the newer version's passkey stays, the other is in
+  the item's history (the site has both; remove the lost one there).
 - **Tested:** `crates/core/src/passkey.rs` (keys, CBOR with a separate
   reader, flags, the fields), `crates/core/tests/passkey.rs` (a file
   KeePassXC 2.7.12 wrote, `tests/passkeys/`, password `fixture`: Safe signs
@@ -138,6 +139,20 @@ key and opens it first.
    `LastModificationTime` wins. Equal times go to the larger SHA-256 of the
    content, so both machines pick the same version. The other version
    joins the entry's history.
+
+   **3a. The passkey inside an entry.** Its fields (`KPEX_PASSKEY_*`,
+   `KPXC_PASSKEY_USERNAME`) and the tag `Passkey` are looked at on their
+   own. The base is the newest version both copies have (current or in
+   history). When only the losing version changed the passkey since the
+   base (added, replaced or removed it), its passkey goes onto the winner,
+   and the winner's own version joins the history too, so no version is
+   lost. When both changed it, the winner (the newer version) keeps its
+   own. With no shared version (a copy that keeps no history), a passkey
+   only the loser has is kept: losing one breaks a sign-in, keeping one
+   breaks nothing. On a tie of times, the content without the passkey is
+   compared first, so the result still wins when merged again (for an entry
+   without a passkey this is rule 3's hash, unchanged). Other fields are not
+   merged one by one: rule 3 decides them.
 4. **History** is the union of both copies' histories plus the losing
    version. Identical versions are kept once. It is sorted oldest first by
    time (content hash on a tie). It grows to the cap and no further, but is
@@ -197,8 +212,13 @@ groups_added, groups_deleted.
 - the spike's 14 cases, all passing (keepass-rs's own merge passed 10);
 - the loser's file kept in history;
 - two bins, a deleted group, icons by picture, the history cap;
-- 300 seeded random pairs of copies (`SAFE_MERGE_SEEDS`, `SAFE_MERGE_SALT`
-  for longer hunts). Each pair checks that merging both ways gives the same
+- passkeys (3a), both merge directions and both clock orders: added here
+  and password changed there; replaced here, password changed there;
+  removed here, password changed there; removed here, replaced there; both
+  added; a copy without history. Each case also checks the laws below;
+- 300 seeded random pairs of copies, with passkeys added and removed among
+  the edits (`SAFE_MERGE_SEEDS`, `SAFE_MERGE_SALT` for longer hunts: 3,000
+  seeds with two salts passed on 2026-10-15). Each pair checks that merging both ways gives the same
   safe, that merging a copy with itself or merging an input again changes
   nothing, that nothing disappears without a deletion record, and that no
   version of a surviving item is lost.
