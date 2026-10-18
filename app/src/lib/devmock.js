@@ -17,6 +17,10 @@
 //   &view=settings|import|trash   &edit=github|new   &gen=1 (generator open)
 //   &import=old           the daemon has no `import` verb yet
 //   &light=1              Ewe Light (the real token map, .dev-mock/theme-light.json)
+//   &keyring=broken|locked|none|safe   the keyring: `default` names a second
+//                         keyring (the prompt at every start; locked: it is
+//                         locked too), no keyring runs, or Safe keeps them
+//                         (default: fine, gnome-keyring with `default` = login)
 // The master password is "mock".
 
 import fixture from "../../.dev-mock/items.json";
@@ -44,8 +48,23 @@ export function install(params) {
       generator_words: 5,
       ...(params.get("known") ? { place: params.get("known"), location: "ewe/safe/passwords.kdbx" } : {})
     },
-    agent: flag("agent", false)
+    agent: flag("agent", false),
+    keyring: params.get("keyring") ?? "fine"
   };
+  // the keyring's app secrets (names and dates only, as `keyring list`)
+  const krItems = () =>
+    s.keyring === "none"
+      ? []
+      : [
+          { id: "/org/freedesktop/secrets/collection/login/1", label: "ewe cloud", collection: "login", app: "ewe-cloud", created: minsAgo(60 * 24 * 40), modified: minsAgo(60 * 24 * 3) },
+          { id: "/org/freedesktop/secrets/collection/login/2", label: "Chrome Safe Storage", collection: "login", app: "chrome", created: minsAgo(60 * 24 * 90), modified: minsAgo(60 * 24 * 90) },
+          ...(s.keyring === "locked"
+            ? []
+            : [
+                { id: "/org/freedesktop/secrets/collection/Default_5fkeyring/1", label: "ewe mail (sam@example.org)", collection: s.keyring === "broken" ? "Default_keyring" : "login", app: "ewe-mail", created: minsAgo(60 * 24 * 30), modified: minsAgo(60 * 24 * 30) },
+                { id: "/org/freedesktop/secrets/collection/Default_5fkeyring/2", label: "ewe companion: anthropic API key", collection: s.keyring === "broken" ? "Default_keyring" : "login", app: "ewe-companion", created: minsAgo(60 * 24 * 8), modified: minsAgo(60 * 24 * 8) }
+              ])
+        ];
   // an SSH key (TRIO.md S2): the fixture has none
   const sshKey = (title, type, n) => ({
     id: crypto.randomUUID(),
@@ -310,6 +329,35 @@ export function install(params) {
       identity_agent: "IdentityAgent /run/user/1000/ewe-safe-ssh.sock",
       ssh_config_agents: []
     }),
+
+    keyring_status: () => {
+      const broken = s.keyring === "broken" || s.keyring === "locked";
+      return {
+        ok: true,
+        adopted: s.keyring === "safe",
+        serving: s.keyring === "safe",
+        open: s.keyring === "safe",
+        items: s.keyring === "safe" ? krItems().length : 0,
+        owner: { none: "none", safe: "ewe-safe" }[s.keyring] ?? "gnome-keyring",
+        pam: false,
+        default: s.keyring === "none" ? null : broken ? "Default_keyring" : "login",
+        collections: s.keyring === "none" ? [] : broken ? ["Default_keyring", "login", "session"] : ["login", "session"],
+        needs_repair: broken
+      };
+    },
+    keyring_list: () => ({
+      ok: true,
+      items: krItems().sort((a, b) => a.label.localeCompare(b.label)),
+      locked: s.keyring === "locked" ? [{ collection: "Default_keyring", label: "Default keyring", items: 2 }] : [],
+      source: { none: "none", safe: "ewe-safe" }[s.keyring] ?? "gnome-keyring"
+    }),
+    keyring_repair: ({ dryRun }) => {
+      if (s.keyring === "none") return fail("source-error", "No keyring runs now.");
+      if (s.keyring === "fine") return { ok: true, already: true, fixed: true, default_was: "login", moved: 0, duplicates: 0, conflicts: 0, replaced: 0, skipped: 0, locked: [], sources: [], message: "The keyring is fine: “default” already is your login keyring." };
+      const report = { default_was: "Default_keyring", already: false, moved: 2, duplicates: 1, conflicts: 0, replaced: 0, skipped: 0, locked: [], sources: ["Default_keyring"] };
+      if (!dryRun) s.keyring = "fine";
+      return { ok: true, ...report, fixed: !dryRun, ...(dryRun ? { dry_run: true } : { hint: "The old keyring (Default_keyring) stays as a backup. To delete it later: Passwords and Keys (seahorse) → right-click it → Delete, or remove ~/.local/share/keyrings/Default_keyring.keyring and log out and back in." }) };
+    },
 
     // the window's own commands
     launch_args: () => ({

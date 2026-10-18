@@ -797,6 +797,7 @@ dependencies = [
  "libc",
  "safe-core",
  "safe-login",
+ "safe-secrets",
  "safe-store",
  "serde_json",
  "sha2 0.11.1",
@@ -1791,6 +1792,25 @@ dependencies = [
  "rust-argon2",
  "serde_json",
  "tempfile",
+ "zeroize",
+]
+
+[[package]]
+name = "safe-secrets"
+version = "0.2.0-beta"
+dependencies = [
+ "aes",
+ "base64 0.23.1",
+ "cbc",
+ "crypto-bigint",
+ "getrandom 0.4.3",
+ "hmac 0.13.0",
+ "safe-login",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "tempfile",
+ "zbus",
  "zeroize",
 ]
 

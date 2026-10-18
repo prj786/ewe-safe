@@ -80,6 +80,11 @@ export const api = {
   sshEnable: (confirm) => invoke("ssh_enable", { confirm }),
   sshDisable: () => invoke("ssh_disable"),
   sshStatus: () => invoke("ssh_status"),
+  // the keyring (PROTOCOL.md "The keyring"): who keeps the apps' passwords,
+  // the repair of the prompt at every start, the app secrets (no secret)
+  keyringStatus: () => invoke("keyring_status"),
+  keyringRepair: (dryRun = false) => invoke("keyring_repair", { dryRun }),
+  keyringList: () => invoke("keyring_list"),
 
   // the window and the desktop around it (not the daemon)
   launchArgs: () => invoke("launch_args"),

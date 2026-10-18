@@ -18,6 +18,8 @@
 //!   (docs/SYSTEM.md).
 //! - [`agent`]: the SSH agent on its own socket; [`sshkeys`]: the `ssh-*`
 //!   verbs.
+//! - [`keyring`]: Safe as the keyring (`org.freedesktop.secrets`, the
+//!   `keyring-*` verbs; docs/KEYRING.md).
 
 mod agent;
 mod clip;
@@ -25,6 +27,7 @@ mod config;
 mod daemon;
 mod hygiene;
 mod import;
+mod keyring;
 mod logind;
 mod passkey;
 mod resolve;
@@ -74,6 +77,7 @@ fn main() {
     worker::spawn(d.clone());
     logind::spawn(d.clone());
     agent::spawn(d.clone());
+    keyring::spawn(d.clone());
     on_signals(d.clone(), bound.clone());
     log(&format!(
         "ready, protocol 1 ({})",

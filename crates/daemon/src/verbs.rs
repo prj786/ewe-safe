@@ -212,6 +212,8 @@ pub fn dispatch(d: &Arc<Daemon>, verb: &str, a: &mut Args) -> Result<Value, Fail
         "passkey-create" => crate::passkey::create(d, a),
         "passkey-get" => crate::passkey::get(d, a),
         v if v.starts_with("ssh-") => crate::sshkeys::dispatch(d, v, a),
+        // Safe as the keyring (docs/KEYRING.md)
+        v if v.starts_with("keyring-") => crate::keyring::dispatch(d, v, a),
         "passwd" => {
             let new = secret(a, "new_password")
                 .ok_or_else(|| Fail::bad("The new master password is missing."))?;
@@ -244,6 +246,9 @@ fn status(d: &Daemon) -> Value {
         // a KDBX 3.x/4.0 file becomes KDBX 4.1 at its next save (SPIKE-0, C5)
         v["upgrade_from"] = json!(u);
     }
+    drop(snap);
+    // Safe as the keyring (docs/KEYRING.md)
+    v["keyring"] = crate::keyring::status_json(d);
     v
 }
 

@@ -72,6 +72,7 @@ impl Paths {
     }
 
     /// The master password under W (login unlock on).
+    #[allow(dead_code)] // stream L's (the login unlock); unused on K's branch
     pub fn master_wrap(&self) -> PathBuf {
         self.state.join(safe_login::MASTER_WRAP)
     }

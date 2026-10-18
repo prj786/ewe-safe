@@ -26,6 +26,7 @@
 //!   `EWE_SAFE_APPROVE_APP` and `EWE_SAFE_APPROVE_KEY`; the exit code is the
 //!   answer (0 allow, 1 deny).
 
+mod keyring;
 mod ssh;
 mod tools;
 
@@ -658,6 +659,9 @@ pub fn run() {
             ssh::ssh_enable,
             ssh::ssh_disable,
             ssh::ssh_status,
+            keyring::keyring_status,
+            keyring::keyring_repair,
+            keyring::keyring_list,
         ])
         .run(tauri::generate_context!())
         .expect("error while running the Safe window");

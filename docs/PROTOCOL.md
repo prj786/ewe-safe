@@ -54,6 +54,11 @@ Every reply has `"ok"`. A failure is:
 | `excluded` | `passkey-create`: a credential in `exclude` is already in the safe (the browser answers `InvalidStateError`) |
 | `unsupported` | `passkey-create`: no algorithm in the site's list is one Safe makes; `passkey-get`: the stored key is a type Safe can't sign with (RSA). The browser answers `NotSupportedError` |
 | `internal` | a bug; `message` has the detail |
+| `no-login-keyring` | `keyring repair`: the running keyring has no `login` collection to move into (the hint says how to get one) |
+| `keyring-locked` | a keyring needed open stayed locked: `keyring repair`'s `login`, or (needs the login module) Safe's own keyring without W |
+| `needs-login-module` | `keyring adopt`: Safe's login module (`/usr/lib/security/pam_ewe_safe.so`) isn't installed; until it is, `keyring repair` is the fix |
+| `pam-missing` | `keyring adopt`: the login screen's PAM file (`/etc/pam.d/greetd`) doesn't use Safe's login module yet (the hint is the exact command) |
+| `not-adopted` | `keyring unlock`: this computer has no login key yet (`keyring adopt` makes it) |
 
 ### Shapes
 
@@ -325,6 +330,43 @@ binds both). The protocol is OpenSSH's (draft-miller-ssh-agent):
 - Limits: 32 connections at once (more are closed at once); a connection
   waits at most 60 s for its next request, and a request must arrive
   whole within 10 s.
+
+## The keyring
+
+The Secret Service keyring (`org.freedesktop.secrets`) is where apps keep
+their own passwords: ewe-sync's account, mail, Chromium's storage key.
+docs/KEYRING.md has the whole story. In this version Safe **repairs** the
+keyring that runs (gnome-keyring) and **shows** what is in it; Safe as the
+keyring itself waits for Safe's login module (`pam_ewe_safe.so`), so the
+verbs marked *needs the login module* refuse or have nothing to act on.
+The CLI is `ewe-safe keyring <sub>`; over the socket each is the verb
+`keyring-<sub>`. Nothing a keyring verb logs or answers holds a secret.
+
+| CLI | socket verb, args | reply (besides `"ok": true`) |
+|---|---|---|
+| `keyring status` | `keyring-status` | `status.keyring` (below) and, asked of the keyring that runs (never a prompt, never starting one): `default` (the collection the `default` alias names, unescaped: `login`, `Default_keyring`; `null` when none), `collections` (their names), `needs_repair` (`login` exists and `default` isn't it: the prompt at every start, docs/SYSTEM.md §0) |
+| `keyring repair [--dry-run]` | `keyring-repair`: `dry_run` | `default_was`, `already` (`default` was `login`: nothing to do), `fixed` (`default` names `login` now), `moved`, `duplicates` (the same attributes and secret already in `login`), `conflicts` (the same attributes, another secret), `replaced` (conflicts where the other keyring's newer copy, by `Modified`, replaced `login`'s), `skipped`, `locked` (collections that stayed locked: then nothing changes, `default` included, and `message` says to run it again), `sources` (the collections read), `hint` (how to delete the old keyring later), `message`, `dry_run`. Through the running keyring's own API: every item of every other collection (but gnome-keyring's temporary `session`) is copied into `login`, then `SetAlias("default", login)`. Nothing in the other collections is changed or deleted, no collection is deleted. A locked collection is unlocked through `Unlock`: the keyring shows its own window (waiting up to 120 s). Labels are never logged |
+| `keyring list` | `keyring-list` | `items: [{id, label, collection, app, created, modified}]` by label, `locked: [{collection, label, items}]` (collections that are locked: their items aren't listed), `source` (`gnome-keyring`, `ewe-safe`, … who answered). Names and dates only, never a secret, never a prompt. From the keyring that runs (`id` = the item's object path); from Safe's own keyring while Safe serves it (`id` = its id). `app`: the `application` attribute, else `service`, else `xdg:schema` |
+| `keyring import --dry-run` | `keyring-import`: `dry_run` | `report: {collections, items, added, updated, duplicates, skipped, locked}`, `dry_run: true`: what an import from the keyring that runs into Safe's own keyring would do (the same attributes in the same collection are one item, the newest wins). It reads secrets, so locked collections ask through the keyring's window. Without `--dry-run`: *needs the login module* (Safe's keyring must be open) |
+| `keyring adopt` | `keyring-adopt`: `login_password` | *Needs the login module*: `needs-login-module` without `/usr/lib/security/pam_ewe_safe.so`, `pam-missing` while `/etc/pam.d/greetd` lacks `-session [success=1 default=ignore] pam_ewe_safe.so`. The CLI reads the login password (terminal or a stdin line) and checks it with `unix_chkpwd` first (`wrong-key`); the daemon can't run that setuid helper. With the module: makes or opens `login.key`, imports from the keyring that runs, writes `keyring.on` and the user D-Bus file, stops this user's gnome-keyring-daemon (SIGTERM, only when the name's owner really is one), takes the name. Answers `adopted`, `serving`, `owner`, `import` (the import report, or `null`), `stopped` (`"gnome-keyring"` or `null`), `restart_apps`, `service_file`, `message` when another keyring keeps the name |
+| `keyring release` | `keyring-release` | *Needs the login module.* `released`, `serving: false`, `restart_apps`, `kept` (`keyring.safe`'s path: never deleted), `hint`. Drops the name, deletes the D-Bus file and `keyring.on`, asks the bus to reload its service files |
+| `keyring unlock` | `keyring-unlock`: `login_password` | *Needs the login module.* `open`, `items`: W from `login.key`, opening Safe's own keyring (`not-adopted`, `wrong-key`). The keyring's prompt window's fallback |
+| `keyring rm <id>` | `keyring-rm`: `id` | *Needs the login module* (Safe's own keyring only; `bad-request` otherwise). `removed: true`, or `not-found` |
+
+- **`status.keyring`** (the `status` verb's reply gains it; from memory and
+  two small files): `{adopted, serving, open, items, owner, pam}` —
+  `adopted`: `keyring.on` exists; `serving`: Safe owns
+  `org.freedesktop.secrets`; `open`: W is in memory; `items`: Safe's own
+  keyring's count (known from its index while locked); `owner`: who owns
+  the name now, `ewe-safe` | `gnome-keyring` | `kwallet` | `other` | `none`,
+  or `null` with no session bus; `pam`: the login module is installed and
+  the login screen's PAM file uses it. `error` (`wrong-key`, `unreadable`)
+  when W doesn't open `keyring.safe`.
+- **`login_password`** is a secret, like `password` (wiped after sending;
+  never in argv).
+- **Waits:** `keyring-repair`, `keyring-import` and `keyring-adopt` may wait
+  for the keyring's window (the import wait); `keyring-unlock`,
+  `keyring-release` and `keyring-rm` derive a key or save.
 
 ## Calls that must stay fast
 

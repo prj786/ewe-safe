@@ -19,6 +19,9 @@ use std::time::Duration;
 use serde_json::{Value, json};
 use zeroize::Zeroize;
 
+/// The login password checked before it is sent (`keyring adopt`).
+pub mod chkpwd;
+
 pub const PROTOCOL: u64 = 1;
 /// Verbs that answer from memory.
 pub const FAST: Duration = Duration::from_secs(30);
@@ -35,6 +38,8 @@ pub const SECRET_KEYS: &[&str] = &[
     "notes",
     "passphrase",
     "private_key",
+    // `keyring adopt` / `keyring unlock` (docs/KEYRING.md)
+    "login_password",
 ];
 
 /// How long a verb may take: a key derivation or a talk with the place
@@ -48,6 +53,10 @@ pub fn wait_for(verb: &str) -> Duration {
         "passkey-create" => SLOW,
         // saves; `ssh-enable` and `ssh-disable` wait for ewe-conf
         "ssh-add" | "ssh-new" | "ssh-adopt" | "ssh-enable" | "ssh-disable" => SLOW,
+        // the running keyring's own window may wait for the user
+        "keyring-repair" | "keyring-import" | "keyring-adopt" => IMPORT,
+        // a key derivation, or a save
+        "keyring-unlock" | "keyring-release" | "keyring-rm" => SLOW,
         _ => FAST,
     }
 }

@@ -12,6 +12,7 @@ use safe_login::SessionKey;
 use crate::daemon::lk;
 
 /// How long a confirm (docs/SYSTEM.md §4: filling a card) lasts.
+#[allow(dead_code)] // streams L and C's (the confirm); unused on K's branch
 pub const CONFIRM_FOR: Duration = Duration::from_secs(300);
 
 #[derive(Default)]
@@ -54,17 +55,20 @@ impl Session {
     }
 
     /// A password was typed just now to confirm a sensitive use.
+    #[allow(dead_code)] // streams L and C's; unused on K's branch
     pub fn confirm(&self) {
         *lk(&self.confirmed_until) = Some(Instant::now() + CONFIRM_FOR);
     }
 
     /// Seconds left of the last confirm, 0 = none (or expired).
+    #[allow(dead_code)] // streams L and C's; unused on K's branch
     pub fn confirmed_for(&self) -> u64 {
         lk(&self.confirmed_until)
             .map(|t| t.saturating_duration_since(Instant::now()).as_secs())
             .unwrap_or(0)
     }
 
+    #[allow(dead_code)] // streams L and C's; unused on K's branch
     pub fn is_confirmed(&self) -> bool {
         lk(&self.confirmed_until).is_some_and(|t| Instant::now() < t)
     }

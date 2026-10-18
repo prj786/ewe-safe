@@ -4,7 +4,8 @@
 //! `reveal` without `--json` prints the bare value (nothing and exit 1 when
 //! there is none), `unlock --ask` opens a prompt window and waits, and
 //! `watch` prints one line per event until the daemon goes away. SSH keys
-//! and the agent are `ewe-safe ssh …` ([`ssh`]).
+//! and the agent are `ewe-safe ssh …` ([`ssh`]); the keyring is
+//! `ewe-safe keyring …` ([`keyring`]).
 //! `read`, `run`, `inject` and `git-credential` follow the tools they copy
 //! (1Password's `op`, git's helpers): [`scripts`] and [`git`].
 
@@ -20,6 +21,7 @@ use serde_json::{Map, Value, json};
 use zeroize::Zeroizing;
 
 mod git;
+mod keyring;
 mod scripts;
 mod ssh;
 
@@ -74,7 +76,7 @@ const WITH_ID: &[&str] = &["show", "reveal", "copy", "edit", "rm", "restore"];
 const VERBS: &[&str] = &[
     "status", "summary", "init", "open", "unlock", "lock", "list", "search", "match", "show",
     "reveal", "copy", "add", "edit", "rm", "restore", "generate", "sync", "place", "passwd",
-    "import", "watch", "ping", "version", "passkey", "ssh",
+    "import", "watch", "ping", "version", "passkey", "ssh", "keyring",
 ];
 
 struct Parsed {
@@ -234,6 +236,10 @@ fn run(argv: &[String]) -> (Value, ExitCode) {
     }
     if argv.first().map(String::as_str) == Some("ssh") {
         return (ssh::run(&argv[1..]), ExitCode::SUCCESS);
+    }
+    // the keyring (docs/KEYRING.md)
+    if argv.first().map(String::as_str) == Some("keyring") {
+        return (keyring::run(&argv[1..]), ExitCode::SUCCESS);
     }
     let mut p = match parse(argv) {
         Ok(p) => p,
