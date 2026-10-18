@@ -432,6 +432,8 @@ mod tests {
             modified: None,
             passkey: None,
             ssh: None,
+            card: None,
+            address: None,
         }
     }
 

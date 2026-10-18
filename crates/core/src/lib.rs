@@ -20,8 +20,11 @@
 //!   authenticator answers (docs/FORMAT.md).
 //! - [`ssh`]: SSH keys as KeeAgent entries (KeePassXC's format), and
 //!   signing with them for the daemon's agent.
+//! - [`card`]: cards and addresses, their fields, brands and expiry
+//!   (docs/SYSTEM.md §4).
 
 pub mod atomic;
+pub mod card;
 pub mod digest;
 pub mod generator;
 pub mod guard;

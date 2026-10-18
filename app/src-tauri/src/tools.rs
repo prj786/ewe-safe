@@ -115,6 +115,8 @@ pub const SETTINGS: &[&str] = &[
     "clipboard_clear_seconds",
     "generator_length",
     "generator_words",
+    // filling a card asks for the password again (docs/SYSTEM.md D5)
+    "confirm_cards",
 ];
 
 pub fn settings_get() -> Value {

@@ -2,7 +2,8 @@
   // The unlocked window (App shell card): side navigation, a header with
   // search, New and Lock, then the list and the item — or Settings, Import.
   // SSH keys have their own New (make one, or add a key file) and the
-  // agent's state above the list.
+  // agent's state above the list. New on a list of one kind makes that
+  // kind; elsewhere it asks which (a login, a note, a card, an address…).
   // Keyboard first: type anywhere to search, arrows move, Enter or Ctrl+C
   // copies the password, Ctrl+Shift+C the username, Ctrl+N is a new login,
   // Ctrl+L locks, Esc steps back.
@@ -18,10 +19,19 @@
   import { safe } from "../safe.svelte.js";
   import { ui } from "../ui.svelte.js";
   import { hostOf, letter } from "../format.js";
+  import { addressLine, brandName, cardLine } from "../cards.js";
 
   let search = $state();
   let detail = $state();
   let listEl = $state();
+  let newMenu = $state(false);
+  const KINDS = [
+    ["login", "key-round", "Login"],
+    ["note", "sticky-note", "Note"],
+    ["card", "credit-card", "Card"],
+    ["address", "map-pin", "Address"],
+    ["ssh-key", "terminal", "SSH key"]
+  ];
 
   const f = $derived(ui.filter);
   const base = $derived.by(() => {
@@ -43,6 +53,11 @@
       if ((i.username ?? "").toLowerCase().includes(q)) return 2;
       if ((i.urls ?? []).some((u) => u.toLowerCase().includes(q))) return 3;
       if ([...(i.tags ?? []), ...(i.apps ?? [])].some((x) => x.toLowerCase().includes(q))) return 4;
+      // a card's holder, brand and last digits; an address's name and town
+      const c = i.card;
+      if (c && [c.holder, c.brand, brandName(c.brand), c.last4].some((x) => (x ?? "").toLowerCase().includes(q))) return 5;
+      const a = i.address;
+      if (a && [a.name, a.line1, a.city, a.country].some((x) => (x ?? "").toLowerCase().includes(q))) return 5;
       return 9;
     };
     return base
@@ -56,13 +71,26 @@
     ui.editing?.mode === "edit" ? safe.items.find((i) => i.id === ui.editing.id) ?? null : null
   );
   const title = $derived(
-    f.trash ? "Trash" : f.kind === "login" ? "Logins" : f.kind === "note" ? "Notes" : f.kind === "ssh-key" ? "SSH keys" : f.tag || f.folder.split("/").pop() || "All items"
+    f.trash
+      ? "Trash"
+      : f.kind === "login"
+        ? "Logins"
+        : f.kind === "note"
+          ? "Notes"
+          : f.kind === "ssh-key"
+            ? "SSH keys"
+            : f.kind === "card"
+              ? "Cards"
+              : f.kind === "address"
+                ? "Addresses"
+                : f.tag || f.folder.split("/").pop() || "All items"
   );
   const subtitle = $derived(
     `${base.length === 0 ? "Empty" : base.length === 1 ? "1 item" : `${base.length} items`}${safe.readOnly ? " · read-only" : ""}`
   );
 
   function newItem(kind = "login") {
+    newMenu = false;
     if (safe.readOnly) return;
     ui.view = "items";
     ui.filter = { ...ui.filter, trash: false };
@@ -82,6 +110,10 @@
   }
 
   function onkey(e) {
+    if (newMenu && e.key === "Escape") {
+      newMenu = false;
+      return;
+    }
     if (ui.view !== "items") {
       if (e.key === "Escape") ui.go("items");
       return;
@@ -125,7 +157,12 @@
   }
 </script>
 
-<svelte:window onkeydown={onkey} />
+<svelte:window
+  onkeydown={onkey}
+  onclick={(e) => {
+    if (newMenu && !e.target.closest?.(".safe-rel")) newMenu = false;
+  }}
+/>
 
 <div class="ewe-appwin safe-win">
   <Sidenav />
@@ -148,9 +185,24 @@
               <span class="ewe-kbd-combo"><kbd class="ewe-kbd">Ctrl</kbd><span>+</span><kbd class="ewe-kbd">F</kbd></span>
             </label>
           </div>
-          <button class="ewe-btn ewe-btn--primary ewe-btn--sm" disabled={safe.readOnly || f.trash} onclick={() => newItem(f.kind === "note" || f.kind === "ssh-key" ? f.kind : "login")}>
-            <Icon name="plus" />New
-          </button>
+          <div class="safe-rel">
+            <button
+              class="ewe-btn ewe-btn--primary ewe-btn--sm"
+              disabled={safe.readOnly || f.trash}
+              aria-haspopup={f.kind ? undefined : "menu"}
+              aria-expanded={f.kind ? undefined : newMenu}
+              onclick={() => (f.kind ? newItem(f.kind) : (newMenu = !newMenu))}
+            >
+              <Icon name="plus" />New
+            </button>
+            {#if newMenu}
+              <div class="ewe-menu safe-menu" role="menu">
+                {#each KINDS as [kind, icon, label] (kind)}
+                  <button class="ewe-menu__item" role="menuitem" onclick={() => newItem(kind)}><Icon name={icon} />{label}</button>
+                {/each}
+              </div>
+            {/if}
+          </div>
           <button class="ewe-iconbtn ewe-iconbtn--ghost" aria-label="Lock Safe" title="Lock (Ctrl+L)" onclick={() => safe.lock()}>
             <Icon name="lock" />
           </button>
@@ -201,11 +253,11 @@
                     }}
                   >
                     <span class="ewe-row__lead">
-                      {#if i.kind === "login"}<span class="safe-letter">{letter(i.title)}</span>{:else}<span class="safe-letter"><Icon name={i.kind === "ssh-key" ? "terminal" : "sticky-note"} /></span>{/if}
+                      {#if i.kind === "login"}<span class="safe-letter">{letter(i.title)}</span>{:else}<span class="safe-letter"><Icon name={i.kind === "ssh-key" ? "terminal" : i.kind === "card" ? "credit-card" : i.kind === "address" ? "map-pin" : "sticky-note"} /></span>{/if}
                     </span>
                     <span class="ewe-row__text">
                       <span class="ewe-row__title">{i.title}</span>
-                      <span class="ewe-row__desc">{i.kind === "note" ? "Note" : i.kind === "ssh-key" ? ["SSH key", i.ssh?.key_type].filter(Boolean).join(" · ") : i.username || (i.urls?.[0] ? hostOf(i.urls[0]) : "")}</span>
+                      <span class="ewe-row__desc">{i.kind === "note" ? "Note" : i.kind === "ssh-key" ? ["SSH key", i.ssh?.key_type].filter(Boolean).join(" · ") : i.kind === "card" ? cardLine(i.card) : i.kind === "address" ? addressLine(i.address) : i.username || (i.urls?.[0] ? hostOf(i.urls[0]) : "")}</span>
                     </span>
                     {#if i.has_otp || i.passkey}<span class="ewe-row__trail"
                         >{#if i.passkey}<Icon name="key-round" label="Has a passkey" />{/if}{#if i.has_otp}<Icon name="timer" />{/if}</span

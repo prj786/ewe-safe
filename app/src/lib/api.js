@@ -80,6 +80,9 @@ export const api = {
   sshEnable: (confirm) => invoke("ssh_enable", { confirm }),
   sshDisable: () => invoke("ssh_disable"),
   sshStatus: () => invoke("ssh_status"),
+  // cards and addresses (docs/SYSTEM.md §4): the notes an earlier
+  // 1Password import made from them, turned into cards and addresses
+  convert: (dryRun = false) => invoke("convert", { dryRun }),
 
   // the window and the desktop around it (not the daemon)
   launchArgs: () => invoke("launch_args"),

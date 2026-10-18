@@ -106,6 +106,9 @@ pub struct Settings {
     pub ssh_agent: bool,
     /// `ssh_confirm`: `first-use` | `every-time` | `never`.
     pub ssh_confirm: String,
+    /// `confirm_cards`: filling a card (the browser's `fields`) needs a
+    /// password typed in the last 5 minutes (docs/SYSTEM.md D5).
+    pub confirm_cards: bool,
 }
 
 impl Default for Settings {
@@ -119,6 +122,7 @@ impl Default for Settings {
             generator_words: 5,
             ssh_agent: false,
             ssh_confirm: CONFIRM_FIRST_USE.to_string(),
+            confirm_cards: true,
         }
     }
 }
@@ -159,6 +163,7 @@ impl Settings {
                 .map(|c| c.trim().to_lowercase())
                 .filter(|c| CONFIRMS.contains(&c.as_str()))
                 .unwrap_or(d.ssh_confirm),
+            confirm_cards: truthy(t.get("confirm_cards"), d.confirm_cards),
         }
     }
 
@@ -296,6 +301,14 @@ mod tests {
             s.ssh_confirm, "first-use",
             "an unknown value is the default"
         );
+    }
+
+    #[test]
+    fn filling_a_card_asks_again_unless_turned_off() {
+        assert!(Settings::default().confirm_cards);
+        assert!(!Settings::from_table(&json!({"confirm_cards": false})).confirm_cards);
+        assert!(!Settings::from_table(&json!({"confirm_cards": "off"})).confirm_cards);
+        assert!(Settings::from_table(&json!({"confirm_cards": "maybe"})).confirm_cards);
     }
 
     #[test]

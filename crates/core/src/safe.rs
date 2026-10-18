@@ -341,6 +341,17 @@ impl Safe {
             .entry(entry_id(id)?)
             .ok_or_else(|| Error::NotFound(id.to_string()))?;
         let missing = || Error::NotFound(format!("{id}: no such field"));
+        // a card's and an address's protocol names ("number",
+        // "security_code", "line1") name their KDBX fields (crate::card)
+        if let Field::Other(n) = field
+            && e.get(n).is_none()
+            && let Some(real) = crate::card::alias(item::kind_of(&e), n)
+        {
+            return e
+                .get(real)
+                .map(|v| Zeroizing::new(v.to_string()))
+                .ok_or_else(missing);
+        }
         // an SSH key's private key is an attachment, and a key another app
         // stored may have no public_key field (crate::ssh)
         if let Field::Other(n) = field

@@ -49,6 +49,15 @@
      "id": "v2",
      "name": "Work"
     }
+   },
+   {
+    "id": "i5",
+    "title": "Sam at work",
+    "category": "IDENTITY",
+    "vault": {
+     "id": "v2",
+     "name": "Work"
+    }
    }
   ]
  },
@@ -221,6 +230,12 @@
      "value": "Sam Shepherd"
     },
     {
+     "id": "type",
+     "type": "CREDIT_CARD_TYPE",
+     "label": "type",
+     "value": "visa"
+    },
+    {
      "id": "ccnum",
      "type": "CREDIT_CARD_NUMBER",
      "label": "number",
@@ -237,6 +252,83 @@
      "type": "MONTH_YEAR",
      "label": "expiry date",
      "value": "202704"
+    },
+    {
+     "id": "pin",
+     "section": {
+      "id": "details",
+      "label": "Additional Details"
+     },
+     "type": "CONCEALED",
+     "label": "PIN",
+     "value": "9876"
+    }
+   ]
+  },
+  "i5": {
+   "id": "i5",
+   "title": "Sam at work",
+   "category": "IDENTITY",
+   "vault": {
+    "id": "v2",
+    "name": "Work"
+   },
+   "fields": [
+    {
+     "id": "firstname",
+     "section": {
+      "id": "name",
+      "label": "Identification"
+     },
+     "type": "STRING",
+     "label": "first name",
+     "value": "Sam"
+    },
+    {
+     "id": "lastname",
+     "section": {
+      "id": "name",
+      "label": "Identification"
+     },
+     "type": "STRING",
+     "label": "last name",
+     "value": "Shepherd"
+    },
+    {
+     "id": "company",
+     "section": {
+      "id": "name",
+      "label": "Identification"
+     },
+     "type": "STRING",
+     "label": "company",
+     "value": "Flock Ltd"
+    },
+    {
+     "id": "address",
+     "section": {
+      "id": "address",
+      "label": "Address"
+     },
+     "type": "ADDRESS",
+     "label": "address",
+     "value": {
+      "street": "2 Wool St",
+      "city": "Ewetown",
+      "state": "Canterbury",
+      "zip": "8011",
+      "country": "nz"
+     }
+    },
+    {
+     "id": "email",
+     "section": {
+      "id": "internet",
+      "label": "Internet Details"
+     },
+     "type": "EMAIL",
+     "label": "email",
+     "value": "sam@work.example"
     }
    ]
   }

@@ -18,8 +18,11 @@
 //!   (docs/SYSTEM.md).
 //! - [`agent`]: the SSH agent on its own socket; [`sshkeys`]: the `ssh-*`
 //!   verbs.
+//! - [`cards`]: cards and addresses — their objects in `add` and `edit`,
+//!   the browser's `fields` behind the card gate, `convert`.
 
 mod agent;
+mod cards;
 mod clip;
 mod config;
 mod daemon;

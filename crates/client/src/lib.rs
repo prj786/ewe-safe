@@ -36,6 +36,9 @@ pub const SECRET_KEYS: &[&str] = &[
     "passphrase",
     "private_key",
 ];
+/// The arg keys whose object carries secrets: every string in it is wiped
+/// too (`add`/`edit`'s `card`: number, security code, PIN).
+pub const SECRET_OBJECTS: &[&str] = &["card"];
 
 /// How long a verb may take: a key derivation or a talk with the place
 /// gets [`SLOW`], an import [`IMPORT`], everything else [`FAST`].
@@ -48,6 +51,8 @@ pub fn wait_for(verb: &str) -> Duration {
         "passkey-create" => SLOW,
         // saves; `ssh-enable` and `ssh-disable` wait for ewe-conf
         "ssh-add" | "ssh-new" | "ssh-adopt" | "ssh-enable" | "ssh-disable" => SLOW,
+        // saves, like ssh-adopt
+        "convert" => SLOW,
         _ => FAST,
     }
 }
@@ -113,6 +118,15 @@ pub fn scrub(args: &mut Value) {
         for k in SECRET_KEYS {
             if let Some(Value::String(s)) = m.get_mut(*k) {
                 s.zeroize();
+            }
+        }
+        for k in SECRET_OBJECTS {
+            if let Some(Value::Object(o)) = m.get_mut(*k) {
+                for v in o.values_mut() {
+                    if let Value::String(s) = v {
+                        s.zeroize();
+                    }
+                }
             }
         }
     }
@@ -314,5 +328,19 @@ mod tests {
             assert_eq!(wait_for(v), FAST, "{v}");
         }
         assert_eq!(wait_for("import"), IMPORT);
+        assert_eq!(wait_for("convert"), SLOW);
+        assert_eq!(wait_for("fields"), FAST);
+    }
+
+    #[test]
+    fn a_cards_secrets_are_scrubbed_too() {
+        let mut a = json!({"title": "Visa", "card": {"number": "4242424242424242", "pin": "9876"}});
+        scrub(&mut a);
+        let shown = a.to_string();
+        assert!(
+            !shown.contains("4242") && !shown.contains("9876"),
+            "{shown}"
+        );
+        assert_eq!(a["title"], "Visa");
     }
 }

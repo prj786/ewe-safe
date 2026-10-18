@@ -1,6 +1,6 @@
 <script>
   // The side navigation (Side navigation card): what the list shows — every
-  // item, logins, notes, SSH keys, a tag, a folder — then Trash, Settings and the sync
+  // item, logins, notes, SSH keys, cards, addresses, a tag, a folder — then Trash, Settings and the sync
   // line at the foot. Counts come from the item summaries.
   import Icon from "./Icon.svelte";
   import { safe } from "../safe.svelte.js";
@@ -49,6 +49,8 @@
     {@render nav("key-round", "Logins", count((i) => i.kind === "login"), { kind: "login" })}
     {@render nav("sticky-note", "Notes", count((i) => i.kind === "note"), { kind: "note" })}
     {@render nav("terminal", "SSH keys", count((i) => i.kind === "ssh-key"), { kind: "ssh-key" })}
+    {@render nav("credit-card", "Cards", count((i) => i.kind === "card"), { kind: "card" })}
+    {@render nav("map-pin", "Addresses", count((i) => i.kind === "address"), { kind: "address" })}
   </div>
 
   {#if tags.length}

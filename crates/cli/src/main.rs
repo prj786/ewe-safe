@@ -49,6 +49,20 @@ const VALUES: &[&str] = &[
     "vault",
     "account",
     "rp",
+    // a card's and an address's fields (add, edit; docs/SYSTEM.md §4)
+    "holder",
+    "expiry",
+    "brand",
+    "full-name",
+    "organization",
+    "line1",
+    "line2",
+    "city",
+    "region",
+    "postal-code",
+    "country",
+    "phone",
+    "email",
 ];
 const FLAGS: &[&str] = &[
     "json",
@@ -64,9 +78,26 @@ const FLAGS: &[&str] = &[
     "dry-run",
     "skip-duplicates",
     "remove-passkey",
+    "card-stdin",
+    "from-1password",
 ];
 /// Read here, never sent.
-const LOCAL_FLAGS: &[&str] = &["json", "ask", "password-stdin", "notes-stdin"];
+const LOCAL_FLAGS: &[&str] = &["json", "ask", "password-stdin", "notes-stdin", "card-stdin"];
+/// A card's flags, sent in its `card` object.
+const CARD_KEYS: &[&str] = &["holder", "expiry", "brand"];
+/// An address's flags, sent in its `address` object.
+const ADDRESS_KEYS: &[&str] = &[
+    "full_name",
+    "organization",
+    "line1",
+    "line2",
+    "city",
+    "region",
+    "postal_code",
+    "country",
+    "phone",
+    "email",
+];
 const NUMBERS: &[&str] = &["length", "words", "limit", "clear-after"];
 /// Repeatable in `add` and `edit` (and `--vault` in `import`).
 const LISTS: &[&str] = &["url", "app", "tag", "remove-app", "remove-tag", "vault"];
@@ -74,7 +105,7 @@ const WITH_ID: &[&str] = &["show", "reveal", "copy", "edit", "rm", "restore"];
 const VERBS: &[&str] = &[
     "status", "summary", "init", "open", "unlock", "lock", "list", "search", "match", "show",
     "reveal", "copy", "add", "edit", "rm", "restore", "generate", "sync", "place", "passwd",
-    "import", "watch", "ping", "version", "passkey", "ssh",
+    "import", "watch", "ping", "version", "passkey", "ssh", "convert",
 ];
 
 struct Parsed {
@@ -266,6 +297,18 @@ fn run(argv: &[String]) -> (Value, ExitCode) {
                     Err(v) => return done(v),
                 }
             }
+            if p.local.contains("card-stdin") {
+                match card_stdin(p.verb == "edit") {
+                    Ok(lines) => {
+                        let card = p.args.entry("card").or_insert_with(|| json!({}));
+                        for (k, v) in lines {
+                            card[k] = json!(v.as_str());
+                        }
+                    }
+                    Err(v) => return done(v),
+                }
+            }
+            card_objects(&mut p.args);
             if p.local.contains("notes-stdin") {
                 let mut notes = Zeroizing::new(String::new());
                 if let Err(e) = std::io::stdin().read_to_string(&mut notes) {
@@ -294,7 +337,9 @@ fn run(argv: &[String]) -> (Value, ExitCode) {
                 _ => (Value::Null, ExitCode::from(1)),
             }
         }
-        "sync" | "rm" | "restore" => done(client::call(&p.verb, Value::Object(p.args), SLOW)),
+        "sync" | "rm" | "restore" | "convert" => {
+            done(client::call(&p.verb, Value::Object(p.args), SLOW))
+        }
         "import" => done(client::call("import", Value::Object(p.args), IMPORT)),
         "passkey" => done(client::call("passkey-list", Value::Object(p.args), FAST)),
         "watch" => (Value::Null, watch()),
@@ -353,6 +398,40 @@ fn generate(a: &Map<String, Value>) -> Value {
     match made {
         Ok((value, bits)) => json!({"ok": true, "value": value.as_str(), "bits": bits.round()}),
         Err(e) => bad(e.to_string()),
+    }
+}
+
+/// `--card-stdin`: the card's number, security code and PIN, one line each
+/// (no echo on a terminal). An empty line is none; in `edit` it leaves that
+/// value as it is, and `-` clears it.
+fn card_stdin(edit: bool) -> Result<Vec<(&'static str, Zeroizing<String>)>, Value> {
+    let mut out = Vec::new();
+    for (key, prompt) in [
+        ("number", "Card number: "),
+        ("security_code", "Security code: "),
+        ("pin", "PIN: "),
+    ] {
+        let line = secret(prompt)?;
+        let value = line.trim();
+        if edit && value.is_empty() {
+            continue;
+        }
+        let value = if edit && value == "-" { "" } else { value };
+        out.push((key, Zeroizing::new(value.to_string())));
+    }
+    Ok(out)
+}
+
+/// A card's and an address's flags into their `card` and `address`
+/// objects (docs/PROTOCOL.md `add`, `edit`).
+fn card_objects(args: &mut Map<String, Value>) {
+    for (object, keys) in [("card", CARD_KEYS), ("address", ADDRESS_KEYS)] {
+        for k in keys {
+            if let Some(v) = args.remove(*k) {
+                let o = args.entry(object).or_insert_with(|| json!({}));
+                o[*k] = v;
+            }
+        }
     }
 }
 
@@ -618,6 +697,38 @@ mod tests {
         }
         let x = p(&["edit", "4f9c", "--remove-passkey"]).unwrap();
         assert_eq!(x.args["remove_passkey"], true);
+    }
+
+    #[test]
+    fn card_and_address_flags_become_their_objects() {
+        let mut x = p(&[
+            "add",
+            "--kind",
+            "card",
+            "--holder",
+            "Sam Moe",
+            "--expiry",
+            "08/29",
+            "--card-stdin",
+        ])
+        .unwrap();
+        assert!(x.local.contains("card-stdin") && !x.args.contains_key("card_stdin"));
+        card_objects(&mut x.args);
+        assert_eq!(
+            x.args["card"],
+            json!({"holder": "Sam Moe", "expiry": "08/29"})
+        );
+        assert!(x.args.get("holder").is_none());
+        let mut x = p(&["edit", "4f9c", "--postal-code", "0105", "--country=ge"]).unwrap();
+        card_objects(&mut x.args);
+        assert_eq!(
+            x.args["address"],
+            json!({"postal_code": "0105", "country": "ge"})
+        );
+        assert!(x.args.get("card").is_none());
+        let x = p(&["convert", "--from-1password", "--dry-run"]).unwrap();
+        assert_eq!(x.args["from_1password"], true);
+        assert_eq!(x.args["dry_run"], true);
     }
 
     #[test]

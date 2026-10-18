@@ -5,7 +5,8 @@
 class Ui {
   // "items" | "settings" | "import"
   view = $state("items");
-  // the side navigation: kind "login"/"note"/"ssh-key", a tag, a folder, or the trash
+  // the side navigation: kind "login"/"note"/"ssh-key"/"card"/"address", a
+  // tag, a folder, or the trash
   filter = $state({ kind: "", tag: "", folder: "", trash: false });
   selected = $state(null);
   query = $state("");

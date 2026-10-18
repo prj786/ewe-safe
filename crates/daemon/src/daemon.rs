@@ -661,6 +661,24 @@ impl Daemon {
     }
 }
 
+#[cfg(test)]
+impl Daemon {
+    /// A set-up, unlocked daemon holding `safe`, with nothing on disk and
+    /// no place: for the verbs' unit tests (cards.rs).
+    pub fn hold_for_tests(&self, safe: Safe, key: DatabaseKey) {
+        *lk(&self.machine) = Some(Machine {
+            kind: "local".into(),
+            location: "/nonexistent/passwords.kdbx".into(),
+            set_up_at: String::new(),
+        });
+        let mut held = wr(&self.held);
+        *held = Some(Held { safe, key });
+        self.refresh_held(held.as_ref());
+        drop(held);
+        wr(&self.snap).set_up = true;
+    }
+}
+
 /// The place a kind and location name; this version opens two kinds.
 pub fn place_for(kind: &str, location: &str) -> Result<Box<dyn Place>, Fail> {
     match kind {
@@ -754,6 +772,8 @@ pub fn item_json(s: &Summary) -> Value {
         "modified": s.modified.map(|t| t.format("%Y-%m-%dT%H:%M:%SZ").to_string()),
         "passkey": s.passkey.as_ref().map(|p| json!({"rp_id": p.rp_id, "username": p.username})),
         "ssh": s.ssh.as_ref().map(crate::sshkeys::ssh_json),
+        "card": s.card.as_ref().map(crate::cards::card_json),
+        "address": s.address.as_ref().map(crate::cards::address_json),
     })
 }
 

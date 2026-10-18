@@ -60,34 +60,45 @@ PERSONAL = [
                  {"label": "", "url": "https://canary.discord.com"}]}, favIndex=1),
     item("routeruuid", "005", "Router admin", {"password": "router-pw-55"},
          {"url": "http://192.168.1.1"}),
+    # a Credit Card and an Identity with 1Password's own field ids (its
+    # templates: `op item template get "Credit Card"`, "Identity")
     item("visauuid", "002", "Visa", {
         "notesPlain": "Daily card",
         "sections": [
             {"title": "", "name": "", "fields": [
-                field("cardholder name", {"string": "Sam Shepherd"}),
-                field("type", {"creditCardType": "visa"}),
-                field("number", {"creditCardNumber": "4111111111111111"}),
-                field("verification number", {"concealed": "123"}),
-                field("expiry date", {"monthYear": 202704}),
+                field("cardholder name", {"string": "Sam Shepherd"}, "cardholder"),
+                field("type", {"creditCardType": "visa"}, "type"),
+                field("number", {"creditCardNumber": "4111111111111111"}, "ccnum"),
+                field("verification number", {"concealed": "123"}, "cvv"),
+                field("expiry date", {"monthYear": 202704}, "expiry"),
+                field("valid from", {"monthYear": 202304}, "validFrom"),
             ]},
-            {"title": "Contact Information", "name": "contact", "fields": [
-                field("issuing bank", {"string": "Ewe Bank"}),
-                field("phone", {"phone": "+64 21 000 000"}),
+            {"title": "Contact Information", "name": "contactInfo", "fields": [
+                field("issuing bank", {"string": "Ewe Bank"}, "bank"),
+                field("phone (local)", {"phone": "+64 21 000 000"}, "phoneLocal"),
+            ]},
+            {"title": "Additional Details", "name": "details", "fields": [
+                field("PIN", {"concealed": "9876"}, "pin"),
+                field("credit limit", {"string": "5000"}, "creditLimit"),
             ]},
         ],
     }),
     item("identityuuid", "004", "Sam Shepherd", {
         "sections": [
             {"title": "Identification", "name": "name", "fields": [
-                field("first name", {"string": "Sam"}),
-                field("birth date", {"date": 631152000}),
+                field("first name", {"string": "Sam"}, "firstname"),
+                field("last name", {"string": "Shepherd"}, "lastname"),
+                field("birth date", {"date": 631152000}, "birthdate"),
+                field("company", {"string": "Flock Ltd"}, "company"),
             ]},
             {"title": "Address", "name": "address", "fields": [
                 field("address", {"address": {"street": "1 Hill Rd", "city": "Ewetown",
-                                              "state": "", "zip": "9012", "country": "nz"}}),
+                                              "state": "", "zip": "9012", "country": "nz"}}, "address"),
+                field("default phone", {"phone": "+64 21 000 001"}, "defphone"),
             ]},
             {"title": "Internet Details", "name": "internet", "fields": [
-                field("email", {"email": {"email_address": "sam@example.org", "provider": None}}),
+                field("email", {"email": {"email_address": "sam@example.org", "provider": None}}, "email"),
+                field("reminder answer", {"concealed": "Woolly"}, "remindera"),
             ]},
         ],
     }),
@@ -157,7 +168,8 @@ OP = {
             {"id": "i3", "title": "Old forum", "category": "LOGIN", "state": "ARCHIVED",
              "vault": {"id": "v1", "name": "Personal"}},
         ],
-        "v2": [{"id": "i4", "title": "Visa", "category": "CREDIT_CARD", "vault": {"id": "v2", "name": "Work"}}],
+        "v2": [{"id": "i4", "title": "Visa", "category": "CREDIT_CARD", "vault": {"id": "v2", "name": "Work"}},
+               {"id": "i5", "title": "Sam at work", "category": "IDENTITY", "vault": {"id": "v2", "name": "Work"}}],
     },
     "items": {
         "i1": {"id": "i1", "title": "Discord", "category": "LOGIN", "vault": {"id": "v1", "name": "Personal"},
@@ -194,9 +206,26 @@ OP = {
         "i4": {"id": "i4", "title": "Visa", "category": "CREDIT_CARD", "vault": {"id": "v2", "name": "Work"},
                "fields": [
                    {"id": "cardholder", "type": "STRING", "label": "cardholder name", "value": "Sam Shepherd"},
+                   {"id": "type", "type": "CREDIT_CARD_TYPE", "label": "type", "value": "visa"},
                    {"id": "ccnum", "type": "CREDIT_CARD_NUMBER", "label": "number", "value": "4111111111111111"},
                    {"id": "cvv", "type": "CONCEALED", "label": "verification number", "value": "123"},
                    {"id": "expiry", "type": "MONTH_YEAR", "label": "expiry date", "value": "202704"},
+                   {"id": "pin", "section": {"id": "details", "label": "Additional Details"}, "type": "CONCEALED",
+                    "label": "PIN", "value": "9876"},
+               ]},
+        "i5": {"id": "i5", "title": "Sam at work", "category": "IDENTITY", "vault": {"id": "v2", "name": "Work"},
+               "fields": [
+                   {"id": "firstname", "section": {"id": "name", "label": "Identification"}, "type": "STRING",
+                    "label": "first name", "value": "Sam"},
+                   {"id": "lastname", "section": {"id": "name", "label": "Identification"}, "type": "STRING",
+                    "label": "last name", "value": "Shepherd"},
+                   {"id": "company", "section": {"id": "name", "label": "Identification"}, "type": "STRING",
+                    "label": "company", "value": "Flock Ltd"},
+                   {"id": "address", "section": {"id": "address", "label": "Address"}, "type": "ADDRESS",
+                    "label": "address", "value": {"street": "2 Wool St", "city": "Ewetown", "state": "Canterbury",
+                                                  "zip": "8011", "country": "nz"}},
+                   {"id": "email", "section": {"id": "internet", "label": "Internet Details"}, "type": "EMAIL",
+                    "label": "email", "value": "sam@work.example"},
                ]},
     },
     "files": {"op://v1/i1/f1": "BACKUP-CODES 1111 2222\n"},
