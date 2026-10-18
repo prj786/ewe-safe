@@ -30,7 +30,7 @@ password.
 | in (v1) | out (on purpose) |
 |---|---|
 | One safe per person, one master password | Several vaults, shared vaults, families, teams |
-| Kinds of item: **Login**, **Note**, **SSH key** (2026-10-15); a login may hold a **passkey** | Cards, identities, documents |
+| Kinds of item: **Login**, **Note**, **SSH key** (2026-10-15), **Card**, **Address** (2026-10-18, `docs/SYSTEM.md`); a login may hold a **passkey** | Documents |
 | Search-first window, tags, folders shown if the file has them | Collections, Watchtower dashboards, travel mode |
 | Fill any app with `Super+P` (exists today) | A browser extension for every browser |
 | Generator (characters or words) | |
@@ -346,6 +346,10 @@ table of tests).
   with `ewe-safe unlock` (read from the tty or stdin, never from argv).
   It's required on a machine's first unlock and after the master password
   changes.
+- *Built differently on 2026-10-18 (`docs/SYSTEM.md` §2, RFC-008 S14–S15):
+  the login password opens a sealed key (`login.key` → `master.wrap`), not
+  polkit, and Safe opens at login through gnome-keyring's `login` keyring;
+  the PAM module is parked for review. The plan below is kept for history.*
 - **"Unlock with my login on this computer"** (offered at setup, checked by
   default, per machine, never synced): the daemon keeps the composite key in
   the keyring (service `ewe-safe`, account `login-key:<safe-id>`). To use it,
@@ -661,6 +665,16 @@ with phase 2, as one release wave:
 - **Gate:**
   - the browser never fills without a click, and never on a site that doesn't match;
   - the canary secret appears in no companion log, prompt or request.
+
+### Phase 2+++: Safe and the system (owner, 2026-10-18)
+
+Unlock with the login password, the keyring prompt at every start fixed
+(`keyring repair`), cards and addresses with a confirm before a card fill,
+and ewe browser's sign-up save. Contract and decisions: `docs/SYSTEM.md`
+(D1–D7) and RFC-008's amendment of 2026-10-18 (S14–S20). **Released** as
+Safe 0.3.0-beta (#18) with ewe 0.31.0-beta and ewe browser 0.5.0-beta.
+Parked: Safe's own PAM module (the owner reviews it first) and Safe as the
+Secret Service (`keyring adopt` refuses until that module ships).
 
 ### Phase 2++: Safe, the browser and the companion (owner, 2026-10-15)
 
