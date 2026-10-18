@@ -77,8 +77,6 @@ impl Paths {
     }
 
     /// The app secrets under W (Safe is the keyring).
-    // used by stream K (the keyring); the merge drops this allow
-    #[allow(dead_code)]
     pub fn keyring(&self) -> PathBuf {
         self.state.join(safe_login::KEYRING)
     }

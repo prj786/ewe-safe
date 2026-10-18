@@ -18,18 +18,24 @@
 //!   (docs/SYSTEM.md).
 //! - [`login`]: login unlock — the verbs, the unlock at login, `confirm`
 //!   (docs/SYSTEM.md §2).
+//! - [`carrier`]: Safe's unlock key in the login keyring, so Safe opens at
+//!   login (docs/KEYRING.md).
 //! - [`agent`]: the SSH agent on its own socket; [`sshkeys`]: the `ssh-*`
 //!   verbs.
 //! - [`cards`]: cards and addresses — their objects in `add` and `edit`,
 //!   the browser's `fields` behind the card gate, `convert`.
+//! - [`keyring`]: Safe as the keyring (`org.freedesktop.secrets`, the
+//!   `keyring-*` verbs; docs/KEYRING.md).
 
 mod agent;
 mod cards;
+mod carrier;
 mod clip;
 mod config;
 mod daemon;
 mod hygiene;
 mod import;
+mod keyring;
 mod login;
 mod logind;
 mod passkey;
@@ -80,6 +86,8 @@ fn main() {
     worker::spawn(d.clone());
     logind::spawn(d.clone());
     agent::spawn(d.clone());
+    keyring::spawn(d.clone());
+    carrier::spawn(d.clone());
     on_signals(d.clone(), bound.clone());
     log(&format!(
         "ready, protocol 1 ({})",

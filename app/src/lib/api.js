@@ -92,6 +92,11 @@ export const api = {
   // cards and addresses (docs/SYSTEM.md §4): the notes an earlier
   // 1Password import made from them, turned into cards and addresses
   convert: (dryRun = false) => invoke("convert", { dryRun }),
+  // the keyring (PROTOCOL.md "The keyring"): who keeps the apps' passwords,
+  // the repair of the prompt at every start, the app secrets (no secret)
+  keyringStatus: () => invoke("keyring_status"),
+  keyringRepair: (dryRun = false) => invoke("keyring_repair", { dryRun }),
+  keyringList: () => invoke("keyring_list"),
 
   // the window and the desktop around it (not the daemon)
   launchArgs: () => invoke("launch_args"),

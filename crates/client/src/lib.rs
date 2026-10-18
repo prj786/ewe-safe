@@ -19,6 +19,9 @@ use std::time::Duration;
 use serde_json::{Value, json};
 use zeroize::Zeroize;
 
+/// The login password checked before it is sent (`keyring adopt`).
+pub mod chkpwd;
+
 pub const PROTOCOL: u64 = 1;
 /// Verbs that answer from memory.
 pub const FAST: Duration = Duration::from_secs(30);
@@ -35,7 +38,8 @@ pub const SECRET_KEYS: &[&str] = &[
     "notes",
     "passphrase",
     "private_key",
-    // login unlock (docs/SYSTEM.md §2)
+    // login unlock (docs/SYSTEM.md §2), `keyring adopt` / `keyring unlock`
+    // (docs/KEYRING.md)
     "login_password",
 ];
 /// The arg keys whose object carries secrets: every string in it is wiped
@@ -57,6 +61,10 @@ pub fn wait_for(verb: &str) -> Duration {
         "login-enable" => SLOW,
         // saves, like ssh-adopt
         "convert" => SLOW,
+        // the running keyring's own window may wait for the user
+        "keyring-repair" | "keyring-import" | "keyring-adopt" => IMPORT,
+        // a key derivation, or a save
+        "keyring-unlock" | "keyring-release" | "keyring-rm" => SLOW,
         _ => FAST,
     }
 }

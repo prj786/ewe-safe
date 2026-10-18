@@ -121,38 +121,14 @@ pub const SETTINGS: &[&str] = &[
     "confirm_cards",
 ];
 
-/// `unix_chkpwd "$USER" nullok` with the login password on stdin; `ok: true`
-/// when it's right (docs/SYSTEM.md §2). The daemon can't run it
-/// (`NoNewPrivileges`), so the window does, like the CLI. `EWE_SAFE_CHKPWD`
-/// replaces the helper for tests.
+/// The login password, checked with `unix_chkpwd` the way pam_unix does
+/// (`safe_client::chkpwd`: NUL-ended on stdin); `ok: true` when it's right
+/// (docs/SYSTEM.md §2). The daemon can't run it (`NoNewPrivileges`), so the
+/// window does, like the CLI. `EWE_SAFE_CHKPWD` replaces the helper for tests.
 pub fn check_login_password(password: &str) -> Value {
-    use std::io::Write;
-    use std::process::Stdio;
-    let helper =
-        std::env::var("EWE_SAFE_CHKPWD").unwrap_or_else(|_| "/usr/bin/unix_chkpwd".to_string());
-    let user = std::env::var("USER")
-        .or_else(|_| std::env::var("LOGNAME"))
-        .unwrap_or_default();
-    let mut child = match Command::new(&helper)
-        .arg(&user)
-        .arg("nullok")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-    {
-        Ok(c) => c,
-        Err(e) => {
-            return json!({"ok": false, "error": "internal", "message": format!("Couldn't check the login password ({e}).")});
-        }
-    };
-    if let Some(mut stdin) = child.stdin.take() {
-        // no trailing newline: the helper takes the whole input as the password
-        let _ = stdin.write_all(password.as_bytes());
-    }
-    match child.wait() {
-        Ok(status) if status.success() => json!({"ok": true}),
-        Ok(_) => {
+    match safe_client::chkpwd::check(password) {
+        Ok(true) => json!({"ok": true}),
+        Ok(false) => {
             json!({"ok": false, "error": "wrong-key", "message": "That isn't your login password."})
         }
         Err(e) => {

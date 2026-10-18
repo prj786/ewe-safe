@@ -11,7 +11,7 @@
   import { safe } from "../safe.svelte.js";
   import { ui } from "../ui.svelte.js";
   import { toasts } from "../toast.svelte.js";
-  import { placeIcon, placeLabel, placeLine, strength, syncAlert, syncBadge, when } from "../format.js";
+  import { day, placeIcon, placeLabel, placeLine, strength, syncAlert, syncBadge, when } from "../format.js";
   import { ENCRYPTED_NOTE } from "../cards.js";
 
   let server = $state("");
@@ -61,6 +61,50 @@
   }
   const lockAfter = $derived(Number(s.lock_after_minutes ?? 30));
   const clearAfter = $derived(Number(s.clipboard_clear_seconds ?? 30));
+
+  // The keyring (docs/KEYRING.md): who keeps the apps' passwords, the fix
+  // for the password prompt at every start, the app secrets (names and
+  // dates, never a secret). Hidden when the daemon has no keyring verbs.
+  let kr = $state(null);
+  let krList = $state(null);
+  let krBusy = $state(false);
+  async function loadKeyring() {
+    const st = await api.keyringStatus();
+    kr = st?.ok ? st : null;
+    const l = await api.keyringList();
+    krList = l?.ok ? l : null;
+  }
+  $effect(() => {
+    loadKeyring();
+  });
+  const KEEPERS = { "gnome-keyring": "GNOME Keyring", "ewe-safe": "Safe", kwallet: "KWallet", other: "another app" };
+  const keeper = $derived(KEEPERS[kr?.owner] ? `Kept by ${KEEPERS[kr.owner]}` : "No keyring runs now");
+  const keeperLine = $derived(
+    kr?.owner === "none"
+      ? "It starts when an app needs it."
+      : kr?.needs_repair
+        ? "Your apps save into a second keyring with its own password."
+        : kr?.owner === "ewe-safe"
+          ? "Safe keeps them, on this computer only."
+          : "It opens with your login password when you log in."
+  );
+  async function repairKeyring() {
+    krBusy = true;
+    const r = await api.keyringRepair();
+    krBusy = false;
+    if (!r?.ok) {
+      toasts.show(r?.message ?? "Couldn't fix the keyring.", { icon: "circle-alert", ms: 8000 });
+    } else if (r.fixed) {
+      const n = r.moved + r.replaced;
+      toasts.show(
+        n ? `Fixed. ${n} ${n === 1 ? "password" : "passwords"} moved into your login keyring. The old keyring stays as a backup.` : "Fixed. Your login keyring is the default now.",
+        { icon: "circle-check", ms: 7000 }
+      );
+    } else {
+      toasts.show(r.message ?? "Nothing was changed.", { icon: "circle-alert", ms: 8000 });
+    }
+    await loadKeyring();
+  }
 
   async function set(key, value) {
     const r = await safe.setSetting(key, value);
@@ -238,6 +282,65 @@
         <span class="ewe-row__trail"><button class="ewe-btn ewe-btn--secondary ewe-btn--sm" disabled={safe.readOnly || conv?.busy} onclick={checkConvert}>Check…</button></span>
       </div>
     </div>
+    {#if kr}
+      <div class="ewe-section">
+        <div class="ewe-section__text">
+          <div class="ewe-section__title ewe-section__title--overline">Keyring</div>
+          <div class="ewe-section__desc">Apps keep their passwords here, like ewe-sync's account. They stay on this computer.</div>
+        </div>
+      </div>
+      {#if kr.needs_repair}
+        <div class="ewe-alert ewe-alert--warning" role="status">
+          <Icon name="triangle-alert" />
+          <div class="ewe-alert__body">
+            <div class="ewe-alert__title">The keyring asks for a password at every start</div>
+            <div class="ewe-alert__desc">The fix moves everything into your login keyring, which opens when you log in. The keyring may ask for the old password one last time. The old keyring stays as a backup.</div>
+            <div class="ewe-alert__actions">
+              <button class="ewe-btn ewe-btn--primary ewe-btn--sm" disabled={krBusy} onclick={repairKeyring}><Icon name="key-round" />{krBusy ? "Fixing…" : "Fix the keyring password prompt"}</button>
+            </div>
+          </div>
+        </div>
+      {/if}
+      <div class="ewe-list">
+        <div class="ewe-row">
+          <span class="ewe-row__lead ewe-row__lead--tile"><Icon name="key-round" /></span>
+          <span class="ewe-row__text">
+            <span class="ewe-row__title">{keeper}</span>
+            <span class="ewe-row__desc">{keeperLine}</span>
+          </span>
+          {#if kr.owner !== "none"}
+            <span class="ewe-row__trail">
+              <span class="ewe-badge ewe-badge--{kr.needs_repair ? 'warning' : 'success'}"><span class="ewe-badge__label">{kr.needs_repair ? "Asks at start" : "Opens at login"}</span></span>
+            </span>
+          {/if}
+        </div>
+        {#each krList?.items ?? [] as s (s.id)}
+          <div class="ewe-list__divider"></div>
+          <div class="ewe-row">
+            <span class="ewe-row__lead ewe-row__lead--tile"><Icon name="app-window" /></span>
+            <span class="ewe-row__text">
+              <span class="ewe-row__title">{s.label || "No name"}</span>
+              <span class="ewe-row__desc">{[s.app, s.modified ? day(s.modified) : ""].filter(Boolean).join(" · ")}</span>
+            </span>
+          </div>
+        {/each}
+        {#each krList?.locked ?? [] as c (c.collection)}
+          <div class="ewe-list__divider"></div>
+          <div class="ewe-row">
+            <span class="ewe-row__lead ewe-row__lead--tile"><Icon name="lock" /></span>
+            <span class="ewe-row__text">
+              <span class="ewe-row__title">{c.label || c.collection}</span>
+              <span class="ewe-row__desc">Locked · {c.items} {c.items === 1 ? "password" : "passwords"}</span>
+            </span>
+          </div>
+        {/each}
+        {#if krList && !krList.items.length && !krList.locked.length && kr.owner !== "none"}
+          <div class="ewe-list__divider"></div>
+          <div class="ewe-row"><span class="ewe-row__text"><span class="ewe-row__desc">No app passwords yet.</span></span></div>
+        {/if}
+      </div>
+      <div class="caption safe-muted">Safe shows only names and dates here, never the passwords.</div>
+    {/if}
 
     <div class="ewe-section"><div class="ewe-section__text"><div class="ewe-section__title ewe-section__title--overline">Import and export</div></div></div>
     <div class="ewe-list">

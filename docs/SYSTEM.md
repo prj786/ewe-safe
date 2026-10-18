@@ -298,3 +298,62 @@ Shared files (`verbs.rs` dispatch, `cli/src/main.rs` usage, `PROTOCOL.md`,
 block, don't reorder or reformat others'. CI runs `cargo clippy --all-targets
 --locked -- -D warnings` and `cargo fmt --check`: both must be clean on your
 branch (base's unused-yet items become used by L and K).
+
+## 8. As built: §3, stream K (2026-10-18)
+
+The main session's decision during the wave: **no PAM module in this
+release** (L's module waits for the owner's review). Without it Safe can't
+hold W after a restart, so taking over the keyring would bring back the
+prompt it is meant to remove. So K shipped, in this order:
+
+- **`ewe-safe keyring repair [--dry-run]`** (new, not in §3): fixes §0's
+  bug in the keyring that runs. Through gnome-keyring's own API it copies
+  every item of every other collection into `login` (duplicates — the same
+  attributes and secret — skipped; the same attributes with another secret:
+  the newer by `Modified` wins, reported as `conflicts`/`replaced`), then
+  `SetAlias("default", login)`. Source items and collections are never
+  changed or deleted. A collection that stays locked leaves everything as it
+  was (`default` too), so nothing is stranded behind a prompt. Tested
+  against a real gnome-keyring-daemon shaped like the owner's machine.
+- **`keyring status`** answers `default`, `collections`, `needs_repair`
+  from the running keyring; **`keyring list`** lists the running keyring's
+  items (names and dates, no secret, no prompt; locked collections by
+  count). Neither starts a keyring.
+- **The carrier** (new, not in §3): `safe_secrets::carrier_store / fetch /
+  delete` keep W as one item in gnome-keyring's `login` (label "Safe —
+  unlock key for this computer", attributes `application=ewe-safe`,
+  `ewe-safe=session-key`, `machine=<id>`), never prompting. The main session
+  wires it to L's login verbs.
+- **Safe as the keyring** (§3 itself) is built and tested but **parked**:
+  `adopt` refuses with `needs-login-module` while
+  `/usr/lib/security/pam_ewe_safe.so` is missing (`EWE_SAFE_PAM_MODULE` in
+  tests), and the server starts only when `keyring.on` exists, which only
+  `adopt` writes.
+
+Where the build differs from §3:
+
+- `keyring.safe`'s JSON also holds `collections` (name, label, times, the
+  next item number) and `aliases`; each item has `n`, its stable path
+  number. A new, unsealed file **`keyring.index`** holds the collections,
+  the aliases and, per item, its collection, number and salted SHA-256
+  hashes of its attributes (never a label, an attribute's value or a
+  secret): a locked keyring can then answer `SearchItems` with the right
+  locked paths, so libsecret's `Unlock` → prompt flow works (gnome-keyring
+  keeps hashed attributes for the same reason).
+- The login password for `adopt` is checked with `unix_chkpwd` by the
+  caller (`safe_client::chkpwd`, `EWE_SAFE_CHKPWD`), as §2 says for
+  `login enable`: the daemon can't (`NoNewPrivileges`).
+- `status.keyring.pam` = the module is installed **and** greetd's file has
+  the skip line. `open` = W is in memory; `items` = Safe's own keyring's
+  count.
+- Added verbs: `keyring unlock` (W from `login.key`, opening Safe's
+  keyring; the prompt window's fallback) and the error codes
+  `keyring-locked`, `not-adopted`, `pam-missing`, `needs-login-module`,
+  `no-login-keyring`.
+- `Lock` is a mark only while W is known (no prompt to unlock again).
+- The D-Bus file's `Exec` is the daemon's own path (`/usr/bin/ewe-safed`
+  when installed). `adopt` and `release` call `ReloadConfig` (dbus-broker
+  doesn't watch its folders).
+- **Escrow** (W in the safe as a hidden entry) was **not built**: it only
+  matters once Safe serves the keyring, and the carrier covers the login
+  path in this release.

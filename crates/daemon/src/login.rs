@@ -7,10 +7,10 @@
 //! **How W reaches the daemon at login.** This release does *not* ship a PAM
 //! module (that part of SYSTEM.md §2 is parked for the owner's review,
 //! `.wt/parked-pam/`). Instead W rides in gnome-keyring's `login` collection,
-//! which `pam_gnome_keyring` already unlocks silently at login. Stream K owns
-//! that gnome-keyring client and sets [`ON_ENABLE`]/[`ON_DISABLE`] to carry W
-//! in and out, and at start puts W into [`Daemon::session`] and calls
-//! [`unlock_from_session`]. This module writes no D-Bus.
+//! which `pam_gnome_keyring` already unlocks silently at login. `carrier.rs`
+//! sets [`ON_ENABLE`]/[`ON_DISABLE`] to carry W in and out, and at start puts
+//! W into [`Daemon::session`] and calls [`unlock_from_session`]. This module
+//! writes no D-Bus.
 //!
 //! **W lives for the login session** (base `session.rs`): locking the safe
 //! keeps it; the daemon stopping (logout) drops it.
@@ -35,10 +35,10 @@ type Args = Map<String, Value>;
 /// password is used once (docs/SYSTEM.md §2).
 const MAX_TRIES: u32 = 5;
 
-/// Stream K wires these at daemon start, to carry W in gnome-keyring's
+/// `carrier.rs` wires these at daemon start, to carry W in gnome-keyring's
 /// `login` collection (so the next login opens the safe with no password).
-/// `login-enable` stores W; `login-disable` drops it. Left unset (K not in
-/// the build), login unlock still works through Safe's own window.
+/// `login-enable` stores W; `login-disable` drops it. Left unset, login
+/// unlock still works through Safe's own window.
 pub static ON_ENABLE: OnceLock<fn(&Daemon, &SessionKey)> = OnceLock::new();
 pub static ON_DISABLE: OnceLock<fn(&Daemon)> = OnceLock::new();
 
@@ -108,7 +108,7 @@ pub fn status(d: &Daemon) -> Value {
 }
 
 /// `login-enable {login_password, password?}`: make or open `login.key` → W,
-/// seal `master.wrap` under it, and hand W to gnome-keyring (stream K's hook)
+/// seal `master.wrap` under it, and hand W to gnome-keyring (`carrier.rs`)
 /// so the next login opens the safe with no password. The caller (the CLI,
 /// the window) checked the login password with `unix_chkpwd` first; when the
 /// safe is locked it also passes the master password.
@@ -140,7 +140,7 @@ pub fn enable(d: &Arc<Daemon>, a: &mut Args) -> Result<Value, Fail> {
 }
 
 /// `login-disable`: delete `master.wrap` and drop W from gnome-keyring
-/// (stream K's hook). `login.key` stays while the keyring (stream K) still
+/// (`carrier.rs`). `login.key` stays while the keyring (docs/KEYRING.md) still
 /// uses it; otherwise it goes too.
 pub fn disable(d: &Arc<Daemon>) -> Result<Value, Fail> {
     safe_login::remove(&d.paths.master_wrap()).map_err(Fail::from)?;
@@ -195,11 +195,17 @@ pub fn unlock(d: &Arc<Daemon>, a: &mut Args) -> Result<Value, Fail> {
         .hint("ewe-safe unlock"),
         other => login_fail(other),
     })?;
-    d.session.set(w);
+    d.session.set(w.clone());
     let master = Zeroizing::new(master.to_string());
     match d.unlock(&master) {
         Ok(n) => {
             d.login.reset_tries();
+            // the login keyring may not hold W yet (it was locked when login
+            // unlock was turned on): carry it now, off the reply's path
+            if let Some(carry) = ON_ENABLE.get().copied() {
+                let d = d.clone();
+                std::thread::spawn(move || carry(&d, &w));
+            }
             Ok(json!({"items": n}))
         }
         // master.wrap opened, but its master no longer opens the safe (the
@@ -217,12 +223,10 @@ pub fn unlock(d: &Arc<Daemon>, a: &mut Args) -> Result<Value, Fail> {
     }
 }
 
-/// Open the safe with the W already in [`Daemon::session`] (stream K put it
-/// there from gnome-keyring's `login` collection at login) and `master.wrap`,
+/// Open the safe with the W already in [`Daemon::session`] (`carrier.rs` put
+/// it there from gnome-keyring's `login` collection at login) and `master.wrap`,
 /// with no password. The caller honours `[safe] unlock_at_login` and runs
 /// this off the login path (it must not hold anything up for the network).
-// stream K calls this at daemon start; the merge drops this allow
-#[allow(dead_code)]
 pub fn unlock_from_session(d: &Arc<Daemon>) -> Result<usize, Fail> {
     if !d.is_set_up() {
         return Err(Fail::not_set_up());

@@ -5,9 +5,6 @@
 //! locked, to the daemon. The password comes from the terminal (no echo) or a
 //! stdin line, never from the command line.
 
-use std::io::Write;
-use std::process::{Command, Stdio};
-
 use safe_client as client;
 use safe_client::{FAST, SLOW};
 use serde_json::{Map, Value, json};
@@ -73,36 +70,13 @@ fn enable() -> Value {
     client::call("login-enable", Value::Object(args), SLOW)
 }
 
-/// `unix_chkpwd "$USER" nullok` with the password on stdin; exit 0 = right.
-/// `EWE_SAFE_CHKPWD` overrides the helper for tests (a fake reading stdin).
+/// The login password, checked with `unix_chkpwd` the way pam_unix does
+/// (`safe_client::chkpwd`: NUL-ended on stdin; `EWE_SAFE_CHKPWD` replaces the
+/// helper for tests).
 pub fn check_login_password(password: &str) -> Result<(), Value> {
-    let helper =
-        std::env::var("EWE_SAFE_CHKPWD").unwrap_or_else(|_| "/usr/bin/unix_chkpwd".to_string());
-    let user = username();
-    let mut child = match Command::new(&helper)
-        .arg(&user)
-        .arg("nullok")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-    {
-        Ok(c) => c,
-        Err(e) => {
-            return Err(json!({
-                "ok": false,
-                "error": "internal",
-                "message": format!("Couldn't check the login password ({e})."),
-            }));
-        }
-    };
-    if let Some(mut stdin) = child.stdin.take() {
-        // no trailing newline: the helper takes the whole input as the password
-        let _ = stdin.write_all(password.as_bytes());
-    }
-    match child.wait() {
-        Ok(status) if status.success() => Ok(()),
-        Ok(_) => Err(json!({
+    match safe_client::chkpwd::check(password) {
+        Ok(true) => Ok(()),
+        Ok(false) => Err(json!({
             "ok": false,
             "error": "wrong-key",
             "message": "That isn't your login password.",
@@ -113,24 +87,4 @@ pub fn check_login_password(password: &str) -> Result<(), Value> {
             "message": format!("Couldn't check the login password ({e})."),
         })),
     }
-}
-
-/// This user's name for `unix_chkpwd`: `$USER`, else the password database.
-fn username() -> String {
-    if let Ok(u) = std::env::var("USER").or_else(|_| std::env::var("LOGNAME"))
-        && !u.is_empty()
-    {
-        return u;
-    }
-    // SAFETY: getpwuid returns a pointer into a static buffer or null; read it
-    // at once and copy out. getuid has no failure mode.
-    unsafe {
-        let pw = libc::getpwuid(libc::getuid());
-        if !pw.is_null() && !(*pw).pw_name.is_null() {
-            return std::ffi::CStr::from_ptr((*pw).pw_name)
-                .to_string_lossy()
-                .into_owned();
-        }
-    }
-    String::new()
 }
