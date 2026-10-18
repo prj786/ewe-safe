@@ -1,6 +1,8 @@
 //! Ranking items for what the user typed. Only what a [`Summary`] shows is
-//! searched (title, website hosts, username, tags, apps, folder): never a
-//! password or a note. Every word typed must match something.
+//! searched (title, website hosts, username, tags, apps, folder; a card's
+//! holder, brand and last four digits; an address's name, first line, city
+//! and country): never a password, a note or a card's number. Every word
+//! typed must match something.
 
 use crate::item::Summary;
 
@@ -43,6 +45,26 @@ fn word_score(s: &Summary, word: &str) -> u32 {
         .any(|t| t.to_lowercase().contains(word));
     if in_labels {
         best = best.max(30);
+    }
+    if let Some(c) = &s.card {
+        if c.holder.to_lowercase().contains(word) {
+            best = best.max(40);
+        }
+        let brand = crate::card::brand_name(&c.brand).to_lowercase();
+        if c.brand.contains(word) || brand.contains(word) || c.last4.contains(word) {
+            best = best.max(35);
+        }
+    }
+    if let Some(a) = &s.address {
+        if a.name.to_lowercase().contains(word) {
+            best = best.max(40);
+        }
+        if [&a.line1, &a.city, &a.country]
+            .iter()
+            .any(|t| t.to_lowercase().contains(word))
+        {
+            best = best.max(35);
+        }
     }
     best
 }
@@ -216,6 +238,8 @@ mod tests {
             modified: None,
             passkey: None,
             ssh: None,
+            card: None,
+            address: None,
         }
     }
 
@@ -332,5 +356,40 @@ mod tests {
         let all = [item("b", "", "", &[]), item("A", "", "", &[])];
         let got: Vec<&str> = rank(&all, "  ").iter().map(|s| s.title.as_str()).collect();
         assert_eq!(got, vec!["A", "b"]);
+    }
+
+    #[test]
+    fn cards_and_addresses_are_found_by_what_their_summary_shows() {
+        let mut card = item("Daily card", "", "", &[]);
+        card.kind = Kind::Card;
+        card.card = Some(crate::card::CardInfo {
+            brand: "visa".into(),
+            last4: "4242".into(),
+            expiry: "08/2029".into(),
+            holder: "Sam Moe".into(),
+            has_number: true,
+            has_security_code: true,
+            has_pin: false,
+        });
+        let mut home = item("Home", "", "", &[]);
+        home.kind = Kind::Address;
+        home.address = Some(crate::card::AddressInfo {
+            name: "Sam Moe".into(),
+            line1: "12 Main St".into(),
+            city: "Tbilisi".into(),
+            country: "GE".into(),
+        });
+        let all = [card, home];
+        let titles =
+            |q: &str| -> Vec<String> { rank(&all, q).iter().map(|s| s.title.clone()).collect() };
+        assert_eq!(titles("visa"), ["Daily card"]);
+        assert_eq!(titles("4242"), ["Daily card"]);
+        assert_eq!(titles("tbilisi"), ["Home"]);
+        assert_eq!(titles("moe"), ["Daily card", "Home"]);
+        assert!(titles("08/2029").is_empty(), "the expiry isn't searched");
+        assert!(
+            match_logins(&all, "", "", "", "").is_empty(),
+            "the fill picker never offers them"
+        );
     }
 }

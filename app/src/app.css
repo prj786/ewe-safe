@@ -138,6 +138,15 @@ button.ewe-row {
   background: transparent;
   color: inherit;
 }
+/* a menu's items are buttons: no browser frame (the New menu, More, Pick a
+   window) */
+button.ewe-menu__item {
+  border: 0;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  font-family: inherit;
+}
 button.ewe-choice {
   width: 100%;
   text-align: left;
@@ -716,6 +725,103 @@ button.ewe-choice {
 }
 .safe-compact__row .ewe-input {
   flex: 1;
+}
+
+/* cards and addresses: a card's face (the ID-1 card's proportions), an
+   address as it goes on an envelope, the number field's brand */
+.safe-cardface {
+  width: var(--panel-sm);
+  max-width: 100%;
+  aspect-ratio: 1.586;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: var(--space-md);
+  background: var(--gradient-ember);
+  border: var(--border-width-1) solid var(--border-subtle);
+  border-radius: var(--rounded);
+  box-shadow: var(--shadow-float);
+  color: var(--text-primary);
+}
+.safe-cardface__top {
+  display: flex;
+  align-items: center;
+  gap: var(--space-s);
+}
+.safe-cardface__top > .ewe-icon {
+  margin-left: auto;
+  color: var(--accent-text);
+}
+.safe-cardface__brand {
+  font-size: var(--font-size-lg);
+  line-height: var(--line-height-lg);
+  font-weight: var(--font-weight-semibold);
+}
+.safe-cardface__number {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xl);
+  line-height: var(--line-height-xl);
+  letter-spacing: var(--tracking-wide);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.safe-cardface__foot {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-md);
+}
+.safe-cardface__part {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xxs);
+  min-width: 0;
+}
+.safe-cardface__part .overline {
+  color: var(--text-muted);
+}
+.safe-cardface__part--end {
+  text-align: right;
+}
+.safe-cardface__value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: var(--font-weight-medium);
+}
+.safe-address {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xxs);
+  padding: calc(var(--space-s) + var(--space-xs)) var(--space-md);
+  background: var(--surface-sunken);
+  border: var(--border-width-1) solid var(--border-subtle);
+  border-radius: var(--primary);
+  color: var(--text-secondary);
+  user-select: text;
+}
+.safe-address .body-strong {
+  color: var(--text-primary);
+}
+.safe-pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: calc(var(--space-s) + var(--space-xs));
+}
+.safe-note {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-xs);
+  color: var(--text-muted);
+}
+.safe-warn {
+  color: var(--warning);
+}
+.safe-note .ewe-icon {
+  width: var(--icon-sm);
+  height: var(--icon-sm);
+  color: var(--success);
+  flex: none;
 }
 
 @media print {

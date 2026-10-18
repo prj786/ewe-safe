@@ -7,6 +7,8 @@ members = [
     "crates/daemon",
     "crates/cli",
     "crates/testkit",
+    "crates/login",
+    "crates/secrets",
 ]
 # the patched keepass-rs is a dependency, not ours to lint or format; the
 # window (app/src-tauri) is its own Cargo project, so building and testing
@@ -14,7 +16,7 @@ members = [
 exclude = ["vendor", "app"]
 
 [workspace.package]
-version = "0.2.0-beta"
+version = "0.3.0-beta"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/prj786/ewe-safe"
@@ -25,6 +27,8 @@ safe-core = { path = "crates/core" }
 safe-store = { path = "crates/store" }
 safe-client = { path = "crates/client" }
 safe-testkit = { path = "crates/testkit" }
+safe-login = { path = "crates/login" }
+safe-secrets = { path = "crates/secrets" }
 # `_merge` only for the phase-0 merge spike: Safe merges itself (SPIKE-0 §2)
 keepass = { version = "0.15.2", features = ["save_kdbx4", "_merge"] }
 

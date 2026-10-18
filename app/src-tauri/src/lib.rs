@@ -20,12 +20,16 @@
 //!   `--new` and `--import` open those views; `--unlock` is a separate,
 //!   compact process that only unlocks (app_id `ewe-safe-unlock`, which
 //!   ewe's hyprland.lua floats at 560×200) and exits once the safe is open.
+//! - `--confirm --reason TEXT` is a card fill's fresh check (docs/SYSTEM.md
+//!   §4): the same compact process, "Type your password to fill …". It exits
+//!   0 once the daemon's `confirm` succeeds, 1 if the window is closed.
 //! - `--approve` is the SSH agent's question, the same kind of compact
 //!   process (and app_id, so it floats the same): "Allow ssh (from git) to
 //!   use GitHub key?". The daemon names the app and the key in
 //!   `EWE_SAFE_APPROVE_APP` and `EWE_SAFE_APPROVE_KEY`; the exit code is the
 //!   answer (0 allow, 1 deny).
 
+mod keyring;
 mod ssh;
 mod tools;
 
@@ -56,6 +60,10 @@ const ITEM_KEYS: &[&str] = &[
     "remove_app",
     "remove_tag",
     "remove_passkey",
+    // a card's and an address's fields (the card's secrets: safe-client
+    // wipes every string in `card` once the request is sent)
+    "card",
+    "address",
 ];
 const PLACE_KEYS: &[&str] = &["place", "location", "url", "user"];
 
@@ -138,6 +146,63 @@ async fn unlock(password: String) -> Value {
     let mut a = Map::new();
     put_secret(&mut a, "password", password);
     call("unlock", a).await
+}
+
+/// Login unlock (docs/SYSTEM.md §2): the login password opens the safe.
+#[tauri::command]
+async fn unlock_login(login_password: String) -> Value {
+    let mut a = Map::new();
+    put_secret(&mut a, "login_password", login_password);
+    call("unlock", a).await
+}
+
+#[tauri::command]
+async fn login_status() -> Value {
+    call("login-status", Map::new()).await
+}
+
+/// Turn login unlock on. The window checks the login password with
+/// `unix_chkpwd` first (the daemon can't), then seals the safe under it;
+/// `password` (the master) is needed only while the safe is locked.
+#[tauri::command]
+async fn login_enable(login_password: String, password: Option<String>) -> Value {
+    let check = {
+        let pw = login_password.clone();
+        blocking(move || tools::check_login_password(&pw)).await
+    };
+    if check.get("ok").and_then(Value::as_bool) != Some(true) {
+        return check;
+    }
+    let mut a = Map::new();
+    put_secret(&mut a, "login_password", login_password);
+    if let Some(p) = password {
+        put_secret(&mut a, "password", p);
+    }
+    call("login-enable", a).await
+}
+
+#[tauri::command]
+async fn login_disable() -> Value {
+    call("login-disable", Map::new()).await
+}
+
+/// Check a login password on its own, for the Settings dialog's feedback.
+#[tauri::command]
+async fn check_login_password(login_password: String) -> Value {
+    blocking(move || tools::check_login_password(&login_password)).await
+}
+
+/// `confirm` (docs/SYSTEM.md §4): type your password again for a card fill.
+/// The master password, or the login password when login unlock is on.
+#[tauri::command]
+async fn confirm(password: Option<String>, login_password: Option<String>) -> Value {
+    let mut a = Map::new();
+    if let Some(p) = login_password {
+        put_secret(&mut a, "login_password", p);
+    } else if let Some(p) = password {
+        put_secret(&mut a, "password", p);
+    }
+    call("confirm", a).await
 }
 
 #[tauri::command]
@@ -237,6 +302,17 @@ async fn edit(id: String, item: Map<String, Value>) -> Value {
     call("edit", a).await
 }
 
+/// `convert --from-1password`: the notes an earlier import made from
+/// 1Password's cards and identities become cards and addresses.
+#[tauri::command]
+async fn convert(dry_run: Option<bool>) -> Value {
+    let a = with(&[
+        ("from_1password", Some(Value::from(true))),
+        ("dry_run", dry_run.map(Value::from)),
+    ]);
+    call("convert", a).await
+}
+
 #[tauri::command]
 async fn rm(id: String) -> Value {
     call("rm", with(&[("id", Some(Value::from(id)))])).await
@@ -329,6 +405,8 @@ struct Launch {
     unlock: bool,
     /// The SSH agent's question.
     approve: Option<Approve>,
+    /// A card fill's confirm (docs/SYSTEM.md §4): the reason to show.
+    confirm: Option<String>,
     show: Option<String>,
     new: bool,
     import: bool,
@@ -337,6 +415,8 @@ struct Launch {
 impl Launch {
     fn parse<I: IntoIterator<Item = String>>(args: I) -> Launch {
         let mut l = Launch::default();
+        let mut confirm = false;
+        let mut reason: Option<String> = None;
         let mut it = args.into_iter().skip(1);
         while let Some(a) = it.next() {
             match a.as_str() {
@@ -350,23 +430,30 @@ impl Launch {
                         system: env("EWE_SAFE_APPROVE_SYSTEM") == "1",
                     });
                 }
+                "--confirm" => confirm = true,
+                "--reason" => reason = it.next().filter(|r| r.len() <= 200),
                 "--new" => l.new = true,
                 "--import" => l.import = true,
                 "--show" => l.show = it.next().filter(|id| id.len() <= 64),
                 _ => {}
             }
         }
+        if confirm {
+            l.confirm = Some(reason.unwrap_or_default());
+        }
         l
     }
 
     /// A compact process of its own: no single instance, a small window.
     fn compact(&self) -> bool {
-        self.unlock || self.approve.is_some()
+        self.unlock || self.approve.is_some() || self.confirm.is_some()
     }
 
     fn json(&self) -> Value {
         let mode = if self.approve.is_some() {
             "approve"
+        } else if self.confirm.is_some() {
+            "confirm"
         } else if self.unlock {
             "unlock"
         } else {
@@ -375,6 +462,7 @@ impl Launch {
         json!({
             "mode": mode,
             "approve": self.approve.as_ref().map(|a| json!({"app": a.app, "key": a.key, "path": a.path, "system": a.system})),
+            "reason": self.confirm,
             "show": self.show,
             "new": self.new,
             "import": self.import,
@@ -579,6 +667,7 @@ pub fn run() {
     }
     let unlock_only = launch.unlock;
     let approve = launch.approve.is_some();
+    let confirm_only = launch.confirm.is_some();
     builder
         .plugin(tauri_plugin_dialog::init())
         .manage(Daemon::default())
@@ -587,6 +676,13 @@ pub fn run() {
             let w = if approve {
                 WebviewWindowBuilder::new(app, "approve", WebviewUrl::App("index.html".into()))
                     .title("Allow the SSH key?")
+                    .inner_size(560.0, 200.0)
+                    .resizable(false)
+                    .decorations(false)
+                    .center()
+            } else if confirm_only {
+                WebviewWindowBuilder::new(app, "confirm", WebviewUrl::App("index.html".into()))
+                    .title("Confirm")
                     .inner_size(560.0, 200.0)
                     .resizable(false)
                     .decorations(false)
@@ -636,6 +732,12 @@ pub fn run() {
             init,
             open,
             unlock,
+            unlock_login,
+            login_status,
+            login_enable,
+            login_disable,
+            check_login_password,
+            confirm,
             lock,
             list,
             search,
@@ -658,6 +760,10 @@ pub fn run() {
             ssh::ssh_enable,
             ssh::ssh_disable,
             ssh::ssh_status,
+            convert,
+            keyring::keyring_status,
+            keyring::keyring_repair,
+            keyring::keyring_list,
         ])
         .run(tauri::generate_context!())
         .expect("error while running the Safe window");
@@ -678,6 +784,13 @@ mod tests {
             Value::Object(a),
             json!({"title": "A", "password_value": "p"})
         );
+        // a card's and an address's objects go through whole
+        let m = json!({"kind": "card", "card": {"number": "4242"}, "address": {"city": "x"}})
+            .as_object()
+            .cloned()
+            .unwrap();
+        assert_eq!(only(m, ITEM_KEYS).len(), 3);
+        assert!(safe_client::SECRET_OBJECTS.contains(&"card"));
     }
 
     #[test]

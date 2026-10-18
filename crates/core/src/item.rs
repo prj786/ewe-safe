@@ -11,6 +11,7 @@
 //! | kind Note | custom data `ewe.kind = note`; its text is protected |
 //! | kind SSH key | custom data `ewe.kind = ssh-key` (or a `KeeAgent.settings` attachment); its text is protected |
 //! | passkey | KeePassXC's `KPEX_PASSKEY_*` fields ([`crate::passkey`]) |
+//! | kind Card, kind Address | custom data `ewe.kind = card` / `address`; their fields are [`crate::card`]'s; the notes protected |
 //!
 //! Everything else in an entry (custom fields, attachments, history, icons,
 //! auto-type) is left exactly as it was.
@@ -25,6 +26,8 @@ use zeroize::Zeroizing;
 pub const KIND_KEY: &str = "ewe.kind";
 pub const KIND_NOTE: &str = "note";
 pub const KIND_SSH: &str = "ssh-key";
+pub const KIND_CARD: &str = "card";
+pub const KIND_ADDRESS: &str = "address";
 pub const OTP: &str = "otp";
 pub const EXTRA_URL: &str = "KP2A_URL_";
 pub const APP_TAG: &str = "app:";
@@ -36,6 +39,10 @@ pub enum Kind {
     Note,
     /// A KeeAgent entry (crate::ssh).
     SshKey,
+    /// A payment card (crate::card).
+    Card,
+    /// A postal address with a name, a phone and an e-mail (crate::card).
+    Address,
 }
 
 impl Kind {
@@ -44,6 +51,8 @@ impl Kind {
             Kind::Login => "login",
             Kind::Note => "note",
             Kind::SshKey => KIND_SSH,
+            Kind::Card => KIND_CARD,
+            Kind::Address => KIND_ADDRESS,
         }
     }
 
@@ -52,6 +61,8 @@ impl Kind {
             "login" => Some(Kind::Login),
             "note" => Some(Kind::Note),
             KIND_SSH => Some(Kind::SshKey),
+            KIND_CARD => Some(Kind::Card),
+            KIND_ADDRESS => Some(Kind::Address),
             _ => None,
         }
     }
@@ -76,6 +87,12 @@ pub struct Summary {
     pub passkey: Option<crate::passkey::Info>,
     /// An SSH key's public part; None for the other kinds.
     pub ssh: Option<crate::ssh::Info>,
+    /// A card's brand, last four digits, expiry and holder; None for the
+    /// other kinds. Never the number, the code or the PIN.
+    pub card: Option<crate::card::CardInfo>,
+    /// An address's name, first line, city and country; None for the
+    /// other kinds.
+    pub address: Option<crate::card::AddressInfo>,
 }
 
 /// An item as the editor fills it in. The secret parts are wiped from
@@ -92,6 +109,10 @@ pub struct Draft {
     pub notes: Zeroizing<String>,
     /// An `otpauth://` URI, empty for none.
     pub otp: Zeroizing<String>,
+    /// A card's fields (kind Card only).
+    pub card: crate::card::Card,
+    /// An address's fields (kind Address only).
+    pub address: crate::card::Address,
 }
 
 /// One value `reveal` can hand out.
@@ -148,6 +169,8 @@ pub fn kind_of(entry: &Entry) -> Kind {
     {
         Some(KIND_NOTE) => Kind::Note,
         Some(KIND_SSH) => Kind::SshKey,
+        Some(KIND_CARD) => Kind::Card,
+        Some(KIND_ADDRESS) => Kind::Address,
         _ => Kind::Login,
     }
 }
@@ -191,9 +214,10 @@ pub fn split_tags(entry: &Entry) -> (Vec<String>, Vec<String>) {
 
 pub fn summary_of(id: String, entry: &Entry, folder: String) -> Summary {
     let (apps, tags) = split_tags(entry);
+    let kind = kind_of(entry);
     Summary {
         id,
-        kind: kind_of(entry),
+        kind,
         title: text(entry, fields::TITLE),
         username: text(entry, fields::USERNAME),
         websites: websites_of(entry),
@@ -206,13 +230,16 @@ pub fn summary_of(id: String, entry: &Entry, folder: String) -> Summary {
         passkey: crate::passkey::info_of(entry),
         // filled by crate::ssh::refine, which needs the entry's attachments
         ssh: None,
+        card: (kind == Kind::Card).then(|| crate::card::card_info(entry)),
+        address: (kind == Kind::Address).then(|| crate::card::address_info(entry)),
     }
 }
 
 pub fn draft_of(entry: &Entry) -> Draft {
     let (apps, tags) = split_tags(entry);
+    let kind = kind_of(entry);
     Draft {
-        kind: kind_of(entry),
+        kind,
         title: text(entry, fields::TITLE),
         username: text(entry, fields::USERNAME),
         password: Zeroizing::new(text(entry, fields::PASSWORD)),
@@ -221,6 +248,16 @@ pub fn draft_of(entry: &Entry) -> Draft {
         tags,
         notes: Zeroizing::new(text(entry, fields::NOTES)),
         otp: Zeroizing::new(text(entry, OTP)),
+        card: if kind == Kind::Card {
+            crate::card::card_of(entry)
+        } else {
+            crate::card::Card::default()
+        },
+        address: if kind == Kind::Address {
+            crate::card::address_of(entry)
+        } else {
+            crate::card::Address::default()
+        },
     }
 }
 
@@ -243,12 +280,13 @@ pub fn apply(entry: &mut Entry, draft: &Draft) {
     }
 
     match draft.kind {
-        Kind::Note | Kind::SshKey => {
+        Kind::Note | Kind::SshKey | Kind::Card | Kind::Address => {
             entry.set_protected(fields::NOTES, draft.notes.as_str());
-            let marker = if draft.kind == Kind::Note {
-                KIND_NOTE
-            } else {
-                KIND_SSH
+            let marker = match draft.kind {
+                Kind::Note => KIND_NOTE,
+                Kind::Card => KIND_CARD,
+                Kind::Address => KIND_ADDRESS,
+                _ => KIND_SSH,
             };
             entry.custom_data.insert(
                 KIND_KEY.to_string(),
@@ -270,6 +308,12 @@ pub fn apply(entry: &mut Entry, draft: &Draft) {
             }
             entry.custom_data.remove(KIND_KEY);
         }
+    }
+
+    match draft.kind {
+        Kind::Card => crate::card::apply_card(entry, &draft.card),
+        Kind::Address => crate::card::apply_address(entry, &draft.address),
+        _ => {}
     }
 
     if draft.otp.trim().is_empty() {
@@ -323,6 +367,7 @@ mod tests {
             tags: vec!["money".into(), "money".into(), "app:sneaky".into()],
             notes: Zeroizing::new("hall cupboard".into()),
             otp: Zeroizing::new("otpauth://totp/Bank:sam?secret=JBSWY3DPEHPK3PXP".into()),
+            ..Draft::default()
         }
     }
 
@@ -410,6 +455,121 @@ mod tests {
             assert!(!shown.contains("JBSWY3DP"));
             assert!(!shown.contains("hall cupboard"));
             assert!(s.has_password && s.has_otp);
+        });
+    }
+
+    fn card() -> Draft {
+        Draft {
+            kind: Kind::Card,
+            title: "Visa".into(),
+            notes: Zeroizing::new("for travel".into()),
+            card: crate::card::Card {
+                holder: " Sam Moe ".into(),
+                number: Zeroizing::new("4242 4242 4242 4242".into()),
+                expiry: "8/29".into(),
+                security_code: Zeroizing::new("123".into()),
+                pin: Zeroizing::new("9876".into()),
+                brand: String::new(),
+            },
+            ..Draft::default()
+        }
+    }
+
+    #[test]
+    fn a_card_maps_onto_plain_fields_with_its_secrets_protected() {
+        with_entry(|e| {
+            apply(e, &card());
+            assert_eq!(kind_of(e), Kind::Card);
+            assert_eq!(e.get("Cardholder"), Some("Sam Moe"));
+            assert_eq!(e.get("Number"), Some("4242424242424242"));
+            assert_eq!(e.get("Expiry"), Some("08/2029"));
+            assert_eq!(e.get("Brand"), Some("visa"), "from the number");
+            for (k, protected) in [
+                ("Number", true),
+                ("Security code", true),
+                ("PIN", true),
+                ("Notes", true),
+                ("Cardholder", false),
+                ("Expiry", false),
+                ("Brand", false),
+            ] {
+                assert_eq!(e.fields[k].is_protected(), protected, "{k}");
+            }
+            let back = draft_of(e);
+            assert_eq!(back.card.number.as_str(), "4242424242424242");
+            assert_eq!(back.card.pin.as_str(), "9876");
+            assert!(back.address.is_empty());
+
+            // an empty value takes the field out
+            let mut d = card();
+            d.card.pin = Zeroizing::new(String::new());
+            d.card.brand = "mc".into();
+            apply(e, &d);
+            assert!(e.get("PIN").is_none());
+            assert_eq!(e.get("Brand"), Some("mastercard"), "a brand given wins");
+        });
+    }
+
+    #[test]
+    fn a_card_summary_shows_the_last_digits_and_no_secret() {
+        with_entry(|e| {
+            apply(e, &card());
+            let s = summary_of("id".into(), e, String::new());
+            let c = s.card.clone().expect("card");
+            assert_eq!(
+                (c.brand.as_str(), c.last4.as_str(), c.expiry.as_str()),
+                ("visa", "4242", "08/2029")
+            );
+            assert_eq!(c.holder, "Sam Moe");
+            assert!(c.has_number && c.has_security_code && c.has_pin);
+            assert!(!s.has_password && s.username.is_empty() && s.address.is_none());
+            let shown = format!("{s:?}");
+            for secret in ["4242424242424242", "123", "9876", "for travel"] {
+                assert!(!shown.contains(secret), "{secret}");
+            }
+        });
+    }
+
+    #[test]
+    fn an_address_is_plain_and_its_country_a_code() {
+        with_entry(|e| {
+            let mut a = crate::card::Address::default();
+            for (k, v) in [
+                ("full_name", "Sam Moe"),
+                ("line1", "12 Main St"),
+                ("city", "Tbilisi"),
+                ("country", "ge"),
+                ("email", "sam@example.org"),
+            ] {
+                assert!(a.set(k, v));
+            }
+            assert!(!a.set("planet", "earth"));
+            apply(
+                e,
+                &Draft {
+                    kind: Kind::Address,
+                    title: "Home".into(),
+                    address: a,
+                    ..Draft::default()
+                },
+            );
+            assert_eq!(kind_of(e), Kind::Address);
+            assert_eq!(e.get("Country"), Some("GE"));
+            assert_eq!(e.get("Address line 1"), Some("12 Main St"));
+            assert!(e.get("Address line 2").is_none(), "empty parts stay out");
+            assert!(!e.fields["Full name"].is_protected());
+            let s = summary_of("id".into(), e, String::new());
+            let i = s.address.expect("address");
+            assert_eq!(
+                (
+                    i.name.as_str(),
+                    i.line1.as_str(),
+                    i.city.as_str(),
+                    i.country.as_str()
+                ),
+                ("Sam Moe", "12 Main St", "Tbilisi", "GE")
+            );
+            assert_eq!(draft_of(e).address.email, "sam@example.org");
         });
     }
 }

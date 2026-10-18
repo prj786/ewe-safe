@@ -109,11 +109,21 @@ pub fn dispatch(d: &Arc<Daemon>, verb: &str, a: &mut Args) -> Result<Value, Fail
                     "--ask belongs to the ewe-safe CLI (it opens the prompt and waits); over the socket, send the password",
                 ));
             }
+            // login unlock (docs/SYSTEM.md §2): the login password, not the master
+            if a.contains_key("login_password") {
+                return crate::login::unlock(d, a);
+            }
             let pw = secret(a, "password")
                 .ok_or_else(|| Fail::bad("The master password is missing."))?;
             let items = d.unlock(&pw)?;
             Ok(json!({"items": items}))
         }
+        // login unlock (docs/SYSTEM.md §2): the verbs, and the fresh-presence
+        // confirm for a card fill (docs/SYSTEM.md §4)
+        "login-status" => Ok(crate::login::status(d)),
+        "login-enable" => crate::login::enable(d, a),
+        "login-disable" => crate::login::disable(d),
+        "confirm" => crate::login::confirm(d, a),
         "lock" => {
             d.lock("user");
             Ok(json!({"locked": true}))
@@ -139,6 +149,11 @@ pub fn dispatch(d: &Arc<Daemon>, verb: &str, a: &mut Args) -> Result<Value, Fail
                 let mut v = item_json(&sum);
                 if sum.kind == Kind::Login || notes_too {
                     v["notes"] = json!(h.safe.draft(&id)?.notes.as_str());
+                }
+                // an address's every part (a list shows four)
+                if let Some(info) = &sum.address {
+                    v["address"] =
+                        crate::cards::full_address_json(info, &h.safe.draft(&id)?.address);
                 }
                 Ok(json!({"item": v}))
             })
@@ -212,6 +227,11 @@ pub fn dispatch(d: &Arc<Daemon>, verb: &str, a: &mut Args) -> Result<Value, Fail
         "passkey-create" => crate::passkey::create(d, a),
         "passkey-get" => crate::passkey::get(d, a),
         v if v.starts_with("ssh-") => crate::sshkeys::dispatch(d, v, a),
+        // cards and addresses (docs/SYSTEM.md §4)
+        "fields" => crate::cards::fields(d, a),
+        "convert" => crate::cards::convert(d, a),
+        // Safe as the keyring (docs/KEYRING.md)
+        v if v.starts_with("keyring-") => crate::keyring::dispatch(d, v, a),
         "passwd" => {
             let new = secret(a, "new_password")
                 .ok_or_else(|| Fail::bad("The new master password is missing."))?;
@@ -227,12 +247,20 @@ pub fn dispatch(d: &Arc<Daemon>, verb: &str, a: &mut Args) -> Result<Value, Fail
 
 fn status(d: &Daemon) -> Value {
     let snap = rd(&d.snap);
+    // login unlock (docs/SYSTEM.md §2): a second method, and its own object
+    let login = crate::login::status(d);
+    let methods: Vec<&str> = if login["enabled"] == true {
+        vec!["password", "login"]
+    } else {
+        vec!["password"]
+    };
     let mut v = json!({
         "set_up": snap.set_up,
         "locked": snap.locked,
         "read_only": snap.reasons.is_some(),
         "place": snap.place.as_ref().map(place_json),
-        "unlock_methods": ["password"],
+        "unlock_methods": methods,
+        "login": login,
         "items": if snap.locked { Value::Null } else { json!(snap.items.len()) },
         "sync": sync_json(&snap),
         "version": safe_core::VERSION,
@@ -244,6 +272,9 @@ fn status(d: &Daemon) -> Value {
         // a KDBX 3.x/4.0 file becomes KDBX 4.1 at its next save (SPIKE-0, C5)
         v["upgrade_from"] = json!(u);
     }
+    drop(snap);
+    // Safe as the keyring (docs/KEYRING.md)
+    v["keyring"] = crate::keyring::status_json(d);
     v
 }
 
@@ -260,9 +291,10 @@ fn summary(d: &Daemon) -> Value {
 fn list_items(d: &Daemon, a: &Args) -> Result<Value, Fail> {
     let kind = match s(a, "kind") {
         None => None,
-        Some(k) => {
-            Some(Kind::parse(k).ok_or_else(|| Fail::bad("--kind is login, note or ssh-key"))?)
-        }
+        Some(k) => Some(
+            Kind::parse(k)
+                .ok_or_else(|| Fail::bad("--kind is login, note, ssh-key, card or address"))?,
+        ),
     };
     let tag = s(a, "tag").map(str::to_lowercase);
     let snap = open_snap(d)?;
@@ -353,16 +385,23 @@ fn generate(d: &Daemon, a: &Args) -> Result<(Zeroizing<String>, f64), Fail> {
 }
 
 fn add(d: &Arc<Daemon>, a: &mut Args) -> Result<Value, Fail> {
+    // a card's secrets leave the request first, whatever comes next
+    let card_args = crate::cards::take_card(a)?;
+    let address = crate::cards::take_address(a)?;
     let kind = match s(a, "kind").unwrap_or("login") {
         "login" => Kind::Login,
         "note" => Kind::Note,
-        _ => return Err(Fail::bad("--kind is login or note")),
+        "card" => Kind::Card,
+        "address" => Kind::Address,
+        _ => return Err(Fail::bad("--kind is login, note, card or address")),
     };
-    let title = s(a, "title")
-        .map(str::trim)
-        .filter(|t| !t.is_empty())
-        .ok_or_else(|| Fail::bad("add needs --title"))?
-        .to_string();
+    crate::cards::check_kind(kind, card_args.is_some(), address.is_some())?;
+    // a card's or an address's title has a default ("Visa •• 4242", "Home")
+    let title = match s(a, "title").map(str::trim).filter(|t| !t.is_empty()) {
+        Some(t) => t.to_string(),
+        None if matches!(kind, Kind::Card | Kind::Address) => String::new(),
+        None => return Err(Fail::bad("add needs --title")),
+    };
     let mut draft = Draft {
         kind,
         title,
@@ -380,11 +419,19 @@ fn add(d: &Arc<Daemon>, a: &mut Args) -> Result<Value, Fail> {
     if let Some(notes) = secret(a, "notes") {
         draft.notes = notes;
     }
+    let warning = match kind {
+        Kind::Card | Kind::Address => crate::cards::fill_new(&mut draft, card_args, address)?,
+        _ => None,
+    };
     let folder = s(a, "folder").unwrap_or("").to_string();
     let (id, sync) = d.mutate(|safe| Ok((safe.add_in(&draft, &folder)?, true)))?;
     // `id` is the socket's own request id (server.rs puts it on every
     // reply), so the new item's id travels as `item_id`
-    Ok(json!({"item_id": id, "sync": sync}))
+    let mut v = json!({"item_id": id, "sync": sync});
+    if let Some(w) = warning {
+        v["warning"] = json!(w);
+    }
+    Ok(v)
 }
 
 fn add_unique(to: &mut Vec<String>, more: Vec<String>) -> bool {
@@ -405,6 +452,9 @@ fn remove_all(from: &mut Vec<String>, gone: &[String]) -> bool {
 }
 
 fn edit(d: &Arc<Daemon>, a: &mut Args) -> Result<Value, Fail> {
+    // a card's secrets leave the request first, whatever comes next
+    let card_args = crate::cards::take_card(a)?;
+    let address = crate::cards::take_address(a)?;
     let id = id(a)?;
     let title = s(a, "title").map(|t| t.trim().to_string());
     if title.as_deref() == Some("") {
@@ -422,9 +472,17 @@ fn edit(d: &Arc<Daemon>, a: &mut Args) -> Result<Value, Fail> {
     };
     let notes = secret(a, "notes");
     let no_passkey = b(a, "remove_passkey");
+    let title_sent = title.is_some();
+    let mut warning = None;
     let ((), sync) = d.mutate(|safe| {
         let mut draft = safe.draft(&id)?;
         let mut changed = false;
+        // a card's or an address's own fields (docs/SYSTEM.md §4)
+        if card_args.is_some() || address.is_some() {
+            let (ch, w) = crate::cards::patch(&mut draft, card_args, address, title_sent)?;
+            changed |= ch;
+            warning = w;
+        }
         if let Some(t) = title {
             changed |= draft.title != t;
             draft.title = t;
@@ -462,5 +520,9 @@ fn edit(d: &Arc<Daemon>, a: &mut Args) -> Result<Value, Fail> {
         let unkeyed = no_passkey && safe.remove_passkey(&id)?;
         Ok(((), changed || moved || unkeyed))
     })?;
-    Ok(json!({"sync": sync}))
+    let mut v = json!({"sync": sync});
+    if let Some(w) = warning {
+        v["warning"] = json!(w);
+    }
+    Ok(v)
 }

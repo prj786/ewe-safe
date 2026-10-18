@@ -19,6 +19,9 @@ use std::time::Duration;
 use serde_json::{Value, json};
 use zeroize::Zeroize;
 
+/// The login password checked before it is sent (`keyring adopt`).
+pub mod chkpwd;
+
 pub const PROTOCOL: u64 = 1;
 /// Verbs that answer from memory.
 pub const FAST: Duration = Duration::from_secs(30);
@@ -35,7 +38,13 @@ pub const SECRET_KEYS: &[&str] = &[
     "notes",
     "passphrase",
     "private_key",
+    // login unlock (docs/SYSTEM.md §2), `keyring adopt` / `keyring unlock`
+    // (docs/KEYRING.md)
+    "login_password",
 ];
+/// The arg keys whose object carries secrets: every string in it is wiped
+/// too (`add`/`edit`'s `card`: number, security code, PIN).
+pub const SECRET_OBJECTS: &[&str] = &["card"];
 
 /// How long a verb may take: a key derivation or a talk with the place
 /// gets [`SLOW`], an import [`IMPORT`], everything else [`FAST`].
@@ -48,6 +57,14 @@ pub fn wait_for(verb: &str) -> Duration {
         "passkey-create" => SLOW,
         // saves; `ssh-enable` and `ssh-disable` wait for ewe-conf
         "ssh-add" | "ssh-new" | "ssh-adopt" | "ssh-enable" | "ssh-disable" => SLOW,
+        // a login-password key derivation, and maybe an unlock (docs/SYSTEM.md §2)
+        "login-enable" => SLOW,
+        // saves, like ssh-adopt
+        "convert" => SLOW,
+        // the running keyring's own window may wait for the user
+        "keyring-repair" | "keyring-import" | "keyring-adopt" => IMPORT,
+        // a key derivation, or a save
+        "keyring-unlock" | "keyring-release" | "keyring-rm" => SLOW,
         _ => FAST,
     }
 }
@@ -113,6 +130,15 @@ pub fn scrub(args: &mut Value) {
         for k in SECRET_KEYS {
             if let Some(Value::String(s)) = m.get_mut(*k) {
                 s.zeroize();
+            }
+        }
+        for k in SECRET_OBJECTS {
+            if let Some(Value::Object(o)) = m.get_mut(*k) {
+                for v in o.values_mut() {
+                    if let Value::String(s) = v {
+                        s.zeroize();
+                    }
+                }
             }
         }
     }
@@ -314,5 +340,19 @@ mod tests {
             assert_eq!(wait_for(v), FAST, "{v}");
         }
         assert_eq!(wait_for("import"), IMPORT);
+        assert_eq!(wait_for("convert"), SLOW);
+        assert_eq!(wait_for("fields"), FAST);
+    }
+
+    #[test]
+    fn a_cards_secrets_are_scrubbed_too() {
+        let mut a = json!({"title": "Visa", "card": {"number": "4242424242424242", "pin": "9876"}});
+        scrub(&mut a);
+        let shown = a.to_string();
+        assert!(
+            !shown.contains("4242") && !shown.contains("9876"),
+            "{shown}"
+        );
+        assert_eq!(a["title"], "Visa");
     }
 }

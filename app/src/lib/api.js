@@ -48,6 +48,15 @@ export const api = {
   init: (place, password) => invoke("init", { place, password }),
   open: (place, password) => invoke("open", { place, password }),
   unlock: (password) => invoke("unlock", { password }),
+  // login unlock (docs/SYSTEM.md §2)
+  unlockLogin: (loginPassword) => invoke("unlock_login", { loginPassword }),
+  loginStatus: () => invoke("login_status"),
+  // password = the master, only needed while the safe is locked
+  loginEnable: (loginPassword, password) => invoke("login_enable", { loginPassword, password }),
+  loginDisable: () => invoke("login_disable"),
+  checkLoginPassword: (loginPassword) => invoke("check_login_password", { loginPassword }),
+  // confirm a card fill (docs/SYSTEM.md §4): master, or login when on
+  confirm: ({ password, loginPassword } = {}) => invoke("confirm", { password, loginPassword }),
   lock: () => invoke("lock"),
   list: ({ kind, tag, deleted } = {}) => invoke("list", { kind, tag, deleted }),
   search: (text) => invoke("search", { text }),
@@ -80,6 +89,14 @@ export const api = {
   sshEnable: (confirm) => invoke("ssh_enable", { confirm }),
   sshDisable: () => invoke("ssh_disable"),
   sshStatus: () => invoke("ssh_status"),
+  // cards and addresses (docs/SYSTEM.md §4): the notes an earlier
+  // 1Password import made from them, turned into cards and addresses
+  convert: (dryRun = false) => invoke("convert", { dryRun }),
+  // the keyring (PROTOCOL.md "The keyring"): who keeps the apps' passwords,
+  // the repair of the prompt at every start, the app secrets (no secret)
+  keyringStatus: () => invoke("keyring_status"),
+  keyringRepair: (dryRun = false) => invoke("keyring_repair", { dryRun }),
+  keyringList: () => invoke("keyring_list"),
 
   // the window and the desktop around it (not the daemon)
   launchArgs: () => invoke("launch_args"),

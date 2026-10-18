@@ -24,6 +24,7 @@ and **your ewe account's Nextcloud**.
 | `crates/cli` (`ewe-safe`) | the verbs as JSON ([docs/PROTOCOL.md](docs/PROTOCOL.md)); secrets from a terminal or stdin, never argv |
 | `crates/client` (`safe_client`) | the one client of the protocol: request/reply on the socket (`SO_PEERCRED` checked), the event stream, secrets wiped from a request once it's sent; used by the CLI and the window |
 | `app/` | the Safe window (Tauri v2 + Svelte 5), phase 2: so far only its plumbing — one command per protocol verb, the daemon's events, a Svelte store and a dev mock; the screens wait for the mockup's sign-off. Its own Cargo project (`app/src-tauri`), outside this workspace, so `cargo test` here never needs webkit2gtk |
+| `crates/secrets` (`safe_secrets`) | the keyring (docs/KEYRING.md): `keyring repair` for the prompt at every start, the carrier (this computer's key in the `login` keyring), and the Secret Service server for Safe as the keyring (built, waits for the login module) |
 | `crates/testkit` | test support only: a mock WebDAV server and a switchable proxy |
 | `packaging/` | `ewe-safe.socket` (the main socket and the SSH agent's) + `ewe-safe.service` (user units) |
 
@@ -64,6 +65,30 @@ The question names the program by its full path and marks one outside
 `/usr` and `/opt`. It cuts down on surprises, nothing more: the master
 password is what protects the keys, since any program running as you can
 use the agent while Safe is unlocked (docs/PROTOCOL.md, "The SSH agent").
+
+**Unlock with your login password** (docs/SYSTEM.md §2): turn it on and the
+login password opens Safe on this computer, instead of the master password.
+
+    ewe-safe login enable        # asks your login password (checked with unix_chkpwd), and the master password if Safe is locked
+    ewe-safe login status        # enabled, and whether the session key is open
+    ewe-safe unlock --login      # opens Safe with the login password
+    ewe-safe login disable       # back to the master password only
+
+With it on, Safe on this computer is as strong as your login password; the
+copy in your ewe account still needs the master password. `confirm` is the
+fresh check a card fill asks for (`ewe-safe confirm`, or `--login`). This
+release has no PAM module (the greeter handoff waits for a review); the
+unlock key rides in gnome-keyring's `login` keyring, which already opens at
+login, so Safe opens at login too (`[safe] unlock_at_login`).
+
+**The keyring** (docs/KEYRING.md): when apps' passwords live in a second
+keyring with its own password, the keyring asks at every start. Safe fixes
+that in gnome-keyring, and keeps the old keyring as a backup:
+
+    ewe-safe keyring status            # needs_repair: true?
+    ewe-safe keyring repair --dry-run
+    ewe-safe keyring repair            # everything into `login`; `default` → `login`
+    ewe-safe keyring list              # app secrets: names and dates only
 
 ## Use Safe from scripts
 

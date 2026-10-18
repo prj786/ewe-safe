@@ -4,7 +4,8 @@
 //! `reveal` without `--json` prints the bare value (nothing and exit 1 when
 //! there is none), `unlock --ask` opens a prompt window and waits, and
 //! `watch` prints one line per event until the daemon goes away. SSH keys
-//! and the agent are `ewe-safe ssh …` ([`ssh`]).
+//! and the agent are `ewe-safe ssh …` ([`ssh`]); the keyring is
+//! `ewe-safe keyring …` ([`keyring`]).
 //! `read`, `run`, `inject` and `git-credential` follow the tools they copy
 //! (1Password's `op`, git's helpers): [`scripts`] and [`git`].
 
@@ -20,6 +21,8 @@ use serde_json::{Map, Value, json};
 use zeroize::Zeroizing;
 
 mod git;
+mod keyring;
+mod login;
 mod scripts;
 mod ssh;
 
@@ -49,6 +52,22 @@ const VALUES: &[&str] = &[
     "vault",
     "account",
     "rp",
+    // confirm (docs/SYSTEM.md §4): the sentence the window shows
+    "reason",
+    // a card's and an address's fields (add, edit; docs/SYSTEM.md §4)
+    "holder",
+    "expiry",
+    "brand",
+    "full-name",
+    "organization",
+    "line1",
+    "line2",
+    "city",
+    "region",
+    "postal-code",
+    "country",
+    "phone",
+    "email",
 ];
 const FLAGS: &[&str] = &[
     "json",
@@ -64,9 +83,35 @@ const FLAGS: &[&str] = &[
     "dry-run",
     "skip-duplicates",
     "remove-passkey",
+    // unlock/confirm with the login password (docs/SYSTEM.md §2, §4)
+    "login",
+    "card-stdin",
+    "from-1password",
 ];
 /// Read here, never sent.
-const LOCAL_FLAGS: &[&str] = &["json", "ask", "password-stdin", "notes-stdin"];
+const LOCAL_FLAGS: &[&str] = &[
+    "json",
+    "ask",
+    "password-stdin",
+    "notes-stdin",
+    "login",
+    "card-stdin",
+];
+/// A card's flags, sent in its `card` object.
+const CARD_KEYS: &[&str] = &["holder", "expiry", "brand"];
+/// An address's flags, sent in its `address` object.
+const ADDRESS_KEYS: &[&str] = &[
+    "full_name",
+    "organization",
+    "line1",
+    "line2",
+    "city",
+    "region",
+    "postal_code",
+    "country",
+    "phone",
+    "email",
+];
 const NUMBERS: &[&str] = &["length", "words", "limit", "clear-after"];
 /// Repeatable in `add` and `edit` (and `--vault` in `import`).
 const LISTS: &[&str] = &["url", "app", "tag", "remove-app", "remove-tag", "vault"];
@@ -74,7 +119,7 @@ const WITH_ID: &[&str] = &["show", "reveal", "copy", "edit", "rm", "restore"];
 const VERBS: &[&str] = &[
     "status", "summary", "init", "open", "unlock", "lock", "list", "search", "match", "show",
     "reveal", "copy", "add", "edit", "rm", "restore", "generate", "sync", "place", "passwd",
-    "import", "watch", "ping", "version", "passkey", "ssh",
+    "import", "watch", "ping", "version", "passkey", "ssh", "confirm", "convert", "keyring",
 ];
 
 struct Parsed {
@@ -235,6 +280,14 @@ fn run(argv: &[String]) -> (Value, ExitCode) {
     if argv.first().map(String::as_str) == Some("ssh") {
         return (ssh::run(&argv[1..]), ExitCode::SUCCESS);
     }
+    // login unlock on/off (docs/SYSTEM.md §2): its own stdin/chkpwd handling
+    if argv.first().map(String::as_str) == Some("login") {
+        return (login::run(&argv[1..]), ExitCode::SUCCESS);
+    }
+    // the keyring (docs/KEYRING.md)
+    if argv.first().map(String::as_str) == Some("keyring") {
+        return (keyring::run(&argv[1..]), ExitCode::SUCCESS);
+    }
     let mut p = match parse(argv) {
         Ok(p) => p,
         Err(v) => return (v, ExitCode::SUCCESS),
@@ -257,7 +310,10 @@ fn run(argv: &[String]) -> (Value, ExitCode) {
             Err(v) => done(v),
         },
         "unlock" if p.local.contains("ask") => done(unlock_ask()),
+        "unlock" if p.local.contains("login") => done(unlock_login(p.args)),
         "unlock" => done(unlock(p.args)),
+        "confirm" if p.local.contains("ask") => done(confirm_ask(&p.args)),
+        "confirm" => done(confirm(p.args, p.local.contains("login"))),
         "passwd" => done(passwd(p.args)),
         "add" | "edit" => {
             if p.local.contains("password-stdin") {
@@ -266,6 +322,18 @@ fn run(argv: &[String]) -> (Value, ExitCode) {
                     Err(v) => return done(v),
                 }
             }
+            if p.local.contains("card-stdin") {
+                match card_stdin(p.verb == "edit") {
+                    Ok(lines) => {
+                        let card = p.args.entry("card").or_insert_with(|| json!({}));
+                        for (k, v) in lines {
+                            card[k] = json!(v.as_str());
+                        }
+                    }
+                    Err(v) => return done(v),
+                }
+            }
+            card_objects(&mut p.args);
             if p.local.contains("notes-stdin") {
                 let mut notes = Zeroizing::new(String::new());
                 if let Err(e) = std::io::stdin().read_to_string(&mut notes) {
@@ -294,7 +362,9 @@ fn run(argv: &[String]) -> (Value, ExitCode) {
                 _ => (Value::Null, ExitCode::from(1)),
             }
         }
-        "sync" | "rm" | "restore" => done(client::call(&p.verb, Value::Object(p.args), SLOW)),
+        "sync" | "rm" | "restore" | "convert" => {
+            done(client::call(&p.verb, Value::Object(p.args), SLOW))
+        }
         "import" => done(client::call("import", Value::Object(p.args), IMPORT)),
         "passkey" => done(client::call("passkey-list", Value::Object(p.args), FAST)),
         "watch" => (Value::Null, watch()),
@@ -356,6 +426,40 @@ fn generate(a: &Map<String, Value>) -> Value {
     }
 }
 
+/// `--card-stdin`: the card's number, security code and PIN, one line each
+/// (no echo on a terminal). An empty line is none; in `edit` it leaves that
+/// value as it is, and `-` clears it.
+fn card_stdin(edit: bool) -> Result<Vec<(&'static str, Zeroizing<String>)>, Value> {
+    let mut out = Vec::new();
+    for (key, prompt) in [
+        ("number", "Card number: "),
+        ("security_code", "Security code: "),
+        ("pin", "PIN: "),
+    ] {
+        let line = secret(prompt)?;
+        let value = line.trim();
+        if edit && value.is_empty() {
+            continue;
+        }
+        let value = if edit && value == "-" { "" } else { value };
+        out.push((key, Zeroizing::new(value.to_string())));
+    }
+    Ok(out)
+}
+
+/// A card's and an address's flags into their `card` and `address`
+/// objects (docs/PROTOCOL.md `add`, `edit`).
+fn card_objects(args: &mut Map<String, Value>) {
+    for (object, keys) in [("card", CARD_KEYS), ("address", ADDRESS_KEYS)] {
+        for k in keys {
+            if let Some(v) = args.remove(*k) {
+                let o = args.entry(object).or_insert_with(|| json!({}));
+                o[*k] = v;
+            }
+        }
+    }
+}
+
 /// From a terminal, three tries; from stdin, one.
 fn unlock(args: Map<String, Value>) -> Value {
     let tries = if tty() { 3 } else { 1 };
@@ -375,6 +479,114 @@ fn unlock(args: Map<String, Value>) -> Value {
         eprintln!("That password doesn't open the safe. Try again.");
     }
     last
+}
+
+/// `unlock --login` (docs/SYSTEM.md §2): the login password opens Safe, not
+/// the master password. From a terminal, three tries.
+fn unlock_login(args: Map<String, Value>) -> Value {
+    let tries = if tty() { 3 } else { 1 };
+    let mut last = Value::Null;
+    for n in 0..tries {
+        let pw = match secret("Your login password: ") {
+            Ok(pw) => pw,
+            Err(v) => return v,
+        };
+        let mut a = args.clone();
+        a.insert("login_password".into(), json!(pw.as_str()));
+        last = client::call("unlock", Value::Object(a), SLOW);
+        let wrong = last.get("error").and_then(Value::as_str) == Some("wrong-key");
+        if !wrong || n + 1 == tries {
+            break;
+        }
+        eprintln!("That login password doesn't open Safe. Try again.");
+    }
+    last
+}
+
+/// `confirm` (docs/SYSTEM.md §4): type your password again for a sensitive
+/// fill. The master password by default, the login password with `--login`.
+fn confirm(mut args: Map<String, Value>, login: bool) -> Value {
+    args.remove("reason");
+    let prompt = if login {
+        "Your login password: "
+    } else {
+        "Master password for Safe: "
+    };
+    let pw = match secret(prompt) {
+        Ok(pw) => pw,
+        Err(v) => return v,
+    };
+    let key = if login { "login_password" } else { "password" };
+    args.insert(key.into(), json!(pw.as_str()));
+    client::call("confirm", Value::Object(args), FAST)
+}
+
+/// `confirm --ask`: open the confirm window (`ewe-safe-app --confirm --reason
+/// …`) and wait for it, exactly as `unlock --ask` does. The window calls
+/// `confirm` itself; its exit code is the answer (0 = confirmed).
+fn confirm_ask(args: &Map<String, Value>) -> Value {
+    let reason = args
+        .get("reason")
+        .and_then(Value::as_str)
+        .unwrap_or("Type your password to continue.");
+    let mut prompt = match std::env::var("EWE_SAFE_ASK_CMD") {
+        // a test (or a user) names the prompt
+        Ok(cmd) => {
+            let mut c = Command::new("sh");
+            c.arg("-c").arg(cmd);
+            c
+        }
+        Err(_) => match unlock_window() {
+            Some(app) => {
+                let mut c = Command::new(app);
+                c.args(["--confirm", "--reason", reason]);
+                c
+            }
+            None => {
+                return json!({
+                    "ok": false,
+                    "error": "internal",
+                    "message": "The Safe window isn't installed, so there's nothing to confirm with.",
+                    "hint": "ewe-safe confirm (in a terminal)",
+                });
+            }
+        },
+    };
+    let spawned = prompt
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn();
+    let mut child = match spawned {
+        Ok(c) => c,
+        Err(e) => {
+            return json!({
+                "ok": false,
+                "error": "internal",
+                "message": format!("Couldn't open the confirm window ({e})."),
+            });
+        }
+    };
+    let start = Instant::now();
+    loop {
+        std::thread::sleep(Duration::from_millis(200));
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                return if status.success() {
+                    json!({"ok": true, "confirmed": true})
+                } else {
+                    json!({"ok": false, "error": "cancelled", "message": "Not confirmed."})
+                };
+            }
+            Ok(None) if start.elapsed() > ASK_WAIT => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return json!({"ok": false, "error": "cancelled", "message": "The confirm window timed out."});
+            }
+            Ok(None) => {}
+            Err(e) => return json!({"ok": false, "error": "internal", "message": e.to_string()}),
+        }
+    }
 }
 
 fn passwd(mut args: Map<String, Value>) -> Value {
@@ -618,6 +830,38 @@ mod tests {
         }
         let x = p(&["edit", "4f9c", "--remove-passkey"]).unwrap();
         assert_eq!(x.args["remove_passkey"], true);
+    }
+
+    #[test]
+    fn card_and_address_flags_become_their_objects() {
+        let mut x = p(&[
+            "add",
+            "--kind",
+            "card",
+            "--holder",
+            "Sam Moe",
+            "--expiry",
+            "08/29",
+            "--card-stdin",
+        ])
+        .unwrap();
+        assert!(x.local.contains("card-stdin") && !x.args.contains_key("card_stdin"));
+        card_objects(&mut x.args);
+        assert_eq!(
+            x.args["card"],
+            json!({"holder": "Sam Moe", "expiry": "08/29"})
+        );
+        assert!(x.args.get("holder").is_none());
+        let mut x = p(&["edit", "4f9c", "--postal-code", "0105", "--country=ge"]).unwrap();
+        card_objects(&mut x.args);
+        assert_eq!(
+            x.args["address"],
+            json!({"postal_code": "0105", "country": "ge"})
+        );
+        assert!(x.args.get("card").is_none());
+        let x = p(&["convert", "--from-1password", "--dry-run"]).unwrap();
+        assert_eq!(x.args["from_1password"], true);
+        assert_eq!(x.args["dry_run"], true);
     }
 
     #[test]

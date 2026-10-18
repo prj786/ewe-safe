@@ -3,7 +3,9 @@
   // password hidden until asked, copies through the daemon (the clipboard
   // clears itself), a live one-time code, websites, apps, tags, notes. An
   // SSH key shows its public key (Copy, kept on the clipboard), fingerprint,
-  // type and whether the agent offers it.
+  // type and whether the agent offers it. A card shows its face (brand,
+  // •••• last 4, expiry, holder) with the number, the security code and the
+  // PIN hidden until asked; an address shows its lines, each one to copy.
   // A revealed value lives here for 30 s at most and goes with the item.
   import Icon from "./Icon.svelte";
   import { api } from "../api.js";
@@ -11,11 +13,14 @@
   import { ui } from "../ui.svelte.js";
   import { toasts } from "../toast.svelte.js";
   import { day, hostOf, href, letter } from "../format.js";
+  import { addressLines, brandName, countryName, expired, expiryShort, grouped, masked } from "../cards.js";
 
   let { item, trash = false } = $props();
 
   let notes = $state("");
   let shown = $state(""); // the revealed password, briefly
+  let revealed = $state({}); // a card's revealed number, code or PIN, briefly
+  let full = $state(null); // an address's every part (`show`)
   let otp = $state(null); // {code, left}
   let menu = $state(false);
   let unkey = $state(false); // asking before the passkey goes
@@ -23,13 +28,31 @@
 
   const isLogin = $derived(item.kind === "login");
   const isKey = $derived(item.kind === "ssh-key");
+  const isCard = $derived(item.kind === "card");
+  const isAddress = $derived(item.kind === "address");
   const sub = $derived(
     isLogin
       ? [item.urls?.[0] ? hostOf(item.urls[0]) : "", "Login"].filter(Boolean).join(" · ")
       : isKey
         ? ["SSH key", item.ssh?.key_type].filter(Boolean).join(" · ")
-        : "Note"
+        : isCard
+          ? ["Card", item.card?.brand && item.card.brand !== "other" ? brandName(item.card.brand) : ""].filter(Boolean).join(" · ")
+          : isAddress
+            ? "Address"
+            : "Note"
   );
+  const ADDRESS_ROWS = [
+    ["full_name", "Name"],
+    ["organization", "Organization"],
+    ["line1", "Address line 1"],
+    ["line2", "Address line 2"],
+    ["city", "City"],
+    ["region", "Region"],
+    ["postal_code", "Postal code"],
+    ["country", "Country"],
+    ["phone", "Phone"],
+    ["email", "Email"]
+  ];
   const C = 2 * Math.PI * 11; // the ring's circumference (r = 11 in a 24 box)
 
   // a new item: drop what the last one showed, load this one's notes
@@ -37,6 +60,8 @@
     const id = item.id;
     void safe.changes;
     shown = "";
+    revealed = {};
+    full = null;
     otp = null;
     menu = false;
     unkey = false;
@@ -44,7 +69,10 @@
     notes = "";
     (async () => {
       const r = await api.show(id, item.kind !== "login");
-      if (r?.ok && item.id === id) notes = r.item?.notes ?? "";
+      if (r?.ok && item.id === id) {
+        notes = r.item?.notes ?? "";
+        full = r.item?.address ?? null;
+      }
     })();
     if (item.has_otp) loadOtp(id);
     return () => clearTimeout(hideTimer);
@@ -81,11 +109,29 @@
     hideTimer = setTimeout(() => (shown = ""), 30000);
   }
 
+  /** A card's number, code or PIN, shown for 30 s (one at a time). */
+  async function toggleCard(field) {
+    clearTimeout(hideTimer);
+    if (revealed[field]) {
+      revealed = {};
+      return;
+    }
+    const v = await safe.reveal(item.id, field);
+    if (v == null) return;
+    revealed = { [field]: field === "number" ? grouped(v, item.card?.brand) : v };
+    hideTimer = setTimeout(() => (revealed = {}), 30000);
+  }
+
   const WHAT = {
     password: "the password",
     username: "the username",
     otp: "the code",
-    public_key: "the public key"
+    public_key: "the public key",
+    number: "the card number",
+    security_code: "the security code",
+    pin: "the PIN",
+    holder: "the name",
+    expiry: "the expiry date"
   };
   async function copy(field) {
     // a public key isn't a secret: it stays on the clipboard
@@ -95,8 +141,9 @@
       return;
     }
     const s = Number(r.cleared_after ?? 0);
+    const what = WHAT[field] ?? `the ${(ADDRESS_ROWS.find(([k]) => k === field)?.[1] ?? field).toLowerCase()}`;
     toasts.show(
-      s > 0 ? `Copied ${WHAT[field]}. It clears in ${s} s.` : `Copied ${WHAT[field]}.`,
+      s > 0 ? `Copied ${what}. It clears in ${s} s.` : `Copied ${what}.`,
       { icon: "clipboard-copy", ms: s > 0 ? Math.min(s, 30) * 1000 : 3000, timer: s > 0 }
     );
   }
@@ -129,6 +176,7 @@
 
   export function copyPassword() {
     if (isLogin && item.has_password) copy("password");
+    else if (isCard && item.card?.has_number) copy("number");
   }
   export function copyUsername() {
     if (isLogin && item.username) copy("username");
@@ -140,6 +188,10 @@
     <span class="safe-letter safe-letter--lg">{letter(item.title)}</span>
   {:else if isKey}
     <span class="safe-letter safe-letter--lg"><Icon name="terminal" /></span>
+  {:else if isCard}
+    <span class="safe-letter safe-letter--lg"><Icon name="credit-card" /></span>
+  {:else if isAddress}
+    <span class="safe-letter safe-letter--lg"><Icon name="map-pin" /></span>
   {:else}
     <span class="safe-letter safe-letter--lg"><Icon name="sticky-note" /></span>
   {/if}
@@ -376,6 +428,61 @@
       {/if}
     </div>
   {/if}
+{:else if isCard}
+  {@const c = item.card ?? {}}
+  <div class="safe-cardface" role="img" aria-label="{brandName(c.brand)} card{c.last4 ? ` ending in ${c.last4}` : ''}">
+    <div class="safe-cardface__top">
+      <span class="safe-cardface__brand">{brandName(c.brand)}</span>
+      {#if expired(c.expiry)}<span class="ewe-badge ewe-badge--warning"><span class="ewe-badge__label">Expired</span></span>{/if}
+      <Icon name="credit-card" size="lg" />
+    </div>
+    <div class="safe-cardface__number">{masked(c.last4, c.brand)}</div>
+    <div class="safe-cardface__foot">
+      <span class="safe-cardface__part"><span class="overline">Cardholder</span><span class="safe-cardface__value">{c.holder || "—"}</span></span>
+      <span class="safe-cardface__part safe-cardface__part--end"><span class="overline">Expires</span><span class="safe-cardface__value mono-numeric">{expiryShort(c.expiry) || "—"}</span></span>
+    </div>
+  </div>
+
+  <div class="ewe-list">
+    {#if c.has_number}{@render secretRow("number", "Card number", masked(c.last4, c.brand))}{/if}
+    {#if c.has_security_code}
+      {#if c.has_number}<div class="ewe-list__divider"></div>{/if}
+      {@render secretRow("security_code", "Security code", "•••")}
+    {/if}
+    {#if c.has_pin}
+      {#if c.has_number || c.has_security_code}<div class="ewe-list__divider"></div>{/if}
+      {@render secretRow("pin", "PIN", "••••")}
+    {/if}
+    {#if c.expiry}
+      {#if c.has_number || c.has_security_code || c.has_pin}<div class="ewe-list__divider"></div>{/if}
+      {@render plainRow("expiry", "Expiry date", expiryShort(c.expiry), "mono-numeric")}
+    {/if}
+    {#if c.holder}
+      {#if c.has_number || c.has_security_code || c.has_pin || c.expiry}<div class="ewe-list__divider"></div>{/if}
+      {@render plainRow("holder", "Name on card", c.holder)}
+    {/if}
+    {#if !c.has_number && !c.has_security_code && !c.has_pin && !c.expiry && !c.holder}
+      <div class="ewe-row"><span class="ewe-row__text"><span class="ewe-row__desc">No card details yet.</span></span></div>
+    {/if}
+  </div>
+  {@render extras()}
+{:else if isAddress}
+  {@const a = full ?? item.address ?? {}}
+  {@const lines = addressLines(a)}
+  {#if lines.length}
+    <div class="safe-address">
+      {#each lines as line, n (n)}<span class={n === 0 ? "body-strong" : "body"}>{line}</span>{/each}
+    </div>
+  {/if}
+  <div class="ewe-list">
+    {#each ADDRESS_ROWS.filter(([k]) => a[k]) as [field, label], n (field)}
+      {#if n}<div class="ewe-list__divider"></div>{/if}
+      {@render plainRow(field, label, field === "country" ? countryName(a.country) : a[field])}
+    {:else}
+      <div class="ewe-row"><span class="ewe-row__text"><span class="ewe-row__desc">No address details yet.</span></span></div>
+    {/each}
+  </div>
+  {@render extras()}
 {:else}
   <div class="ewe-list">
     <div class="ewe-row">
@@ -422,3 +529,59 @@
     </div>
   </div>
 {/if}
+
+{#snippet secretRow(field, label, dots)}
+  <div class="ewe-row">
+    <span class="ewe-row__text"><span class="ewe-row__title">{label}</span></span>
+    <span class="ewe-row__trail">
+      <span class="safe-val"><span class="mono safe-val--secret">{revealed[field] || dots}</span></span>
+      <button
+        class="ewe-iconbtn ewe-iconbtn--ghost ewe-iconbtn--sm"
+        aria-label={revealed[field] ? `Hide ${label.toLowerCase()}` : `Show ${label.toLowerCase()}`}
+        onclick={() => toggleCard(field)}><Icon name={revealed[field] ? "eye-off" : "eye"} /></button
+      >
+      <button class="ewe-iconbtn ewe-iconbtn--ghost ewe-iconbtn--sm" aria-label="Copy {label.toLowerCase()}" onclick={() => copy(field)}>
+        <Icon name="copy" />
+      </button>
+    </span>
+  </div>
+{/snippet}
+
+{#snippet plainRow(field, label, value, cls = "")}
+  <div class="ewe-row">
+    <span class="ewe-row__text"><span class="ewe-row__title">{label}</span></span>
+    <span class="ewe-row__trail">
+      <span class="safe-val {cls}">{value}</span>
+      <button class="ewe-iconbtn ewe-iconbtn--ghost ewe-iconbtn--sm" aria-label="Copy {label.toLowerCase()}" onclick={() => copy(field)}>
+        <Icon name="copy" />
+      </button>
+    </span>
+  </div>
+{/snippet}
+
+<!-- a card's or an address's tags and notes -->
+{#snippet extras()}
+  {#if item.tags?.length || notes}
+    <div class="ewe-list">
+      {#if item.tags?.length}
+        <div class="ewe-row">
+          <span class="ewe-row__text"><span class="ewe-row__title">Tags</span></span>
+          <span class="ewe-row__trail">
+            <span class="safe-chips">
+              {#each item.tags as tag (tag)}<span class="ewe-tag">{tag}</span>{/each}
+            </span>
+          </span>
+        </div>
+      {/if}
+      {#if notes}
+        {#if item.tags?.length}<div class="ewe-list__divider"></div>{/if}
+        <div class="ewe-row">
+          <span class="ewe-row__text">
+            <span class="ewe-row__title">Notes</span>
+            <span class="ewe-row__desc safe-notes">{notes}</span>
+          </span>
+        </div>
+      {/if}
+    </div>
+  {/if}
+{/snippet}

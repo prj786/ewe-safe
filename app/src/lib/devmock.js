@@ -10,17 +10,33 @@
 //   &sync=pending|offline|error|local|rollback|single-writer
 //   &keychanged=1         unlocking says the master password changed elsewhere
 //   &wrong=1              the first unlock is a wrong password
+//   &login=1              login unlock is on (the login password is "login")
 //   &mode=unlock          the compact `--unlock` window
 //   &mode=approve         the SSH agent's question (`--approve`); &system=0 a
 //                         program outside /usr and /opt
+//   &mode=confirm         a card fill's confirm (`--confirm`); &reason=…
 //   &view=ssh             the SSH keys      &agent=1   the SSH agent on
 //   &view=settings|import|trash   &edit=github|new   &gen=1 (generator open)
 //   &import=old           the daemon has no `import` verb yet
+//   &view=cards|addresses the cards, the addresses (sample data, fake numbers)
+//   &edit=card|address    edit the sample Visa / Home     &new=card|address  a new one
+//   &select=card|address  show the sample Visa / Home
+//   &convert=1            Settings' "Cards from an earlier import" finds two notes
 //   &light=1              Ewe Light (the real token map, .dev-mock/theme-light.json)
+//   &keyring=broken|locked|none|safe   the keyring: `default` names a second
+//                         keyring (the prompt at every start; locked: it is
+//                         locked too), no keyring runs, or Safe keeps them
+//                         (default: fine, gnome-keyring with `default` = login)
 // The master password is "mock".
 
 import fixture from "../../.dev-mock/items.json";
 import light from "../../.dev-mock/theme-light.json";
+import { brandOf, digits } from "./cards.js";
+
+// cards and addresses (docs/SYSTEM.md §4): fake numbers only, the card
+// networks' published test numbers
+export const MOCK_CARD = "0b6d2a1c-cccc-4c3d-8e9f-0a1b2c3d4e01";
+export const MOCK_ADDRESS = "0b6d2a1c-aaaa-4c3d-8e9f-0a1b2c3d4e01";
 
 export function install(params) {
   const flag = (k, dflt) => (params.has(k) ? params.get(k) === "1" : dflt);
@@ -32,6 +48,7 @@ export function install(params) {
     readOnly: flag("readonly", false),
     keyChanged: flag("keychanged", false),
     wrong: flag("wrong", false),
+    loginEnabled: flag("login", false),
     superP: params.get("superp") || "1password",
     items: flag("empty", false) ? [] : clone(fixture.items),
     deleted: flag("empty", false) ? [] : clone(fixture.deleted),
@@ -42,10 +59,27 @@ export function install(params) {
       clipboard_clear_seconds: 30,
       generator_length: 20,
       generator_words: 5,
+      unlock_at_login: true,
+      confirm_cards: true,
       ...(params.get("known") ? { place: params.get("known"), location: "ewe/safe/passwords.kdbx" } : {})
     },
-    agent: flag("agent", false)
+    agent: flag("agent", false),
+    keyring: params.get("keyring") ?? "fine"
   };
+  // the keyring's app secrets (names and dates only, as `keyring list`)
+  const krItems = () =>
+    s.keyring === "none"
+      ? []
+      : [
+          { id: "/org/freedesktop/secrets/collection/login/1", label: "ewe cloud", collection: "login", app: "ewe-cloud", created: minsAgo(60 * 24 * 40), modified: minsAgo(60 * 24 * 3) },
+          { id: "/org/freedesktop/secrets/collection/login/2", label: "Chrome Safe Storage", collection: "login", app: "chrome", created: minsAgo(60 * 24 * 90), modified: minsAgo(60 * 24 * 90) },
+          ...(s.keyring === "locked"
+            ? []
+            : [
+                { id: "/org/freedesktop/secrets/collection/Default_5fkeyring/1", label: "ewe mail (sam@example.org)", collection: s.keyring === "broken" ? "Default_keyring" : "login", app: "ewe-mail", created: minsAgo(60 * 24 * 30), modified: minsAgo(60 * 24 * 30) },
+                { id: "/org/freedesktop/secrets/collection/Default_5fkeyring/2", label: "ewe companion: anthropic API key", collection: s.keyring === "broken" ? "Default_keyring" : "login", app: "ewe-companion", created: minsAgo(60 * 24 * 8), modified: minsAgo(60 * 24 * 8) }
+              ])
+        ];
   // an SSH key (TRIO.md S2): the fixture has none
   const sshKey = (title, type, n) => ({
     id: crypto.randomUUID(),
@@ -69,6 +103,54 @@ export function install(params) {
     _notes: ""
   });
   if (!flag("empty", false)) s.items.push(sshKey("GitHub key", "ed25519", 1));
+  const base = (id, kind, title) => ({
+    id,
+    kind,
+    title,
+    username: "",
+    urls: [],
+    apps: [],
+    tags: [],
+    folder: "",
+    has_password: false,
+    has_otp: false,
+    modified: new Date().toISOString().replace(/\.\d+Z$/, "Z"),
+    passkey: null,
+    ssh: null,
+    card: null,
+    address: null,
+    _notes: ""
+  });
+  const cardInfo = (c) => {
+    const d = digits(c.number);
+    return {
+      brand: c.brand || (d ? brandOf(d) : "other"),
+      last4: d.length >= 10 ? d.slice(-4) : "",
+      expiry: c.expiry ?? "",
+      holder: c.holder ?? "",
+      has_number: !!d,
+      has_security_code: !!c.security_code,
+      has_pin: !!c.pin
+    };
+  };
+  const mockCard = (id, title, c, extra = {}) => ({ ...base(id, "card", title), card: cardInfo(c), _card: { ...c }, ...extra });
+  const addrInfo = (a) => ({ name: a.full_name ?? "", line1: a.line1 ?? "", city: a.city ?? "", country: a.country ?? "" });
+  const mockAddress = (id, title, a, extra = {}) => ({ ...base(id, "address", title), address: addrInfo(a), _address: { ...a }, ...extra });
+  if (!flag("empty", false)) {
+    s.items.push(
+      mockCard(MOCK_CARD, "Visa •• 4242", { holder: "Sam Shepherd", number: "4242424242424242", expiry: "08/2029", security_code: "123", pin: "4321" }, { tags: ["money"], _notes: "Daily card. Bank: Ewe Bank." }),
+      mockCard(crypto.randomUUID(), "Work Amex", { holder: "Sam Shepherd", number: "378282246310005", expiry: "03/2027", security_code: "1234" }, { folder: "Work" }),
+      mockCard(crypto.randomUUID(), "Old Mastercard", { holder: "S Shepherd", number: "5555555555554444", expiry: "11/2024", security_code: "321" }),
+      mockAddress(MOCK_ADDRESS, "Home", { full_name: "Sam Shepherd", line1: "12 Rustaveli Ave", line2: "Flat 4", city: "Tbilisi", postal_code: "0108", country: "GE", phone: "+995 555 12 34 56", email: "sam@example.org" }),
+      mockAddress(crypto.randomUUID(), "Work", { full_name: "Sam Shepherd", organization: "Flock Ltd", line1: "1 Hill Rd", city: "Ewetown", region: "Canterbury", postal_code: "9012", country: "NZ", phone: "+64 21 000 001" }, { folder: "Work" })
+    );
+  }
+  // "8/29", "08/29" → "08/2029"
+  const longExpiry = (e) => {
+    const d = digits(e);
+    return d.length === 4 ? `${d.slice(0, 2)}/20${d.slice(2)}` : d.length === 6 ? `${d.slice(0, 2)}/${d.slice(2)}` : "";
+  };
+  const CARD_FIELDS = { number: "number", Number: "number", security_code: "security_code", "Security code": "security_code", pin: "pin", PIN: "pin", holder: "holder", Cardholder: "holder", expiry: "expiry", Expiry: "expiry" };
   const listeners = { "safe-event": new Set(), "safe-daemon": new Set(), "safe-args": new Set() };
   const emit = (name, payload) => listeners[name]?.forEach((fn) => fn(payload));
   const fail = (error, message, hint) => ({ ok: false, error, message, ...(hint ? { hint } : {}) });
@@ -83,7 +165,7 @@ export function install(params) {
   };
   const place = { kind: syncKind === "local" ? "local" : "nextcloud", location: "ewe/safe/passwords.kdbx", guarded: syncKind !== "single-writer" };
   const find = (id) => s.items.find((i) => i.id === id) ?? s.deleted.find((i) => i.id === id);
-  const pub = ({ _notes, _password, ...rest }) => rest;
+  const pub = ({ _notes, _password, _card, _address, ...rest }) => rest;
   const unavailable = () =>
     fail("daemon-unavailable", "Safe's service isn't running (mock).", "systemctl --user start ewe-safe.socket");
   const changed = () => emit("safe-event", { event: "changed" });
@@ -100,7 +182,8 @@ export function install(params) {
       read_only: s.readOnly,
       ...(s.readOnly ? { reasons: ["2 items have a field Safe can't keep (from KeePassXC's browser add-on)."] } : {}),
       place: s.setUp ? place : null,
-      unlock_methods: ["password"],
+      unlock_methods: s.loginEnabled ? ["password", "login"] : ["password"],
+      login: { enabled: s.loginEnabled, session_open: s.loginEnabled },
       items: s.locked ? null : s.items.length,
       sync: s.setUp ? sync : null,
       version: "0.1.0-alpha"
@@ -138,6 +221,33 @@ export function install(params) {
       emit("safe-event", { event: "unlocked" });
       return { ok: true, items: s.items.length };
     },
+    // login unlock (docs/SYSTEM.md §2): the mock login password is "login"
+    unlock_login: ({ loginPassword }) => {
+      if (!s.setUp) return fail("not-set-up", "There's no safe on this computer yet.", "ewe-safe init");
+      if (!s.loginEnabled) return fail("not-enabled", "Login unlock isn't set up on this computer.");
+      if (loginPassword !== "login") return fail("wrong-key", "That login password doesn't open Safe.");
+      s.locked = false;
+      emit("safe-event", { event: "unlocked" });
+      return { ok: true, items: s.items.length };
+    },
+    login_status: () => ({ ok: true, enabled: s.loginEnabled, session_open: s.loginEnabled }),
+    login_enable: ({ loginPassword, password }) => {
+      if (loginPassword !== "login") return fail("wrong-key", "That isn't your login password.");
+      if (s.locked && password !== "mock") return fail("wrong-key", "That password doesn't open the safe.");
+      s.loginEnabled = true;
+      return { ok: true, enabled: true };
+    },
+    login_disable: () => {
+      s.loginEnabled = false;
+      return { ok: true, enabled: false };
+    },
+    // the window runs unix_chkpwd itself; the mock just checks the fake pw
+    check_login_password: ({ loginPassword }) =>
+      loginPassword === "login" ? { ok: true } : fail("wrong-key", "That isn't your login password."),
+    confirm: ({ password, loginPassword }) => {
+      const ok = loginPassword ? loginPassword === "login" : password === "mock";
+      return ok ? { ok: true, confirmed_for: 300 } : fail("wrong-key", "That password is wrong.");
+    },
     lock: () => {
       s.locked = true;
       emit("safe-event", { event: "locked", reason: "user" });
@@ -163,7 +273,8 @@ export function install(params) {
     show: ({ id, revealNotes }) => {
       const i = find(id);
       if (!i) return fail("not-found", `No item ${id}.`);
-      return { ok: true, item: { ...pub(i), ...(i.kind === "login" || revealNotes ? { notes: i._notes ?? "" } : {}) } };
+      const full = i.kind === "address" ? { address: { ...i.address, ...i._address } } : {};
+      return { ok: true, item: { ...pub(i), ...full, ...(i.kind === "login" || revealNotes ? { notes: i._notes ?? "" } : {}) } };
     },
     reveal: ({ id, field }) => {
       const i = find(id);
@@ -173,12 +284,32 @@ export function install(params) {
       if (field === "username") return { ok: true, value: i.username };
       if (field === "notes") return { ok: true, value: i._notes ?? "" };
       if (field === "public_key" && i.ssh) return { ok: true, value: i.ssh.public_key };
+      if (i.kind === "card" && CARD_FIELDS[field]) {
+        const v = i._card?.[CARD_FIELDS[field]] ?? "";
+        return v ? { ok: true, value: v } : fail("not-found", `${id}: no such field.`);
+      }
+      if (i.kind === "address" && i._address?.[field] !== undefined) return { ok: true, value: i._address[field] };
       return fail("not-found", `No field ${field}.`);
     },
     copy: ({ id }) => (find(id) ? { ok: true, copied: true, cleared_after: s.settings.clipboard_clear_seconds } : fail("not-found", `No item ${id}.`)),
     add: ({ item }) => {
       if (s.readOnly) return fail("read-only", "Safe can't save this file.");
       const id = crypto.randomUUID();
+      if (item?.kind === "card") {
+        const c = { ...(item.card ?? {}) };
+        c.number = digits(c.number);
+        c.expiry = c.expiry ? longExpiry(c.expiry) : "";
+        const info = cardInfo(c);
+        const title = item.title || `${{ visa: "Visa", mastercard: "Mastercard", amex: "Amex" }[info.brand] ?? "Card"}${info.last4 ? ` •• ${info.last4}` : ""}`;
+        s.items.push(mockCard(id, title, c, { tags: item.tag ?? [], _notes: item.notes ?? "" }));
+        changed();
+        return { ok: true, item_id: id, sync: { ...sync, state: "pending", pending: true } };
+      }
+      if (item?.kind === "address") {
+        s.items.push(mockAddress(id, item.title || "Home", item.address ?? {}, { tags: item.tag ?? [], _notes: item.notes ?? "" }));
+        changed();
+        return { ok: true, item_id: id, sync: { ...sync, state: "pending", pending: true } };
+      }
       s.items.push({
         id,
         kind: item?.kind ?? "login",
@@ -212,6 +343,18 @@ export function install(params) {
       i.apps = i.apps.filter((a) => !(item?.remove_app ?? []).includes(a));
       for (const t of item?.tag ?? []) if (!i.tags.includes(t)) i.tags.push(t);
       i.tags = i.tags.filter((t) => !(item?.remove_tag ?? []).includes(t));
+      if (item?.card && i.kind === "card") {
+        const c = { ...item.card };
+        if (c.number !== undefined) c.number = digits(c.number);
+        if (c.expiry !== undefined) c.expiry = c.expiry ? longExpiry(c.expiry) : "";
+        i._card = { ...i._card, ...c };
+        if (c.number !== undefined && c.brand === undefined) i._card.brand = "";
+        i.card = cardInfo(i._card);
+      }
+      if (item?.address && i.kind === "address") {
+        i._address = { ...i._address, ...item.address };
+        i.address = addrInfo(i._address);
+      }
       if (item?.remove_passkey && i.passkey) {
         i.passkey = null;
         i.tags = i.tags.filter((t) => t !== "Passkey");
@@ -288,6 +431,17 @@ export function install(params) {
       return { ok: true, item_id: k.id, ssh: k.ssh, sync };
     },
     ssh_adopt: ({ dryRun }) => ({ ok: true, adopted: [], skipped: [], ...(dryRun ? { dry_run: true } : { sync }) }),
+    convert: ({ dryRun }) => {
+      const found =
+        params.get("convert") === "1"
+          ? [
+              { item_id: crypto.randomUUID(), title: "Visa (1Password)", kind: "card" },
+              { item_id: crypto.randomUUID(), title: "Sam Shepherd", kind: "address" }
+            ]
+          : [];
+      const skipped = params.get("convert") === "1" ? [{ title: "Store card", reason: "Safe found no card number in it" }] : [];
+      return { ok: true, converted: found, skipped, ...(dryRun ? { dry_run: true } : { sync }) };
+    },
     ssh_enable: () => {
       s.agent = true;
       return { ok: true, enabled: true, recorded: true, socket: "/run/user/1000/ewe-safe-ssh.sock", identity_agent: "IdentityAgent /run/user/1000/ewe-safe-ssh.sock" };
@@ -311,9 +465,39 @@ export function install(params) {
       ssh_config_agents: []
     }),
 
+    keyring_status: () => {
+      const broken = s.keyring === "broken" || s.keyring === "locked";
+      return {
+        ok: true,
+        adopted: s.keyring === "safe",
+        serving: s.keyring === "safe",
+        open: s.keyring === "safe",
+        items: s.keyring === "safe" ? krItems().length : 0,
+        owner: { none: "none", safe: "ewe-safe" }[s.keyring] ?? "gnome-keyring",
+        pam: false,
+        default: s.keyring === "none" ? null : broken ? "Default_keyring" : "login",
+        collections: s.keyring === "none" ? [] : broken ? ["Default_keyring", "login", "session"] : ["login", "session"],
+        needs_repair: broken
+      };
+    },
+    keyring_list: () => ({
+      ok: true,
+      items: krItems().sort((a, b) => a.label.localeCompare(b.label)),
+      locked: s.keyring === "locked" ? [{ collection: "Default_keyring", label: "Default keyring", items: 2 }] : [],
+      source: { none: "none", safe: "ewe-safe" }[s.keyring] ?? "gnome-keyring"
+    }),
+    keyring_repair: ({ dryRun }) => {
+      if (s.keyring === "none") return fail("source-error", "No keyring runs now.");
+      if (s.keyring === "fine") return { ok: true, already: true, fixed: true, default_was: "login", moved: 0, duplicates: 0, conflicts: 0, replaced: 0, skipped: 0, locked: [], sources: [], message: "The keyring is fine: “default” already is your login keyring." };
+      const report = { default_was: "Default_keyring", already: false, moved: 2, duplicates: 1, conflicts: 0, replaced: 0, skipped: 0, locked: [], sources: ["Default_keyring"] };
+      if (!dryRun) s.keyring = "fine";
+      return { ok: true, ...report, fixed: !dryRun, ...(dryRun ? { dry_run: true } : { hint: "The old keyring (Default_keyring) stays as a backup. To delete it later: Passwords and Keys (seahorse) → right-click it → Delete, or remove ~/.local/share/keyrings/Default_keyring.keyring and log out and back in." }) };
+    },
+
     // the window's own commands
     launch_args: () => ({
-      mode: ["unlock", "approve"].includes(params.get("mode")) ? params.get("mode") : "main",
+      mode: ["unlock", "approve", "confirm"].includes(params.get("mode")) ? params.get("mode") : "main",
+      reason: params.get("mode") === "confirm" ? params.get("reason") || "Type your password to fill Visa •• 4242 on shop.com" : null,
       approve:
         params.get("mode") === "approve"
           ? {
@@ -354,8 +538,8 @@ export function install(params) {
     print_page: () => ({ ok: true }),
     quit_app: () => ({ ok: true })
   };
-  const local = new Set(["daemon_state", "launch_args", "theme_tokens", "theme_key", "settings_get", "settings_set", "passwords_provider", "use_safe_for_passwords", "cloud_status", "window_classes", "open_url", "open_ewe_sync", "pick_file", "print_page", "quit_app"]);
-  const needsUnlock = new Set(["list", "search", "match_items", "show", "reveal", "copy", "add", "edit", "rm", "restore", "import_items", "ssh_new", "ssh_add", "ssh_adopt"]);
+  const local = new Set(["daemon_state", "launch_args", "theme_tokens", "theme_key", "settings_get", "settings_set", "passwords_provider", "use_safe_for_passwords", "cloud_status", "window_classes", "open_url", "open_ewe_sync", "pick_file", "print_page", "quit_app", "check_login_password"]);
+  const needsUnlock = new Set(["list", "search", "match_items", "show", "reveal", "copy", "add", "edit", "rm", "restore", "import_items", "ssh_new", "ssh_add", "ssh_adopt", "confirm", "convert"]);
 
   window.__SAFE_MOCK__ = {
     async invoke(cmd, args) {
@@ -388,13 +572,27 @@ export async function arrange(params, ui) {
   if (view === "settings" || view === "import") ui.go(view);
   if (view === "trash") ui.pick({ trash: true });
   if (view === "ssh") ui.pick({ kind: "ssh-key" });
+  if (view === "cards") ui.pick({ kind: "card" });
+  if (view === "addresses") ui.pick({ kind: "address" });
   const edit = params.get("edit");
-  if (edit && edit !== "new") {
+  if (edit === "card" || edit === "address") {
+    ui.pick({ kind: edit });
+    ui.selected = edit === "card" ? MOCK_CARD : MOCK_ADDRESS;
+    ui.editing = { mode: "edit", id: ui.selected, kind: edit };
+  } else if (edit && edit !== "new") {
     ui.selected = fixture.items.find((i) => i.title.toLowerCase() === edit)?.id ?? null;
     ui.editing = { mode: "edit", id: ui.selected, kind: "login" };
   }
   const sel = params.get("select");
   if (sel) ui.selected = fixture.items.find((i) => i.title.toLowerCase() === sel)?.id ?? null;
+  // &select=card|address: the sample Visa, the sample Home
+  if (sel === "card") ui.selected = MOCK_CARD;
+  if (sel === "address") ui.selected = MOCK_ADDRESS;
+  const fresh = params.get("new");
+  if (fresh === "card" || fresh === "address") {
+    ui.pick({ kind: fresh });
+    ui.editing = { mode: "new", kind: fresh };
+  }
   if (params.get("step")) ui.setupStep = params.get("step");
   if (params.get("kit") === "1") ui.kit = true;
   if (params.get("gen") === "1") ui.genOpen = true;

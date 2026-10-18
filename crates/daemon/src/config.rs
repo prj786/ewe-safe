@@ -66,6 +66,27 @@ impl Paths {
         self.state.join("machine.json")
     }
 
+    /// docs/SYSTEM.md §2: W under the login password.
+    pub fn login_key(&self) -> PathBuf {
+        self.state.join(safe_login::LOGIN_KEY)
+    }
+
+    /// The master password under W (login unlock on).
+    pub fn master_wrap(&self) -> PathBuf {
+        self.state.join(safe_login::MASTER_WRAP)
+    }
+
+    /// The app secrets under W (Safe is the keyring).
+    pub fn keyring(&self) -> PathBuf {
+        self.state.join(safe_login::KEYRING)
+    }
+
+    /// Present = this user adopted Safe as the keyring; read by
+    /// `pam_ewe_safe.so` to skip gnome-keyring at login.
+    pub fn keyring_marker(&self) -> PathBuf {
+        self.state.join("keyring.on")
+    }
+
     pub fn default_local(&self) -> PathBuf {
         self.data.join("passwords.kdbx")
     }
@@ -85,6 +106,12 @@ pub struct Settings {
     pub ssh_agent: bool,
     /// `ssh_confirm`: `first-use` | `every-time` | `never`.
     pub ssh_confirm: String,
+    /// `unlock_at_login`: the key carried in the login keyring also unlocks the safe (not
+    /// only the keyring), when login unlock is on (docs/SYSTEM.md §2).
+    pub unlock_at_login: bool,
+    /// `confirm_cards`: filling a card (the browser's `fields`) needs a
+    /// password typed in the last 5 minutes (docs/SYSTEM.md D5).
+    pub confirm_cards: bool,
 }
 
 impl Default for Settings {
@@ -98,6 +125,8 @@ impl Default for Settings {
             generator_words: 5,
             ssh_agent: false,
             ssh_confirm: CONFIRM_FIRST_USE.to_string(),
+            unlock_at_login: true,
+            confirm_cards: true,
         }
     }
 }
@@ -138,6 +167,8 @@ impl Settings {
                 .map(|c| c.trim().to_lowercase())
                 .filter(|c| CONFIRMS.contains(&c.as_str()))
                 .unwrap_or(d.ssh_confirm),
+            unlock_at_login: truthy(t.get("unlock_at_login"), d.unlock_at_login),
+            confirm_cards: truthy(t.get("confirm_cards"), d.confirm_cards),
         }
     }
 
@@ -262,6 +293,14 @@ mod tests {
     }
 
     #[test]
+    fn unlock_at_login_defaults_on_and_reads_as_json_or_text() {
+        assert!(Settings::default().unlock_at_login);
+        assert!(!Settings::from_table(&json!({"unlock_at_login": false})).unlock_at_login);
+        assert!(!Settings::from_table(&json!({"unlock_at_login": "off"})).unlock_at_login);
+        assert!(Settings::from_table(&json!({})).unlock_at_login);
+    }
+
+    #[test]
     fn ssh_settings_read_as_json_or_text() {
         let d = Settings::default();
         assert!(!d.ssh_agent);
@@ -275,6 +314,14 @@ mod tests {
             s.ssh_confirm, "first-use",
             "an unknown value is the default"
         );
+    }
+
+    #[test]
+    fn filling_a_card_asks_again_unless_turned_off() {
+        assert!(Settings::default().confirm_cards);
+        assert!(!Settings::from_table(&json!({"confirm_cards": false})).confirm_cards);
+        assert!(!Settings::from_table(&json!({"confirm_cards": "off"})).confirm_cards);
+        assert!(Settings::from_table(&json!({"confirm_cards": "maybe"})).confirm_cards);
     }
 
     #[test]

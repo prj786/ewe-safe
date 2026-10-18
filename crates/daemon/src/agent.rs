@@ -784,7 +784,7 @@ impl Peer {
 // ── prompts ─────────────────────────────────────────────────────────────
 
 /// `ewe-safe` next to this binary, or on the PATH.
-fn cli() -> PathBuf {
+pub(crate) fn cli() -> PathBuf {
     std::env::current_exe()
         .ok()
         .map(|p| p.with_file_name("ewe-safe"))
@@ -792,7 +792,7 @@ fn cli() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("ewe-safe"))
 }
 
-fn on_path(name: &str) -> Option<PathBuf> {
+pub(crate) fn on_path(name: &str) -> Option<PathBuf> {
     let beside = std::env::current_exe()
         .ok()
         .map(|p| p.with_file_name(name))
@@ -807,7 +807,7 @@ fn on_path(name: &str) -> Option<PathBuf> {
 /// A prompt needs the session's display: the daemon's own when the session
 /// passed it on (ewe's autostart imports it into the user manager),
 /// otherwise the Wayland socket in `$XDG_RUNTIME_DIR`.
-fn display_env(paths: &Paths) -> Vec<(String, String)> {
+pub(crate) fn display_env(paths: &Paths) -> Vec<(String, String)> {
     if std::env::var_os("WAYLAND_DISPLAY").is_some() {
         return Vec::new();
     }
@@ -832,7 +832,7 @@ fn display_env(paths: &Paths) -> Vec<(String, String)> {
 /// user unit of its own, `systemd-run --user --wait --pipe`, whose exit
 /// status is the prompt's; `--setenv=NAME` hands it `env` from systemd-run's
 /// own environment, so no value is on a command line.
-fn prompt(program: &OsStr, args: &[&str], env: &[(String, String)]) -> Command {
+pub(crate) fn prompt(program: &OsStr, args: &[&str], env: &[(String, String)]) -> Command {
     let run = on_path("systemd-run").filter(|_| std::env::var_os("INVOCATION_ID").is_some());
     prompt_in(run, program, args, env)
 }

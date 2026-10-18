@@ -906,3 +906,204 @@ fn an_unused_safe_locks_itself() {
         s.daemon_log().contains("locked (idle)")
     });
 }
+
+// ── login unlock (docs/SYSTEM.md §2) ───────────────────────────────────────
+
+const LOGIN_PW: &str = "login-pw-7781";
+
+/// A sandbox set up for login unlock: a cheap login KDF, and a fake
+/// `unix_chkpwd` that accepts `EWE_FAKE_LOGIN_PW` (the daemon's own
+/// NoNewPrivileges blocks the real setuid helper; the CLI runs it).
+fn login_sandbox(name: &str) -> Sandbox {
+    let mut s = Sandbox::new(name);
+    let chk = s.bin.join("chkpwd");
+    write_exec(
+        &chk,
+        "#!/bin/sh\n# unix_chkpwd stand-in: the password is all of stdin, no newline\n[ \"$(cat)\" = \"$EWE_FAKE_LOGIN_PW\" ] && exit 0 || exit 7\n",
+    );
+    s.extra = vec![
+        ("EWE_SAFE_LOGIN_KDF".into(), "64,1,1".into()),
+        ("EWE_SAFE_CHKPWD".into(), chk.display().to_string()),
+        ("EWE_FAKE_LOGIN_PW".into(), LOGIN_PW.into()),
+    ];
+    s.start();
+    s
+}
+
+fn safe_state(s: &Sandbox) -> PathBuf {
+    s.root.join("state/ewe/safe")
+}
+
+#[test]
+fn login_unlock_enable_unlock_disable() {
+    let s = login_sandbox("login-roundtrip");
+    s.init(&["--place", "local"]);
+    // off to start with
+    let st = s.ok(&["login", "status"]);
+    assert_eq!(st["enabled"], false);
+    assert_eq!(s.ok(&["status"])["unlock_methods"], json!(["password"]));
+
+    // enable: the safe is unlocked, so only the login password is needed
+    let en = s.cli_in(&["login", "enable"], &format!("{LOGIN_PW}\n"));
+    assert_eq!(en["ok"], true, "enable: {en}");
+    assert_eq!(en["enabled"], true);
+    assert!(
+        safe_state(&s).join("login.key").exists(),
+        "login.key written"
+    );
+    assert!(
+        safe_state(&s).join("master.wrap").exists(),
+        "master.wrap written"
+    );
+
+    // status now shows the method
+    let st = s.ok(&["status"]);
+    assert_eq!(st["unlock_methods"], json!(["password", "login"]));
+    assert_eq!(st["login"]["enabled"], true);
+    assert_eq!(st["login"]["session_open"], true);
+
+    // the wrong login password is refused; it isn't the master password either
+    s.cli(&["lock"]);
+    assert_eq!(
+        s.cli_in(&["unlock", "--login"], &format!("{MASTER}\n"))["error"],
+        "wrong-key"
+    );
+    // the right login password opens the safe with no master password
+    let u = s.cli_in(&["unlock", "--login"], &format!("{LOGIN_PW}\n"));
+    assert_eq!(u["ok"], true, "login unlock: {u}");
+    assert_eq!(s.ok(&["status"])["locked"], false);
+
+    // disable: master.wrap goes, the method with it
+    let di = s.ok(&["login", "disable"]);
+    assert_eq!(di["enabled"], false);
+    assert!(
+        !safe_state(&s).join("master.wrap").exists(),
+        "master.wrap removed"
+    );
+    assert_eq!(s.ok(&["status"])["unlock_methods"], json!(["password"]));
+    assert_eq!(s.ok(&["login", "status"])["enabled"], false);
+}
+
+#[test]
+fn enable_refuses_a_wrong_login_password() {
+    let s = login_sandbox("login-chkpwd");
+    s.init(&["--place", "local"]);
+    // the fake chkpwd rejects anything but LOGIN_PW, so enable never reaches
+    // the daemon and nothing is written
+    let en = s.cli_in(&["login", "enable"], "not-my-login\n");
+    assert_eq!(en["error"], "wrong-key", "{en}");
+    assert!(!safe_state(&s).join("master.wrap").exists());
+    assert_eq!(s.ok(&["login", "status"])["enabled"], false);
+}
+
+#[test]
+fn five_wrong_login_tries_lock_until_the_master_password() {
+    let s = login_sandbox("login-tries");
+    s.init(&["--place", "local"]);
+    s.cli_in(&["login", "enable"], &format!("{LOGIN_PW}\n"));
+    s.cli(&["lock"]);
+    for n in 1..=4 {
+        assert_eq!(
+            s.cli_in(&["unlock", "--login"], "wrong\n")["error"],
+            "wrong-key",
+            "try {n}"
+        );
+    }
+    // the fifth wrong try trips the limit, and it stays tripped
+    assert_eq!(
+        s.cli_in(&["unlock", "--login"], "wrong\n")["error"],
+        "too-many-tries"
+    );
+    assert_eq!(
+        s.cli_in(&["unlock", "--login"], &format!("{LOGIN_PW}\n"))["error"],
+        "too-many-tries",
+        "a correct login password is still refused while tripped"
+    );
+    // the master password clears it
+    assert_eq!(s.cli_in(&["unlock"], &format!("{MASTER}\n"))["ok"], true);
+    s.cli(&["lock"]);
+    assert_eq!(
+        s.cli_in(&["unlock", "--login"], &format!("{LOGIN_PW}\n"))["ok"],
+        true,
+        "login unlock works again after the master password"
+    );
+}
+
+#[test]
+fn a_changed_master_password_is_re_sealed_and_login_still_opens() {
+    let s = login_sandbox("login-reseal");
+    s.init(&["--place", "local"]);
+    s.cli_in(&["login", "enable"], &format!("{LOGIN_PW}\n"));
+    // change the master password here: master.wrap is re-sealed with it
+    let new_master = "a-new-master-9Qx";
+    let p = s.cli_in(&["passwd"], &format!("{new_master}\n{new_master}\n"));
+    assert_eq!(p["ok"], true, "passwd: {p}");
+    s.cli(&["lock"]);
+    // login unlock opens the safe at the new master password, no prompt for it
+    let u = s.cli_in(&["unlock", "--login"], &format!("{LOGIN_PW}\n"));
+    assert_eq!(u["ok"], true, "login unlock after master change: {u}");
+}
+
+#[test]
+fn a_stale_master_wrap_gives_key_changed_and_is_dropped() {
+    let s = login_sandbox("login-keychanged");
+    s.init(&["--place", "local"]);
+    s.cli_in(&["login", "enable"], &format!("{LOGIN_PW}\n"));
+    s.cli(&["lock"]);
+    // stand in for "the master changed on another machine": re-seal
+    // master.wrap under the real W but a master that no longer opens the safe
+    let dir = safe_state(&s);
+    let w = safe_login::open_key(&dir.join(safe_login::LOGIN_KEY), LOGIN_PW.as_bytes())
+        .expect("open login.key");
+    safe_login::seal_master(&dir.join(safe_login::MASTER_WRAP), &w, "stale-master").unwrap();
+    let u = s.cli_in(&["unlock", "--login"], &format!("{LOGIN_PW}\n"));
+    assert_eq!(u["error"], "key-changed", "{u}");
+    assert!(
+        !dir.join(safe_login::MASTER_WRAP).exists(),
+        "a stale master.wrap is deleted"
+    );
+    // the master password still opens it
+    assert_eq!(s.cli_in(&["unlock"], &format!("{MASTER}\n"))["ok"], true);
+}
+
+#[test]
+fn confirm_takes_the_master_or_the_login_password() {
+    let s = login_sandbox("login-confirm");
+    s.init(&["--place", "local"]);
+    // unlocked: the master password confirms
+    let c = s.cli_in(&["confirm"], &format!("{MASTER}\n"));
+    assert_eq!(c["ok"], true, "{c}");
+    assert!(c["confirmed_for"].as_u64().unwrap() > 290);
+    assert_eq!(
+        s.cli_in(&["confirm"], "not-the-master\n")["error"],
+        "wrong-key"
+    );
+    // with login unlock on, the login password confirms too
+    s.cli_in(&["login", "enable"], &format!("{LOGIN_PW}\n"));
+    assert_eq!(
+        s.cli_in(&["confirm", "--login"], &format!("{LOGIN_PW}\n"))["ok"],
+        true
+    );
+    assert_eq!(
+        s.cli_in(&["confirm", "--login"], "wrong-login\n")["error"],
+        "wrong-key"
+    );
+    // locked: nothing to confirm
+    s.cli(&["lock"]);
+    assert_eq!(
+        s.cli_in(&["confirm"], &format!("{MASTER}\n"))["error"],
+        "locked"
+    );
+}
+
+#[test]
+fn login_unlock_is_off_until_enabled() {
+    let s = login_sandbox("login-not-enabled");
+    s.init(&["--place", "local"]);
+    s.cli(&["lock"]);
+    // no master.wrap yet: a login unlock has nothing to open
+    assert_eq!(
+        s.cli_in(&["unlock", "--login"], &format!("{LOGIN_PW}\n"))["error"],
+        "not-enabled"
+    );
+}

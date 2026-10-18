@@ -115,7 +115,27 @@ pub const SETTINGS: &[&str] = &[
     "clipboard_clear_seconds",
     "generator_length",
     "generator_words",
+    // login unlock (docs/SYSTEM.md §2): unlock the safe at login too
+    "unlock_at_login",
+    // filling a card asks for the password again (docs/SYSTEM.md D5)
+    "confirm_cards",
 ];
+
+/// The login password, checked with `unix_chkpwd` the way pam_unix does
+/// (`safe_client::chkpwd`: NUL-ended on stdin); `ok: true` when it's right
+/// (docs/SYSTEM.md §2). The daemon can't run it (`NoNewPrivileges`), so the
+/// window does, like the CLI. `EWE_SAFE_CHKPWD` replaces the helper for tests.
+pub fn check_login_password(password: &str) -> Value {
+    match safe_client::chkpwd::check(password) {
+        Ok(true) => json!({"ok": true}),
+        Ok(false) => {
+            json!({"ok": false, "error": "wrong-key", "message": "That isn't your login password."})
+        }
+        Err(e) => {
+            json!({"ok": false, "error": "internal", "message": format!("Couldn't check the login password ({e}).")})
+        }
+    }
+}
 
 pub fn settings_get() -> Value {
     let v = tool_json("ewe-conf", &["get", "safe"], Duration::from_secs(10));
