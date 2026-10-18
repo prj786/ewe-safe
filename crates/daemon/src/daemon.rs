@@ -203,6 +203,8 @@ pub struct Daemon {
     last_use: Mutex<Instant>,
     wake: Mutex<Option<Sender<Wake>>>,
     pub clip: Mutex<Option<clip::Job>>,
+    /// W for the login session (docs/SYSTEM.md §2).
+    pub session: crate::session::Session,
 }
 
 impl Daemon {
@@ -229,6 +231,7 @@ impl Daemon {
             last_use: Mutex::new(Instant::now()),
             wake: Mutex::new(None),
             clip: Mutex::new(None),
+            session: crate::session::Session::default(),
         }
     }
 
@@ -351,6 +354,7 @@ impl Daemon {
             self.refresh_held(None);
             clip::clear_if_ours(self);
             crate::passkey::forget_used();
+            self.session.clear_confirm();
             log(&format!("locked ({reason})"));
             self.emit(json!({"v": 1, "event": "locked", "reason": reason}));
         }

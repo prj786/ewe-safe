@@ -1,0 +1,23 @@
+[package]
+name = "safe-login"
+description = "ewe-safe's login unlock: this computer's key, sealed by the login password (docs/SYSTEM.md §2)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lib]
+name = "safe_login"
+
+[dependencies]
+# the same Argon2 as the KDBX side (already in keepass-rs's tree)
+rust-argon2 = "3"
+chacha20poly1305 = "0.11"
+getrandom = "0.4"
+zeroize = "1"
+base64 = "0.23"
+serde_json = "1"
+libc = "0.2"
+
+[dev-dependencies]
+tempfile = "3"

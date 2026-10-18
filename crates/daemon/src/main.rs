@@ -14,6 +14,8 @@
 //!   `op`, added in one edit.
 //! - [`resolve`]: the value a `safe://` reference names.
 //! - [`passkey`]: the passkey verbs (list, create, get) for the browser.
+//! - [`session`]: W, this computer's session key, for the login session
+//!   (docs/SYSTEM.md).
 //! - [`agent`]: the SSH agent on its own socket; [`sshkeys`]: the `ssh-*`
 //!   verbs.
 
@@ -27,6 +29,7 @@ mod logind;
 mod passkey;
 mod resolve;
 mod server;
+mod session;
 mod sshkeys;
 mod verbs;
 mod worker;

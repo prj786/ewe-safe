@@ -373,6 +373,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "chacha20poly1305"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9b89e1c441e926b9c82a8d023f6e1b7ae0adcfaa7d621814e4d60789bac751cb"
+dependencies = [
+ "aead",
+ "chacha20",
+ "cipher",
+ "poly1305",
+]
+
+[[package]]
 name = "chrono"
 version = "0.4.45"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -784,6 +796,7 @@ dependencies = [
  "keepass",
  "libc",
  "safe-core",
+ "safe-login",
  "safe-store",
  "serde_json",
  "sha2 0.11.1",
@@ -1765,6 +1778,20 @@ dependencies = [
  "uuid",
  "zeroize",
  "zip",
+]
+
+[[package]]
+name = "safe-login"
+version = "0.2.0-beta"
+dependencies = [
+ "base64 0.23.1",
+ "chacha20poly1305",
+ "getrandom 0.4.3",
+ "libc",
+ "rust-argon2",
+ "serde_json",
+ "tempfile",
+ "zeroize",
 ]
 
 [[package]]

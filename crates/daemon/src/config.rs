@@ -66,6 +66,27 @@ impl Paths {
         self.state.join("machine.json")
     }
 
+    /// docs/SYSTEM.md §2: W under the login password.
+    pub fn login_key(&self) -> PathBuf {
+        self.state.join(safe_login::LOGIN_KEY)
+    }
+
+    /// The master password under W (login unlock on).
+    pub fn master_wrap(&self) -> PathBuf {
+        self.state.join(safe_login::MASTER_WRAP)
+    }
+
+    /// The app secrets under W (Safe is the keyring).
+    pub fn keyring(&self) -> PathBuf {
+        self.state.join(safe_login::KEYRING)
+    }
+
+    /// Present = this user adopted Safe as the keyring; read by
+    /// `pam_ewe_safe.so` to skip gnome-keyring at login.
+    pub fn keyring_marker(&self) -> PathBuf {
+        self.state.join("keyring.on")
+    }
+
     pub fn default_local(&self) -> PathBuf {
         self.data.join("passwords.kdbx")
     }
