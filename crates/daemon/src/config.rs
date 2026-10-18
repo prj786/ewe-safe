@@ -77,6 +77,8 @@ impl Paths {
     }
 
     /// The app secrets under W (Safe is the keyring).
+    // used by stream K (the keyring); the merge drops this allow
+    #[allow(dead_code)]
     pub fn keyring(&self) -> PathBuf {
         self.state.join(safe_login::KEYRING)
     }
@@ -106,6 +108,9 @@ pub struct Settings {
     pub ssh_agent: bool,
     /// `ssh_confirm`: `first-use` | `every-time` | `never`.
     pub ssh_confirm: String,
+    /// `unlock_at_login`: the greeter's handoff also unlocks the safe (not
+    /// only the keyring), when login unlock is on (docs/SYSTEM.md §2).
+    pub unlock_at_login: bool,
 }
 
 impl Default for Settings {
@@ -119,6 +124,7 @@ impl Default for Settings {
             generator_words: 5,
             ssh_agent: false,
             ssh_confirm: CONFIRM_FIRST_USE.to_string(),
+            unlock_at_login: true,
         }
     }
 }
@@ -159,6 +165,7 @@ impl Settings {
                 .map(|c| c.trim().to_lowercase())
                 .filter(|c| CONFIRMS.contains(&c.as_str()))
                 .unwrap_or(d.ssh_confirm),
+            unlock_at_login: truthy(t.get("unlock_at_login"), d.unlock_at_login),
         }
     }
 
@@ -280,6 +287,14 @@ mod tests {
         assert!(s.lock_on_screen_lock);
         assert_eq!(s.clipboard_clear_seconds, 30);
         assert_eq!(Settings::from_table(&json!({})), Settings::default());
+    }
+
+    #[test]
+    fn unlock_at_login_defaults_on_and_reads_as_json_or_text() {
+        assert!(Settings::default().unlock_at_login);
+        assert!(!Settings::from_table(&json!({"unlock_at_login": false})).unlock_at_login);
+        assert!(!Settings::from_table(&json!({"unlock_at_login": "off"})).unlock_at_login);
+        assert!(Settings::from_table(&json!({})).unlock_at_login);
     }
 
     #[test]

@@ -205,6 +205,9 @@ pub struct Daemon {
     pub clip: Mutex<Option<clip::Job>>,
     /// W for the login session (docs/SYSTEM.md §2).
     pub session: crate::session::Session,
+    /// Login unlock's state beside W: the try count, the stale candidate, the
+    /// held master password (docs/SYSTEM.md §2).
+    pub login: crate::login::Login,
 }
 
 impl Daemon {
@@ -232,6 +235,7 @@ impl Daemon {
             wake: Mutex::new(None),
             clip: Mutex::new(None),
             session: crate::session::Session::default(),
+            login: crate::login::Login::default(),
         }
     }
 
@@ -355,6 +359,7 @@ impl Daemon {
             clip::clear_if_ours(self);
             crate::passkey::forget_used();
             self.session.clear_confirm();
+            self.login.on_lock();
             log(&format!("locked ({reason})"));
             self.emit(json!({"v": 1, "event": "locked", "reason": reason}));
         }
@@ -382,10 +387,24 @@ impl Daemon {
         }
         drop(sy);
         self.mark_use();
+        // login unlock (docs/SYSTEM.md §2): hold the master password, clear the
+        // too-many-tries lock, and keep master.wrap current / re-seal a stale key
+        self.after_master_unlock(password);
         log("unlocked");
         self.emit(json!({"v": 1, "event": "unlocked"}));
         self.emit_sync();
         Ok(n)
+    }
+
+    /// The number of items when the safe is unlocked, else `None`.
+    pub fn unlocked_items(&self) -> Option<usize> {
+        rd(&self.held).as_ref().map(|h| h.safe.items().len())
+    }
+
+    /// Whether `key` is the key the unlocked safe holds (for `confirm` when
+    /// the master password wasn't captured). `false` while locked.
+    pub fn key_opens(&self, key: &DatabaseKey) -> bool {
+        rd(&self.held).as_ref().is_some_and(|h| &h.key == key)
     }
 
     // ── setting a machine up ────────────────────────────────────────────
@@ -441,6 +460,7 @@ impl Daemon {
         }
         drop(sy);
         self.mark_use();
+        self.after_master_unlock(password);
         log(&format!("a new safe in {kind}"));
         self.emit(json!({"v": 1, "event": "unlocked"}));
         self.emit_sync();
@@ -494,6 +514,7 @@ impl Daemon {
         }
         drop(sy);
         self.mark_use();
+        self.after_master_unlock(password);
         log(&format!("opened a safe in {kind}"));
         self.emit(json!({"v": 1, "event": "unlocked"}));
         self.emit_sync();
@@ -655,6 +676,7 @@ impl Daemon {
         drop(sy);
         saved?;
         self.mark_use();
+        self.after_master_unlock(new);
         log("the master password changed");
         self.emit_sync();
         Ok(json!({"sync": sync_json(&rd(&self.snap))}))

@@ -109,11 +109,21 @@ pub fn dispatch(d: &Arc<Daemon>, verb: &str, a: &mut Args) -> Result<Value, Fail
                     "--ask belongs to the ewe-safe CLI (it opens the prompt and waits); over the socket, send the password",
                 ));
             }
+            // login unlock (docs/SYSTEM.md §2): the login password, not the master
+            if a.contains_key("login_password") {
+                return crate::login::unlock(d, a);
+            }
             let pw = secret(a, "password")
                 .ok_or_else(|| Fail::bad("The master password is missing."))?;
             let items = d.unlock(&pw)?;
             Ok(json!({"items": items}))
         }
+        // login unlock (docs/SYSTEM.md §2): the verbs, and the fresh-presence
+        // confirm for a card fill (docs/SYSTEM.md §4)
+        "login-status" => Ok(crate::login::status(d)),
+        "login-enable" => crate::login::enable(d, a),
+        "login-disable" => crate::login::disable(d),
+        "confirm" => crate::login::confirm(d, a),
         "lock" => {
             d.lock("user");
             Ok(json!({"locked": true}))
@@ -227,12 +237,20 @@ pub fn dispatch(d: &Arc<Daemon>, verb: &str, a: &mut Args) -> Result<Value, Fail
 
 fn status(d: &Daemon) -> Value {
     let snap = rd(&d.snap);
+    // login unlock (docs/SYSTEM.md §2): a second method, and its own object
+    let login = crate::login::status(d);
+    let methods: Vec<&str> = if login["enabled"] == true {
+        vec!["password", "login"]
+    } else {
+        vec!["password"]
+    };
     let mut v = json!({
         "set_up": snap.set_up,
         "locked": snap.locked,
         "read_only": snap.reasons.is_some(),
         "place": snap.place.as_ref().map(place_json),
-        "unlock_methods": ["password"],
+        "unlock_methods": methods,
+        "login": login,
         "items": if snap.locked { Value::Null } else { json!(snap.items.len()) },
         "sync": sync_json(&snap),
         "version": safe_core::VERSION,

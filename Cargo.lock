@@ -782,6 +782,7 @@ dependencies = [
  "rpassword",
  "safe-client",
  "safe-core",
+ "safe-login",
  "safe-testkit",
  "serde_json",
  "sha2 0.11.1",

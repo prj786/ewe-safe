@@ -20,6 +20,7 @@ use serde_json::{Map, Value, json};
 use zeroize::Zeroizing;
 
 mod git;
+mod login;
 mod scripts;
 mod ssh;
 
@@ -49,6 +50,8 @@ const VALUES: &[&str] = &[
     "vault",
     "account",
     "rp",
+    // confirm (docs/SYSTEM.md §4): the sentence the window shows
+    "reason",
 ];
 const FLAGS: &[&str] = &[
     "json",
@@ -64,9 +67,11 @@ const FLAGS: &[&str] = &[
     "dry-run",
     "skip-duplicates",
     "remove-passkey",
+    // unlock/confirm with the login password (docs/SYSTEM.md §2, §4)
+    "login",
 ];
 /// Read here, never sent.
-const LOCAL_FLAGS: &[&str] = &["json", "ask", "password-stdin", "notes-stdin"];
+const LOCAL_FLAGS: &[&str] = &["json", "ask", "password-stdin", "notes-stdin", "login"];
 const NUMBERS: &[&str] = &["length", "words", "limit", "clear-after"];
 /// Repeatable in `add` and `edit` (and `--vault` in `import`).
 const LISTS: &[&str] = &["url", "app", "tag", "remove-app", "remove-tag", "vault"];
@@ -74,7 +79,7 @@ const WITH_ID: &[&str] = &["show", "reveal", "copy", "edit", "rm", "restore"];
 const VERBS: &[&str] = &[
     "status", "summary", "init", "open", "unlock", "lock", "list", "search", "match", "show",
     "reveal", "copy", "add", "edit", "rm", "restore", "generate", "sync", "place", "passwd",
-    "import", "watch", "ping", "version", "passkey", "ssh",
+    "import", "watch", "ping", "version", "passkey", "ssh", "confirm",
 ];
 
 struct Parsed {
@@ -235,6 +240,10 @@ fn run(argv: &[String]) -> (Value, ExitCode) {
     if argv.first().map(String::as_str) == Some("ssh") {
         return (ssh::run(&argv[1..]), ExitCode::SUCCESS);
     }
+    // login unlock on/off (docs/SYSTEM.md §2): its own stdin/chkpwd handling
+    if argv.first().map(String::as_str) == Some("login") {
+        return (login::run(&argv[1..]), ExitCode::SUCCESS);
+    }
     let mut p = match parse(argv) {
         Ok(p) => p,
         Err(v) => return (v, ExitCode::SUCCESS),
@@ -257,7 +266,10 @@ fn run(argv: &[String]) -> (Value, ExitCode) {
             Err(v) => done(v),
         },
         "unlock" if p.local.contains("ask") => done(unlock_ask()),
+        "unlock" if p.local.contains("login") => done(unlock_login(p.args)),
         "unlock" => done(unlock(p.args)),
+        "confirm" if p.local.contains("ask") => done(confirm_ask(&p.args)),
+        "confirm" => done(confirm(p.args, p.local.contains("login"))),
         "passwd" => done(passwd(p.args)),
         "add" | "edit" => {
             if p.local.contains("password-stdin") {
@@ -375,6 +387,114 @@ fn unlock(args: Map<String, Value>) -> Value {
         eprintln!("That password doesn't open the safe. Try again.");
     }
     last
+}
+
+/// `unlock --login` (docs/SYSTEM.md §2): the login password opens Safe, not
+/// the master password. From a terminal, three tries.
+fn unlock_login(args: Map<String, Value>) -> Value {
+    let tries = if tty() { 3 } else { 1 };
+    let mut last = Value::Null;
+    for n in 0..tries {
+        let pw = match secret("Your login password: ") {
+            Ok(pw) => pw,
+            Err(v) => return v,
+        };
+        let mut a = args.clone();
+        a.insert("login_password".into(), json!(pw.as_str()));
+        last = client::call("unlock", Value::Object(a), SLOW);
+        let wrong = last.get("error").and_then(Value::as_str) == Some("wrong-key");
+        if !wrong || n + 1 == tries {
+            break;
+        }
+        eprintln!("That login password doesn't open Safe. Try again.");
+    }
+    last
+}
+
+/// `confirm` (docs/SYSTEM.md §4): type your password again for a sensitive
+/// fill. The master password by default, the login password with `--login`.
+fn confirm(mut args: Map<String, Value>, login: bool) -> Value {
+    args.remove("reason");
+    let prompt = if login {
+        "Your login password: "
+    } else {
+        "Master password for Safe: "
+    };
+    let pw = match secret(prompt) {
+        Ok(pw) => pw,
+        Err(v) => return v,
+    };
+    let key = if login { "login_password" } else { "password" };
+    args.insert(key.into(), json!(pw.as_str()));
+    client::call("confirm", Value::Object(args), FAST)
+}
+
+/// `confirm --ask`: open the confirm window (`ewe-safe-app --confirm --reason
+/// …`) and wait for it, exactly as `unlock --ask` does. The window calls
+/// `confirm` itself; its exit code is the answer (0 = confirmed).
+fn confirm_ask(args: &Map<String, Value>) -> Value {
+    let reason = args
+        .get("reason")
+        .and_then(Value::as_str)
+        .unwrap_or("Type your password to continue.");
+    let mut prompt = match std::env::var("EWE_SAFE_ASK_CMD") {
+        // a test (or a user) names the prompt
+        Ok(cmd) => {
+            let mut c = Command::new("sh");
+            c.arg("-c").arg(cmd);
+            c
+        }
+        Err(_) => match unlock_window() {
+            Some(app) => {
+                let mut c = Command::new(app);
+                c.args(["--confirm", "--reason", reason]);
+                c
+            }
+            None => {
+                return json!({
+                    "ok": false,
+                    "error": "internal",
+                    "message": "The Safe window isn't installed, so there's nothing to confirm with.",
+                    "hint": "ewe-safe confirm (in a terminal)",
+                });
+            }
+        },
+    };
+    let spawned = prompt
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn();
+    let mut child = match spawned {
+        Ok(c) => c,
+        Err(e) => {
+            return json!({
+                "ok": false,
+                "error": "internal",
+                "message": format!("Couldn't open the confirm window ({e})."),
+            });
+        }
+    };
+    let start = Instant::now();
+    loop {
+        std::thread::sleep(Duration::from_millis(200));
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                return if status.success() {
+                    json!({"ok": true, "confirmed": true})
+                } else {
+                    json!({"ok": false, "error": "cancelled", "message": "Not confirmed."})
+                };
+            }
+            Ok(None) if start.elapsed() > ASK_WAIT => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return json!({"ok": false, "error": "cancelled", "message": "The confirm window timed out."});
+            }
+            Ok(None) => {}
+            Err(e) => return json!({"ok": false, "error": "internal", "message": e.to_string()}),
+        }
+    }
 }
 
 fn passwd(mut args: Map<String, Value>) -> Value {

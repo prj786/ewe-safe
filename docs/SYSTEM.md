@@ -54,6 +54,31 @@ unlocked Safe holds (same as every desktop password manager).
 
 ## 2. Login unlock (stream **L**)
 
+> **As built (2026-10-18).** This release ships login unlock without the PAM
+> module: the owner wanted to review a module that takes the login password at
+> the greeter before it goes near their machine. So:
+>
+> - **Shipped:** `login.key` / `master.wrap` and the crypto; the verbs
+>   `unlock {login_password}`, `login-status` / `login-enable` / `login-disable`,
+>   `confirm`; the 5-try limit (`too-many-tries`); `key-changed` (a stale
+>   `master.wrap` is deleted); `master.wrap` re-sealed on every master unlock;
+>   `[safe] unlock_at_login`; the Settings toggle and the window's login and
+>   confirm modes.
+> - **How W reaches the daemon at login:** not the greeter's PAM handoff below,
+>   but gnome-keyring's `login` collection (`pam_gnome_keyring` already unlocks
+>   it silently at login). Stream **K** owns that gnome-keyring client
+>   (`carrier_store` / `fetch` / `delete`) and, at daemon start, puts W into
+>   `daemon.session` and calls **`login::unlock_from_session(&Daemon)`** (W +
+>   `master.wrap` → the normal unlock, no password; the caller honours
+>   `unlock_at_login`). `login-enable` / `login-disable` carry W in and out
+>   through the hooks **`login::ON_ENABLE` / `login::ON_DISABLE`** (`OnceLock`s K
+>   sets at start).
+> - **Parked for the owner's review** (`.wt/parked-pam/`, unchanged, not in the
+>   build): `pam_ewe_safe.so`, `ewe-safe-pam-helper`, the greetd `pam.d` lines,
+>   the `login-handoff` verb, the stale-candidate re-seal, and the screen-locker
+>   stretch. The `unlock_at_login` background-unlock note and the honest limits
+>   below still hold.
+
 ### Files (this computer only, `$XDG_STATE_HOME/ewe/safe/`, `0600`, never synced)
 
 | file | what | sealed by |
@@ -80,7 +105,13 @@ unlocked Safe holds (same as every desktop password manager).
 - **Login password changed** with `passwd` (Arch's `/etc/pam.d/passwd` doesn't include our module): the next login's handoff can't open `login.key`. The daemon keeps that password (it came from a *session* handoff, so PAM accepted it) in memory as the **candidate** (≤ 15 min, zeroized), status says `login.stale: true`, and the next time the user types the **old** login password (the window's "Your login password changed" mode) or the master password (master path: re-seal `master.wrap` with a fresh W, and the keyring through K's escrow, §3) the daemon re-seals under the candidate.
 - **The master password changed** (here or on another machine): the next master unlock re-seals `master.wrap`. A login unlock whose master no longer opens the safe → `key-changed`, `master.wrap` is deleted, the window asks for the master password.
 
-### `pam_ewe_safe.so` (Rust `cdylib`, crate `crates/pam`; `/usr/lib/security/`)
+### `pam_ewe_safe.so` (Rust `cdylib`, crate `crates/pam`; `/usr/lib/security/`) — PARKED
+
+> Parked for the owner's review (`.wt/parked-pam/`); not built or installed in
+> this release. The daemon's `login-handoff` verb and the stale-candidate
+> re-seal that this section needs were removed with it. The rest of §2 (the
+> files, the verbs, `confirm`) ships; W reaches the daemon through
+> gnome-keyring instead (see the "As built" note above).
 
 - `pam_sm_authenticate`: copy `PAM_AUTHTOK` into PAM data (`pam_set_data`, a zeroizing cleanup). If the process already runs as the target user (a screen locker: Quickshell's `PamContext` calls only `pam_authenticate`), hand off now with `source: "lock"`. Always returns `PAM_IGNORE`.
 - `pam_sm_setcred`: `PAM_IGNORE`.

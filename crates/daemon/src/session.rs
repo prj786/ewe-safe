@@ -65,6 +65,8 @@ impl Session {
             .unwrap_or(0)
     }
 
+    // used by stream C (the card gate); the merge drops this allow
+    #[allow(dead_code)]
     pub fn is_confirmed(&self) -> bool {
         lk(&self.confirmed_until).is_some_and(|t| Instant::now() < t)
     }
@@ -76,6 +78,8 @@ impl Session {
 
     /// W, waiting up to `timeout` for it to arrive (the keyring's prompt
     /// gives the greeter's handoff a moment before it asks the user).
+    // used by stream K (the keyring prompt); the merge drops this allow
+    #[allow(dead_code)]
     pub fn wait(&self, timeout: Duration) -> Option<SessionKey> {
         let deadline = Instant::now() + timeout;
         let mut g = lk(&self.key);

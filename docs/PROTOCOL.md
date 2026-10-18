@@ -48,7 +48,9 @@ Every reply has `"ok"`. A failure is:
 | `place-error` | the place answered with an error (`message` says which) |
 | `key-changed` | the copy in the place has a different master key (changed on another machine): unlock with the new password |
 | `bad-request` | unknown verb, missing or invalid argument |
-| `cancelled` | the user dismissed a prompt (`unlock --ask`) |
+| `cancelled` | the user dismissed a prompt (`unlock --ask`, `confirm --ask`) |
+| `not-enabled` | login unlock isn't set up on this computer (docs/SYSTEM.md §2) |
+| `too-many-tries` | five wrong login passwords in a row; the master password clears it |
 | `ambiguous` | a `safe://` reference fits more than one item (or field): `hint` lists the items' ids. Never a guess |
 | `source-error` | an import's source can't be read: not a 1PUX/CSV export, unreadable, or `op` failed (`message` has op's own words) |
 | `excluded` | `passkey-create`: a credential in `exclude` is already in the safe (the browser answers `InvalidStateError`) |
@@ -130,11 +132,15 @@ protected custom field are.
 
 | verb | args | reply (besides `"ok": true`) |
 |---|---|---|
-| `status` | | `set_up`, `locked`, `read_only`, `reasons` (when read-only), `place` (or null), `unlock_methods` (`["password"]`, plus `"login"` when unlock-with-login is on), `items` (count, null while locked), `sync` (null until set up), `version`, and `upgrade_from` (e.g. `"KDBX 3.1"`) when the file becomes KDBX 4.1 at its next save |
+| `status` | | `set_up`, `locked`, `read_only`, `reasons` (when read-only), `place` (or null), `unlock_methods` (`["password"]`, plus `"login"` when unlock-with-login is on), `login` (`{enabled, session_open}`, docs/SYSTEM.md §2), `items` (count, null while locked), `sync` (null until set up), `version`, and `upgrade_from` (e.g. `"KDBX 3.1"`) when the file becomes KDBX 4.1 at its next save |
 | `summary` | | `locked`, `items`, `sync_state` — counts and states only, for the companion (PLAN.md S8) |
 | `init` | `--place P [--location L] [--url U --user N]` + password twice on tty/stdin | `place` |
 | `open` | `--place P [--location L] [--url U --user N]` + password on tty/stdin | `place`, `items` |
-| `unlock` | `[--ask]` (+ password on tty/stdin unless `--ask`) | `items`. `--ask` is the CLI's: it opens a prompt and waits until the safe is unlocked or the prompt is gone (`cancelled`). Phase 1's prompt is a small kitty window running `ewe-safe unlock` (`EWE_SAFE_ASK_CMD` replaces it); later the login unlock (polkit) or the Safe window. Over the socket, `unlock` takes `password` |
+| `unlock` | `[--ask] [--login]` (+ password on tty/stdin unless `--ask`) | `items`. `--ask` is the CLI's: it opens a prompt and waits until the safe is unlocked or the prompt is gone (`cancelled`). Phase 1's prompt is a small kitty window running `ewe-safe unlock` (`EWE_SAFE_ASK_CMD` replaces it); later the Safe window. `--login` reads the **login** password (docs/SYSTEM.md §2) instead of the master. Over the socket, `unlock` takes `password`, or `login_password` for login unlock |
+| `confirm` | `[--ask] [--login] [--reason TEXT]` (+ password on tty/stdin unless `--ask`) | `confirmed_for` (seconds, 300): a fresh presence check for a sensitive fill, e.g. a card (docs/SYSTEM.md §4). The safe must be unlocked. The master password, or the login password with `--login`. `--ask` opens the Safe window in confirm mode (`ewe-safe-app --confirm --reason TEXT`, `EWE_SAFE_ASK_CMD` replaces it) and waits for it, like `unlock --ask`. Over the socket, `confirm` takes `password` or `login_password` |
+| `login status` | `login-status` | `enabled` (login unlock is on: `master.wrap` is present), `session_open` (W is in memory for this login session) |
+| `login enable` | `login-enable`: `login_password`, and `password` (the master) when the safe is locked | `enabled`. Seals the safe's master password on this computer under W, and W under the login password. The CLI and the window check the login password with `/usr/bin/unix_chkpwd` first — the daemon can't (`NoNewPrivileges` blocks the setuid helper). `EWE_SAFE_CHKPWD` replaces the helper for tests |
+| `login disable` | `login-disable` | `enabled: false`. Deletes `master.wrap`; the login password no longer opens Safe |
 | `lock` | | `locked: true` |
 | `list` | `[--kind login\|note\|ssh-key] [--tag T] [--deleted]` | `items: [summary…]` (by title) |
 | `search` | `<text>` | `items: [summary…]` (best first) |
@@ -253,8 +259,9 @@ Newline-delimited JSON, one object per line, UTF-8.
 `args` keys are the CLI's long options without dashes, with `_` for `-`
 (`clear_after` for `--clear-after`). Positional arguments are `"id"` or
 `"text"`. Secrets travel as `"password"`, `"new_password"`,
-`"password_value"` (for `add`/`edit`), `"notes"`, and `"passphrase"` and
-`"private_key"` (for `ssh-add`). Booleans are JSON booleans.
+`"password_value"` (for `add`/`edit`), `"notes"`, `"passphrase"` and
+`"private_key"` (for `ssh-add`), and `"login_password"` (for `unlock`,
+`login-enable`, `confirm`; docs/SYSTEM.md §2). Booleans are JSON booleans.
 
 **Reply:** the CLI's JSON object plus `"v": 1` and the request's `"id"`. So no reply field is ever called `id`: the envelope's would overwrite it (an item's id is `item_id` or sits inside `item`).
 `reveal` over the socket always answers `{"ok": true, "value": "…"}`;

@@ -15,6 +15,9 @@
   let server = $state("");
   let pw = $state(null); // the change-password dialog: {a, b, error}
   let now = $state(new Date());
+  // the "turn on login unlock" dialog: {login, master, error, busy} (master
+  // only asked when the safe is locked)
+  let login = $state(null);
 
   $effect(() => {
     safe.loadSettings();
@@ -29,6 +32,31 @@
   const badge = $derived(syncBadge(sync));
   const s = $derived(safe.settings);
   const flag = (k) => s[k] !== false;
+  const loginOn = $derived((safe.status?.unlock_methods ?? []).includes("login"));
+
+  // the toggle: on opens the one-time setup dialog; off turns it straight off
+  function onLoginToggle(on) {
+    if (on) login = { login: "", master: "", error: "", busy: false };
+    else safe.loginDisable();
+  }
+
+  async function enableLogin(e) {
+    e.preventDefault();
+    if (!login.login) return;
+    const needMaster = safe.locked;
+    if (needMaster && !login.master) {
+      login = { ...login, error: "Type your master password to seal the safe." };
+      return;
+    }
+    login = { ...login, busy: true, error: "" };
+    const r = await safe.loginEnable(login.login, needMaster ? login.master : undefined);
+    if (r?.ok) {
+      login = null;
+      toasts.show("Login unlock is on. Your login password opens Safe on this computer.", { icon: "circle-check", ms: 6000 });
+    } else {
+      login = { ...login, login: "", master: "", busy: false, error: r?.message ?? "Couldn't turn it on." };
+    }
+  }
   const lockAfter = $derived(Number(s.lock_after_minutes ?? 30));
   const clearAfter = $derived(Number(s.clipboard_clear_seconds ?? 30));
 
@@ -133,11 +161,21 @@
       <div class="ewe-list__divider"></div>
       <div class="ewe-switch-row ewe-row">
         <span class="ewe-check__text">
-          <span class="ewe-check__label">Unlock with login password or fingerprint</span>
-          <span class="ewe-check__desc">Not on this computer yet: it needs a one-time setup that comes in a later version. Your master password always works.</span>
+          <span class="ewe-check__label">Unlock with my login password</span>
+          <span class="ewe-check__desc">With this on, Safe on this computer is as strong as your login password. Your copy in Nextcloud still needs your master password.</span>
         </span>
-        <Switch on={false} disabled label="Unlock with login password or fingerprint" />
+        <Switch on={loginOn} disabled={safe.busy === "login-enable" || safe.busy === "login-disable"} label="Unlock with my login password" toggled={onLoginToggle} />
       </div>
+      {#if loginOn}
+        <div class="ewe-list__divider"></div>
+        <div class="ewe-switch-row ewe-row">
+          <span class="ewe-check__text">
+            <span class="ewe-check__label">Unlock Safe when I log in</span>
+            <span class="ewe-check__desc">Open your safe as the computer starts, with no extra step. Off, Safe waits for your login or master password.</span>
+          </span>
+          <Switch on={flag("unlock_at_login")} label="Unlock Safe when I log in" toggled={(v) => set("unlock_at_login", v)} />
+        </div>
+      {/if}
       <div class="ewe-list__divider"></div>
       <div class="ewe-row">
         <span class="ewe-row__text"><span class="ewe-row__title">Master password</span><span class="ewe-row__desc">Your other computers and phones will ask for the new one once.</span></span>
@@ -203,6 +241,37 @@
       <div class="ewe-dialog__foot">
         <button type="button" class="ewe-btn ewe-btn--ghost" onclick={() => (pw = null)}>Cancel</button>
         <button type="submit" class="ewe-btn ewe-btn--primary" disabled={pw.busy}>{pw.busy ? "Changing…" : "Change password"}</button>
+      </div>
+    </form></div>
+  </div>
+{/if}
+
+{#if login}
+  <div class="safe-scrim">
+    <div role="dialog" aria-modal="true" aria-label="Unlock with my login password"><form class="ewe-dialog" onsubmit={enableLogin}>
+      <div class="ewe-dialog__head">
+        <span class="ewe-dialog__icon"><Icon name="fingerprint" /></span>
+        <div class="ewe-dialog__titles">
+          <h3 class="ewe-dialog__title">Unlock with my login password</h3>
+          <p class="ewe-dialog__desc">With this on, Safe on this computer is as strong as your login password. Your copy in Nextcloud still needs your master password.</p>
+        </div>
+      </div>
+      <div class="safe-dialog-field">
+        <label class="ewe-field">
+          <span class="ewe-field__label"><span>Your login password</span></span>
+          <span class="ewe-input" class:is-error={!!login.error}><input type="password" bind:value={login.login} autocomplete="current-password" spellcheck="false" /></span>
+        </label>
+        {#if safe.locked}
+          <label class="ewe-field">
+            <span class="ewe-field__label"><span>Master password for Safe</span></span>
+            <span class="ewe-input"><input class="mono" type="password" bind:value={login.master} autocomplete="current-password" spellcheck="false" /></span>
+          </label>
+        {/if}
+        {#if login.error}<div class="ewe-field__helper ewe-field__helper--error"><Icon name="circle-x" /><span>{login.error}</span></div>{/if}
+      </div>
+      <div class="ewe-dialog__foot">
+        <button type="button" class="ewe-btn ewe-btn--ghost" onclick={() => (login = null)}>Cancel</button>
+        <button type="submit" class="ewe-btn ewe-btn--primary" disabled={login.busy}>{login.busy ? "Turning on…" : "Turn on"}</button>
       </div>
     </form></div>
   </div>

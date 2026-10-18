@@ -3,13 +3,15 @@
   // machine (setup), locked, or open. The `--unlock` process (`mode:
   // "unlock"`) shows only the compact prompt and quits once the safe opens;
   // the `--approve` process (`mode: "approve"`) only asks the SSH agent's
-  // question.
+  // question; the `--confirm` process (`mode: "confirm"`) only asks for the
+  // password again before a card fill (docs/SYSTEM.md §4).
   import { onMount } from "svelte";
   import Icon from "$lib/components/Icon.svelte";
   import Setup from "$lib/screens/Setup.svelte";
   import Unlock from "$lib/screens/Unlock.svelte";
   import Main from "$lib/screens/Main.svelte";
   import Approve from "$lib/screens/Approve.svelte";
+  import Confirm from "$lib/screens/Confirm.svelte";
   import { api, listen } from "$lib/api.js";
   import { safe } from "$lib/safe.svelte.js";
   import { ui } from "$lib/ui.svelte.js";
@@ -17,6 +19,7 @@
 
   let mode = $state("main");
   let approve = $state(null);
+  let reason = $state("");
 
   function follow(a) {
     if (!a) return;
@@ -37,6 +40,7 @@
       const a = await api.launchArgs();
       if (a?.mode) mode = a.mode;
       if (a?.approve) approve = a.approve;
+      if (a?.reason) reason = a.reason;
       follow(a);
       off.push(await listen("safe-args", follow));
       await safe.start();
@@ -55,6 +59,8 @@
 
 {#if mode === "approve"}
   <Approve app={approve?.app || "An app"} key={approve?.key || "an SSH key"} path={approve?.path ?? ""} system={!!approve?.system} />
+{:else if mode === "confirm"}
+  <Confirm {reason} />
 {:else if mode === "unlock"}
   {#if !safe.daemon.available || (safe.status && !safe.status.set_up)}
     <div class="safe-compact">

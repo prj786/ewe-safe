@@ -10,9 +10,11 @@
 //   &sync=pending|offline|error|local|rollback|single-writer
 //   &keychanged=1         unlocking says the master password changed elsewhere
 //   &wrong=1              the first unlock is a wrong password
+//   &login=1              login unlock is on (the login password is "login")
 //   &mode=unlock          the compact `--unlock` window
 //   &mode=approve         the SSH agent's question (`--approve`); &system=0 a
 //                         program outside /usr and /opt
+//   &mode=confirm         a card fill's confirm (`--confirm`); &reason=…
 //   &view=ssh             the SSH keys      &agent=1   the SSH agent on
 //   &view=settings|import|trash   &edit=github|new   &gen=1 (generator open)
 //   &import=old           the daemon has no `import` verb yet
@@ -32,6 +34,7 @@ export function install(params) {
     readOnly: flag("readonly", false),
     keyChanged: flag("keychanged", false),
     wrong: flag("wrong", false),
+    loginEnabled: flag("login", false),
     superP: params.get("superp") || "1password",
     items: flag("empty", false) ? [] : clone(fixture.items),
     deleted: flag("empty", false) ? [] : clone(fixture.deleted),
@@ -42,6 +45,7 @@ export function install(params) {
       clipboard_clear_seconds: 30,
       generator_length: 20,
       generator_words: 5,
+      unlock_at_login: true,
       ...(params.get("known") ? { place: params.get("known"), location: "ewe/safe/passwords.kdbx" } : {})
     },
     agent: flag("agent", false)
@@ -100,7 +104,8 @@ export function install(params) {
       read_only: s.readOnly,
       ...(s.readOnly ? { reasons: ["2 items have a field Safe can't keep (from KeePassXC's browser add-on)."] } : {}),
       place: s.setUp ? place : null,
-      unlock_methods: ["password"],
+      unlock_methods: s.loginEnabled ? ["password", "login"] : ["password"],
+      login: { enabled: s.loginEnabled, session_open: s.loginEnabled },
       items: s.locked ? null : s.items.length,
       sync: s.setUp ? sync : null,
       version: "0.1.0-alpha"
@@ -137,6 +142,33 @@ export function install(params) {
       s.locked = false;
       emit("safe-event", { event: "unlocked" });
       return { ok: true, items: s.items.length };
+    },
+    // login unlock (docs/SYSTEM.md §2): the mock login password is "login"
+    unlock_login: ({ loginPassword }) => {
+      if (!s.setUp) return fail("not-set-up", "There's no safe on this computer yet.", "ewe-safe init");
+      if (!s.loginEnabled) return fail("not-enabled", "Login unlock isn't set up on this computer.");
+      if (loginPassword !== "login") return fail("wrong-key", "That login password doesn't open Safe.");
+      s.locked = false;
+      emit("safe-event", { event: "unlocked" });
+      return { ok: true, items: s.items.length };
+    },
+    login_status: () => ({ ok: true, enabled: s.loginEnabled, session_open: s.loginEnabled }),
+    login_enable: ({ loginPassword, password }) => {
+      if (loginPassword !== "login") return fail("wrong-key", "That isn't your login password.");
+      if (s.locked && password !== "mock") return fail("wrong-key", "That password doesn't open the safe.");
+      s.loginEnabled = true;
+      return { ok: true, enabled: true };
+    },
+    login_disable: () => {
+      s.loginEnabled = false;
+      return { ok: true, enabled: false };
+    },
+    // the window runs unix_chkpwd itself; the mock just checks the fake pw
+    check_login_password: ({ loginPassword }) =>
+      loginPassword === "login" ? { ok: true } : fail("wrong-key", "That isn't your login password."),
+    confirm: ({ password, loginPassword }) => {
+      const ok = loginPassword ? loginPassword === "login" : password === "mock";
+      return ok ? { ok: true, confirmed_for: 300 } : fail("wrong-key", "That password is wrong.");
     },
     lock: () => {
       s.locked = true;
@@ -313,7 +345,8 @@ export function install(params) {
 
     // the window's own commands
     launch_args: () => ({
-      mode: ["unlock", "approve"].includes(params.get("mode")) ? params.get("mode") : "main",
+      mode: ["unlock", "approve", "confirm"].includes(params.get("mode")) ? params.get("mode") : "main",
+      reason: params.get("mode") === "confirm" ? params.get("reason") || "Type your password to fill Visa •• 4242 on shop.com" : null,
       approve:
         params.get("mode") === "approve"
           ? {
@@ -354,8 +387,8 @@ export function install(params) {
     print_page: () => ({ ok: true }),
     quit_app: () => ({ ok: true })
   };
-  const local = new Set(["daemon_state", "launch_args", "theme_tokens", "theme_key", "settings_get", "settings_set", "passwords_provider", "use_safe_for_passwords", "cloud_status", "window_classes", "open_url", "open_ewe_sync", "pick_file", "print_page", "quit_app"]);
-  const needsUnlock = new Set(["list", "search", "match_items", "show", "reveal", "copy", "add", "edit", "rm", "restore", "import_items", "ssh_new", "ssh_add", "ssh_adopt"]);
+  const local = new Set(["daemon_state", "launch_args", "theme_tokens", "theme_key", "settings_get", "settings_set", "passwords_provider", "use_safe_for_passwords", "cloud_status", "window_classes", "open_url", "open_ewe_sync", "pick_file", "print_page", "quit_app", "check_login_password"]);
+  const needsUnlock = new Set(["list", "search", "match_items", "show", "reveal", "copy", "add", "edit", "rm", "restore", "import_items", "ssh_new", "ssh_add", "ssh_adopt", "confirm"]);
 
   window.__SAFE_MOCK__ = {
     async invoke(cmd, args) {
