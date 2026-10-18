@@ -48,6 +48,15 @@ export const api = {
   init: (place, password) => invoke("init", { place, password }),
   open: (place, password) => invoke("open", { place, password }),
   unlock: (password) => invoke("unlock", { password }),
+  // login unlock (docs/SYSTEM.md §2)
+  unlockLogin: (loginPassword) => invoke("unlock_login", { loginPassword }),
+  loginStatus: () => invoke("login_status"),
+  // password = the master, only needed while the safe is locked
+  loginEnable: (loginPassword, password) => invoke("login_enable", { loginPassword, password }),
+  loginDisable: () => invoke("login_disable"),
+  checkLoginPassword: (loginPassword) => invoke("check_login_password", { loginPassword }),
+  // confirm a card fill (docs/SYSTEM.md §4): master, or login when on
+  confirm: ({ password, loginPassword } = {}) => invoke("confirm", { password, loginPassword }),
   lock: () => invoke("lock"),
   list: ({ kind, tag, deleted } = {}) => invoke("list", { kind, tag, deleted }),
   search: (text) => invoke("search", { text }),

@@ -178,6 +178,29 @@ class Safe {
     return r;
   }
 
+  /** Login unlock (docs/SYSTEM.md §2): the login password opens the safe. */
+  async unlockLogin(loginPassword) {
+    const r = await this.#run("unlock", () => api.unlockLogin(loginPassword));
+    if (r?.ok) {
+      this.keyChanged = false;
+      await this.refresh();
+    }
+    return r;
+  }
+
+  /** Turn login unlock on (master needed only while locked) or off. */
+  async loginEnable(loginPassword, password) {
+    const r = await this.#run("login-enable", () => api.loginEnable(loginPassword, password));
+    if (r?.ok) await this.refresh();
+    return r;
+  }
+
+  async loginDisable() {
+    const r = await this.#run("login-disable", () => api.loginDisable());
+    if (r?.ok) await this.refresh();
+    return r;
+  }
+
   async lock() {
     const r = await this.#run("lock", () => api.lock());
     if (r?.ok) await this.refresh();

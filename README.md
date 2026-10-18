@@ -65,6 +65,21 @@ The question names the program by its full path and marks one outside
 password is what protects the keys, since any program running as you can
 use the agent while Safe is unlocked (docs/PROTOCOL.md, "The SSH agent").
 
+**Unlock with your login password** (docs/SYSTEM.md §2): turn it on and the
+login password opens Safe on this computer, instead of the master password.
+
+    ewe-safe login enable        # asks your login password (checked with unix_chkpwd), and the master password if Safe is locked
+    ewe-safe login status        # enabled, and whether the session key is open
+    ewe-safe unlock --login      # opens Safe with the login password
+    ewe-safe login disable       # back to the master password only
+
+With it on, Safe on this computer is as strong as your login password; the
+copy in your ewe account still needs the master password. `confirm` is the
+fresh check a card fill asks for (`ewe-safe confirm`, or `--login`). This
+release ships login unlock without a PAM module (the greeter handoff is
+parked for review, `.wt/parked-pam/`); W rides in gnome-keyring's `login`
+collection, which already unlocks at login.
+
 ## Use Safe from scripts
 
 No 1Password CLI needed. A **reference** names one value:

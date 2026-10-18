@@ -35,6 +35,8 @@ pub const SECRET_KEYS: &[&str] = &[
     "notes",
     "passphrase",
     "private_key",
+    // login unlock (docs/SYSTEM.md §2)
+    "login_password",
 ];
 
 /// How long a verb may take: a key derivation or a talk with the place
@@ -48,6 +50,8 @@ pub fn wait_for(verb: &str) -> Duration {
         "passkey-create" => SLOW,
         // saves; `ssh-enable` and `ssh-disable` wait for ewe-conf
         "ssh-add" | "ssh-new" | "ssh-adopt" | "ssh-enable" | "ssh-disable" => SLOW,
+        // a login-password key derivation, and maybe an unlock (docs/SYSTEM.md §2)
+        "login-enable" => SLOW,
         _ => FAST,
     }
 }
