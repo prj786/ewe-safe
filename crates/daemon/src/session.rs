@@ -1,6 +1,6 @@
 //! W, this computer's session key (docs/SYSTEM.md §2), in memory for the
 //! login session: set when a login password opens `login.key` (the
-//! greeter's handoff, the unlock window), kept while the safe locks and
+//! login keyring at login, the unlock window), kept while the safe locks and
 //! unlocks, gone when the daemon stops (logout). The keyring (§3) reads it;
 //! nothing writes it to disk.
 
@@ -24,7 +24,7 @@ pub struct Session {
 
 /// W from `login.key` opened with `login_password`; with `create`, a new
 /// W (and a new `login.key`) when there is none yet. Login unlock's
-/// `enable`, the keyring's `adopt` and the greeter's handoff all come here.
+/// `enable` and the keyring's `adopt` come here.
 pub fn open_or_create(
     path: &std::path::Path,
     login_password: &[u8],
@@ -77,7 +77,7 @@ impl Session {
     }
 
     /// W, waiting up to `timeout` for it to arrive (the keyring's prompt
-    /// gives the greeter's handoff a moment before it asks the user).
+    /// gives the key from the login keyring a moment before it asks the user).
     // used by stream K (the keyring prompt); the merge drops this allow
     #[allow(dead_code)]
     pub fn wait(&self, timeout: Duration) -> Option<SessionKey> {

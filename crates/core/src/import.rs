@@ -9,7 +9,9 @@
 //! | Login, Password | a Login: username, password, every website, the first one-time code, tags, notes; other fields become custom fields, protected when 1Password conceals them |
 //! | Secure Note | a Note |
 //! | SSH Key | an SSH key item (crate::ssh); a Note as below when Safe can't read the key |
-//! | every other category (Credit Card, Identity, …) | a Note listing its fields; the secret ones are also kept as protected custom fields |
+//! | Credit Card | a Card (crate::card): holder, number, expiry, security code, PIN, brand; other fields become custom fields |
+//! | Identity | an Address: the name, company, address, phone and e-mail; other fields become custom fields |
+//! | every other category (Bank Account, Server, …) | a Note listing its fields; the secret ones are also kept as protected custom fields |
 //! | vault | a folder |
 //! | archived item | the folder `Archive` |
 //! | item in the trash | skipped |
@@ -24,6 +26,7 @@ use chrono::{DateTime, NaiveDateTime};
 use serde_json::Value;
 use zeroize::{Zeroize, Zeroizing};
 
+use crate::card::{self, Address, Card};
 use crate::item::{Draft, Kind, Summary};
 use crate::otp::Totp;
 use crate::search;
@@ -144,6 +147,8 @@ pub struct Report {
     pub logins: usize,
     pub notes: usize,
     pub ssh_keys: usize,
+    pub cards: usize,
+    pub addresses: usize,
     pub attachments: usize,
     pub otps: usize,
     /// Items whose website and username an item in the safe already has.
@@ -219,8 +224,8 @@ fn category_1pux(id: &str) -> (Kind, &'static str) {
         "001" => (Kind::Login, "Login"),
         "005" => (Kind::Login, "Password"),
         "003" => (Kind::Note, "Secure note"),
-        "002" => (Kind::Note, "Credit card"),
-        "004" => (Kind::Note, "Identity"),
+        "002" => (Kind::Card, "Credit card"),
+        "004" => (Kind::Address, "Identity"),
         "006" => (Kind::Note, "Document"),
         "100" => (Kind::Note, "Software license"),
         "101" => (Kind::Note, "Bank account"),
@@ -479,11 +484,26 @@ struct Builder {
     /// Fields an SSH key item derives from its key (public key,
     /// fingerprint): listed only if the item falls back to a Note.
     held: Vec<(String, String, Rendered)>,
+    /// A Card's fields, as they are recognised.
+    card: Card,
+    /// An Address's fields; the full name is put together at the end.
+    address: Address,
+    /// 1Password's first name, initial and last name.
+    name_parts: [String; 3],
 }
 
 impl Builder {
     fn new(kind: Kind, category: &str, title: &str, folder: &str) -> Builder {
         let title = title.trim();
+        // a card's or an address's own fields are never a custom field's name
+        let names: HashSet<String> = match kind {
+            Kind::Card => card::CARD_FIELDS.iter().map(|f| f.1.to_string()).collect(),
+            Kind::Address => card::ADDRESS_FIELDS
+                .iter()
+                .map(|f| f.1.to_string())
+                .collect(),
+            _ => HashSet::new(),
+        };
         Builder {
             kind,
             category: category.to_string(),
@@ -497,7 +517,7 @@ impl Builder {
             lines: Zeroizing::new(String::new()),
             section_shown: String::new(),
             fields: Vec::new(),
-            names: HashSet::new(),
+            names,
             history: Vec::new(),
             files: Vec::new(),
             folder: folder.to_string(),
@@ -506,6 +526,9 @@ impl Builder {
             ssh_private: None,
             ssh_openssh: None,
             held: Vec::new(),
+            card: Card::default(),
+            address: Address::default(),
+            name_parts: Default::default(),
         }
     }
 
@@ -588,7 +611,7 @@ impl Builder {
             Rendered::Text { value, secret } => {
                 let shown = if label.is_empty() { "Field" } else { label };
                 match self.kind {
-                    Kind::Login => {
+                    Kind::Login | Kind::Card | Kind::Address => {
                         let name = if section.is_empty() {
                             shown.to_string()
                         } else {
@@ -706,11 +729,143 @@ impl Builder {
         None
     }
 
+    /// One field a Card or an Address knows (by 1Password's field id, else
+    /// its English label), taken into the item's own fields. False: it stays
+    /// a custom field, as on a Login.
+    fn take(&mut self, id: &str, label: &str, r: &Rendered) -> bool {
+        let Rendered::Text { value, .. } = r else {
+            return false;
+        };
+        let is = |ids: &[&str], labels: &[&str]| {
+            ids.contains(&id) || labels.iter().any(|l| l.eq_ignore_ascii_case(label.trim()))
+        };
+        let v = value.trim();
+        match self.kind {
+            Kind::Card => {
+                let c = &mut self.card;
+                if is(
+                    &["cardholder"],
+                    &["cardholder name", "cardholder", "name on card"],
+                ) && c.holder.is_empty()
+                {
+                    c.holder = v.to_string();
+                } else if is(&["ccnum"], &["number", "card number"]) && c.number.is_empty() {
+                    match card::number(v) {
+                        Ok(n) => c.number = n,
+                        Err(_) => return false,
+                    }
+                } else if is(
+                    &["cvv"],
+                    &["verification number", "security code", "cvv", "cvc"],
+                ) && c.security_code.is_empty()
+                {
+                    c.security_code = Zeroizing::new(v.to_string());
+                } else if is(&["pin"], &["pin"]) && c.pin.is_empty() {
+                    c.pin = Zeroizing::new(v.to_string());
+                } else if is(
+                    &["expiry"],
+                    &["expiry date", "expiry", "expires", "expiration date"],
+                ) && c.expiry.is_empty()
+                {
+                    match card::expiry(v) {
+                        Ok(e) => c.expiry = e,
+                        Err(_) => return false,
+                    }
+                } else if is(&["type"], &["type"]) && c.brand.is_empty() {
+                    match card::brand(v) {
+                        Some(b) => c.brand = b.to_string(),
+                        None => return false,
+                    }
+                } else {
+                    return false;
+                }
+                true
+            }
+            Kind::Address => {
+                let slot = if is(&["firstname"], &["first name"]) {
+                    &mut self.name_parts[0]
+                } else if is(&["initial"], &["initial"]) {
+                    &mut self.name_parts[1]
+                } else if is(&["lastname"], &["last name"]) {
+                    &mut self.name_parts[2]
+                } else if is(&["company"], &["company", "organization"]) {
+                    &mut self.address.organization
+                } else if is(&["email"], &["email", "e-mail"]) {
+                    &mut self.address.email
+                } else if is(&["defphone"], &["default phone", "phone"])
+                    || (self.address.phone.is_empty()
+                        && is(
+                            &["cellphone", "homephone", "busphone"],
+                            &["cell", "home", "business"],
+                        ))
+                {
+                    &mut self.address.phone
+                } else {
+                    return false;
+                };
+                if !slot.is_empty() {
+                    return false;
+                }
+                *slot = v.to_string();
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// An Identity's address (1Password's `{street, city, state, zip,
+    /// country}`), taken whole. False when there is one already.
+    fn take_address(&mut self, v: &Value) -> bool {
+        let a = &mut self.address;
+        if self.kind != Kind::Address || !v.is_object() || !a.line1.is_empty() || !a.city.is_empty()
+        {
+            return false;
+        }
+        let mut street = st(v, "street")
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty());
+        a.line1 = street.next().unwrap_or("").to_string();
+        a.line2 = street.collect::<Vec<_>>().join(", ");
+        a.city = st(v, "city").trim().to_string();
+        a.region = st(v, "state").trim().to_string();
+        a.postal_code = st(v, "zip").trim().to_string();
+        a.country = card::country(st(v, "country"));
+        true
+    }
+
+    /// A Card's title when 1Password gave none, and an Address's full name.
+    fn settle_card(&mut self) {
+        match self.kind {
+            Kind::Card if self.title == UNTITLED => {
+                let b = card::brand(&self.card.brand)
+                    .unwrap_or_else(|| card::brand_of(&self.card.number));
+                self.title = card::card_title(b, &self.card.number);
+            }
+            Kind::Address => {
+                let full: Vec<&str> = self
+                    .name_parts
+                    .iter()
+                    .map(|p| p.trim())
+                    .filter(|p| !p.is_empty())
+                    .collect();
+                if self.address.full_name.is_empty() {
+                    self.address.full_name = full.join(" ");
+                }
+                if self.title == UNTITLED {
+                    self.title = card::ADDRESS_TITLE.to_string();
+                }
+            }
+            _ => {}
+        }
+    }
+
     fn finish(mut self) -> Imported {
         self.history.sort_by_key(|h| h.time);
         let ssh = self.settle_ssh();
+        self.settle_card();
         let notes = match self.kind {
-            Kind::Login => self.notes.clone(),
+            Kind::Login | Kind::Card | Kind::Address => self.notes.clone(),
             Kind::Note | Kind::SshKey => {
                 let mut text = Zeroizing::new(String::new());
                 // an SSH key says what it is itself: no category line
@@ -757,6 +912,8 @@ impl Builder {
                 tags: self.tags,
                 notes,
                 otp: self.otp,
+                card: self.card,
+                address: self.address,
             },
             fields: self.fields,
             history: self.history,
@@ -911,9 +1068,17 @@ fn item_1pux(
             let label = Some(st(f, "title"))
                 .filter(|t| !t.trim().is_empty())
                 .unwrap_or_else(|| st(f, "id"));
-            for (suffix, r) in render_1pux(f.get("value").unwrap_or(&Value::Null)) {
+            let value = f.get("value").unwrap_or(&Value::Null);
+            // an Identity's address is taken whole, not as one line
+            if let Some(addr) = value.get("address")
+                && b.take_address(addr)
+            {
+                continue;
+            }
+            for (suffix, r) in render_1pux(value) {
                 match r {
                     Rendered::File(id, name) => wanted.push((id, name)),
+                    r if suffix.is_empty() && b.take(st(f, "id"), label, &r) => {}
                     r => b.field(section, &format!("{label}{suffix}"), r),
                 }
             }
@@ -1197,6 +1362,8 @@ fn item_op(
         "PASSWORD" => (Kind::Login, "Password".to_string()),
         "SECURE_NOTE" => (Kind::Note, "Secure note".to_string()),
         "SSH_KEY" => (Kind::SshKey, "SSH key".to_string()),
+        "CREDIT_CARD" => (Kind::Card, "Credit card".to_string()),
+        "IDENTITY" => (Kind::Address, "Identity".to_string()),
         other => (Kind::Note, pretty(other)),
     };
     let folder = if state == "ARCHIVED" { ARCHIVE } else { folder };
@@ -1275,6 +1442,9 @@ fn item_op(
             .filter(|l| !l.trim().is_empty())
             .unwrap_or_else(|| st(f, "id"));
         let value = f.get("value").unwrap_or(&Value::Null);
+        if st(f, "type").eq_ignore_ascii_case("ADDRESS") && b.take_address(value) {
+            continue;
+        }
         let r = match st(f, "type").to_uppercase().as_str() {
             "OTP" => value
                 .as_str()
@@ -1316,6 +1486,7 @@ fn item_op(
         let derived = matches!(st(f, "id"), "public_key" | "fingerprint" | "key_type");
         match r {
             Some(r) if kind == Kind::SshKey && derived => b.hold(&section, label, r),
+            Some(r) if b.take(st(f, "id"), label, &r) => {}
             Some(r) => b.field(&section, label, r),
             None => {}
         }
@@ -1472,6 +1643,8 @@ pub fn plan(batch: &Batch, existing: &[Summary], opts: &Options) -> Plan {
             Kind::Login => report.logins += 1,
             Kind::Note => report.notes += 1,
             Kind::SshKey => report.ssh_keys += 1,
+            Kind::Card => report.cards += 1,
+            Kind::Address => report.addresses += 1,
         }
         if !d.otp.is_empty() {
             report.otps += 1;

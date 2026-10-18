@@ -187,6 +187,42 @@ expiry `MM/YY` input). A one-line note on the Card form and in Settings:
 "Encrypted on this computer before it leaves it. Nextcloud only sees a locked
 file." Design system v3 tokens only, the existing components' patterns.
 
+### As built (stream C, 2026-10-18)
+
+What differs from the plan above, or adds to it (all additions; rule 4):
+
+- **Summary `card`** also has `has_number`, `has_security_code`, `has_pin`
+  (the window and the browser know which rows exist without a reveal);
+  `last4` is `""` for a number under ten digits. **`show`** gives an
+  address's every part. `add`/`edit` replies carry **`warning`** when the
+  number fails Luhn or isn't 12–19 digits (kept anyway).
+- **`fields`** also answers `kind` and, for a card, `confirmed_for`. It takes
+  `item_id` (also `id`). Items in the recycle bin: `not-found`.
+- **`edit --card-stdin`:** an empty line keeps that value and `-` clears it
+  (an empty line meaning "none" would wipe a number when only the code
+  changes). In `add` an empty line is none, as planned.
+- A new number sent without a brand takes its own brand; a card still titled
+  as Safe titles a new one follows its new number. Empty values leave no
+  KDBX field. `reveal`/`copy` also take `holder`, `expiry`, `brand` and an
+  address's protocol names.
+- **`convert`** moves the number, code and PIN out of their old protected
+  custom fields (no duplicate secrets) and takes the lines that became
+  fields out of the note's text (the window shows a card's notes in plain
+  view); the rest of the text stays, the history keeps the note. The marker
+  is the importer's own category line plus, for a card, exactly one
+  protected 12–19-digit field. Identity lines are found by 1Password's
+  English labels: a non-English export's identity stays a note
+  ("Safe found no name or address in it").
+- **Not built here:** the `confirm` verb and its window (stream L; tests call
+  `Session::confirm` from a unit test), and `[safe] confirm_cards` in ewe's
+  `ewe-conf` schema (the ewe branch). The window's switch writes
+  `safe.confirm_cards` through ewe-conf; a schema that refuses the key makes
+  the switch flip back with a toast.
+- **The window** adds Settings → *Cards and addresses* (the encryption
+  line, the `confirm_cards` switch, *Cards from an earlier import* =
+  `convert` with a dry run first) and a New menu (Login, Note, Card,
+  Address, SSH key) where the list shows more than one kind.
+
 ## 5. The ewe browser (stream **B**, branch off `origin/main`, staged only)
 
 - **Sign-up save (D6):** a capture is never dropped because Safe is locked —

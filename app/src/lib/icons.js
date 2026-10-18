@@ -60,4 +60,10 @@ export const ICONS = {
   "globe": 0xE0E8,
   "user": 0xE19F,
   "hourglass": 0xE296,
+  // cards and addresses
+  "credit-card": 0xE0AA,
+  "map-pin": 0xE111,
+  "phone": 0xE133,
+  "mail": 0xE10F,
+  "building-2": 0xE290,
 };

@@ -2,7 +2,8 @@
   // Settings (the mockup's Settings screen): where the safe lives and how it
   // syncs — shown, never a button (house rule 6: Safe syncs by itself,
   // ewe-sync shows the same state) — how it locks, the master password, the
-  // Emergency Kit, import and export. Switches go through ewe-conf.
+  // Emergency Kit, cards and addresses, import and export. Switches go
+  // through ewe-conf.
   import Icon from "../components/Icon.svelte";
   import Switch from "../components/Switch.svelte";
   import Kit from "../components/Kit.svelte";
@@ -11,6 +12,7 @@
   import { ui } from "../ui.svelte.js";
   import { toasts } from "../toast.svelte.js";
   import { placeIcon, placeLabel, placeLine, strength, syncAlert, syncBadge, when } from "../format.js";
+  import { ENCRYPTED_NOTE } from "../cards.js";
 
   let server = $state("");
   let pw = $state(null); // the change-password dialog: {a, b, error}
@@ -63,6 +65,30 @@
   async function set(key, value) {
     const r = await safe.setSetting(key, value);
     if (!r?.ok) toasts.show(r?.message ?? "Couldn't change the setting.", { icon: "circle-alert" });
+  }
+
+  // cards and addresses: the notes an earlier 1Password import made from
+  // them, turned into cards and addresses (`convert`, a dry run first)
+  let conv = $state(null); // {converted, skipped, busy}
+  async function checkConvert() {
+    conv = { converted: [], skipped: [], busy: true };
+    const r = await api.convert(true);
+    if (!r?.ok) {
+      conv = null;
+      toasts.show(r?.message ?? "Couldn't check.", { icon: "circle-alert" });
+      return;
+    }
+    conv = { converted: r.converted ?? [], skipped: r.skipped ?? [], busy: false };
+  }
+  async function runConvert() {
+    conv = { ...conv, busy: true };
+    const r = await api.convert(false);
+    const n = r?.converted?.length ?? 0;
+    conv = null;
+    if (r?.ok) {
+      await safe.loadItems();
+      toasts.show(n === 1 ? "1 note is now a card or an address." : `${n} notes are now cards and addresses.`, { icon: "circle-check" });
+    } else toasts.show(r?.message ?? "Couldn't change them.", { icon: "circle-alert" });
   }
 
   const meter = $derived(strength(pw?.a ?? ""));
@@ -188,6 +214,31 @@
       </div>
     </div>
 
+    <div class="ewe-section"><div class="ewe-section__text"><div class="ewe-section__title ewe-section__title--overline">Cards and addresses</div></div></div>
+    <div class="ewe-list">
+      <div class="ewe-row">
+        <span class="ewe-row__lead ewe-row__lead--tile"><Icon name="shield-check" /></span>
+        <span class="ewe-row__text"><span class="ewe-row__title">Kept like your passwords</span><span class="ewe-row__desc">{ENCRYPTED_NOTE}</span></span>
+      </div>
+      <div class="ewe-list__divider"></div>
+      <div class="ewe-switch-row ewe-row">
+        <span class="ewe-check__text">
+          <span class="ewe-check__label">Ask for my password before filling a card</span>
+          <span class="ewe-check__desc">The browser fills a card only after you type your password. Once is enough for 5 minutes.</span>
+        </span>
+        <Switch on={flag("confirm_cards")} label="Ask for my password before filling a card" toggled={(v) => set("confirm_cards", v)} />
+      </div>
+      <div class="ewe-list__divider"></div>
+      <div class="ewe-row">
+        <span class="ewe-row__lead ewe-row__lead--tile"><Icon name="credit-card" /></span>
+        <span class="ewe-row__text">
+          <span class="ewe-row__title">Cards from an earlier import</span>
+          <span class="ewe-row__desc">1Password's cards and identities that came in as notes. Safe can turn them into cards and addresses.</span>
+        </span>
+        <span class="ewe-row__trail"><button class="ewe-btn ewe-btn--secondary ewe-btn--sm" disabled={safe.readOnly || conv?.busy} onclick={checkConvert}>Check…</button></span>
+      </div>
+    </div>
+
     <div class="ewe-section"><div class="ewe-section__text"><div class="ewe-section__title ewe-section__title--overline">Import and export</div></div></div>
     <div class="ewe-list">
       <div class="ewe-row">
@@ -274,6 +325,37 @@
         <button type="submit" class="ewe-btn ewe-btn--primary" disabled={login.busy}>{login.busy ? "Turning on…" : "Turn on"}</button>
       </div>
     </form></div>
+  </div>
+{/if}
+
+{#if conv && !conv.busy}
+  <div class="safe-scrim">
+    <div class="ewe-dialog" role="dialog" aria-modal="true" aria-label="Cards from an earlier import">
+      <div class="ewe-dialog__head">
+        <span class="ewe-dialog__icon"><Icon name="credit-card" /></span>
+        <div class="ewe-dialog__titles">
+          {#if conv.converted.length}
+            <h3 class="ewe-dialog__title">Turn {conv.converted.length === 1 ? "1 note" : `${conv.converted.length} notes`} into cards and addresses?</h3>
+            <p class="ewe-dialog__desc">
+              {conv.converted.map((c) => `${c.title} (${c.kind === "card" ? "card" : "address"})`).join(", ")}. Each one keeps its name, tags and
+              folder. The note as it was stays in the item's history.
+            </p>
+          {:else}
+            <h3 class="ewe-dialog__title">Nothing to turn into cards</h3>
+            <p class="ewe-dialog__desc">Safe found no note an earlier 1Password import made from a card or an identity.</p>
+          {/if}
+          {#if conv.skipped.length}
+            <p class="ewe-dialog__desc">Left as notes: {conv.skipped.map((x) => `${x.title} (${x.reason})`).join("; ")}.</p>
+          {/if}
+        </div>
+      </div>
+      <div class="ewe-dialog__foot">
+        <button class="ewe-btn ewe-btn--ghost" onclick={() => (conv = null)}>{conv.converted.length ? "Cancel" : "Close"}</button>
+        {#if conv.converted.length}
+          <button class="ewe-btn ewe-btn--primary" onclick={runConvert}>Turn them into cards</button>
+        {/if}
+      </div>
+    </div>
   </div>
 {/if}
 

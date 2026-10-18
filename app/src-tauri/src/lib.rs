@@ -59,6 +59,10 @@ const ITEM_KEYS: &[&str] = &[
     "remove_app",
     "remove_tag",
     "remove_passkey",
+    // a card's and an address's fields (the card's secrets: safe-client
+    // wipes every string in `card` once the request is sent)
+    "card",
+    "address",
 ];
 const PLACE_KEYS: &[&str] = &["place", "location", "url", "user"];
 
@@ -295,6 +299,17 @@ async fn edit(id: String, item: Map<String, Value>) -> Value {
     let mut a = only(item, ITEM_KEYS);
     a.insert("id".into(), Value::from(id));
     call("edit", a).await
+}
+
+/// `convert --from-1password`: the notes an earlier import made from
+/// 1Password's cards and identities become cards and addresses.
+#[tauri::command]
+async fn convert(dry_run: Option<bool>) -> Value {
+    let a = with(&[
+        ("from_1password", Some(Value::from(true))),
+        ("dry_run", dry_run.map(Value::from)),
+    ]);
+    call("convert", a).await
 }
 
 #[tauri::command]
@@ -744,6 +759,7 @@ pub fn run() {
             ssh::ssh_enable,
             ssh::ssh_disable,
             ssh::ssh_status,
+            convert,
         ])
         .run(tauri::generate_context!())
         .expect("error while running the Safe window");
@@ -764,6 +780,13 @@ mod tests {
             Value::Object(a),
             json!({"title": "A", "password_value": "p"})
         );
+        // a card's and an address's objects go through whole
+        let m = json!({"kind": "card", "card": {"number": "4242"}, "address": {"city": "x"}})
+            .as_object()
+            .cloned()
+            .unwrap();
+        assert_eq!(only(m, ITEM_KEYS).len(), 3);
+        assert!(safe_client::SECRET_OBJECTS.contains(&"card"));
     }
 
     #[test]

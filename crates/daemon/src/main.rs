@@ -16,12 +16,15 @@
 //! - [`passkey`]: the passkey verbs (list, create, get) for the browser.
 //! - [`session`]: W, this computer's session key, for the login session
 //!   (docs/SYSTEM.md).
-//! - [`login`]: login unlock — the verbs, the greeter's handoff, `confirm`
+//! - [`login`]: login unlock — the verbs, the unlock at login, `confirm`
 //!   (docs/SYSTEM.md §2).
 //! - [`agent`]: the SSH agent on its own socket; [`sshkeys`]: the `ssh-*`
 //!   verbs.
+//! - [`cards`]: cards and addresses — their objects in `add` and `edit`,
+//!   the browser's `fields` behind the card gate, `convert`.
 
 mod agent;
+mod cards;
 mod clip;
 mod config;
 mod daemon;

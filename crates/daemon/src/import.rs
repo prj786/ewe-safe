@@ -54,6 +54,8 @@ pub fn report_json(r: &Report) -> Value {
         "logins": r.logins,
         "notes": r.notes,
         "ssh_keys": r.ssh_keys,
+        "cards": r.cards,
+        "addresses": r.addresses,
         "attachments": r.attachments,
         "otps": r.otps,
         "duplicates": r.duplicates,
@@ -112,13 +114,19 @@ pub fn import(d: &Arc<Daemon>, a: &Map<String, Value>) -> Result<Value, Fail> {
     } else {
         let (report, sync) = d.mutate(|safe| {
             let r = safe.import(&batch, &opts)?;
-            let changed = r.logins + r.notes + r.ssh_keys > 0;
+            let changed = r.logins + r.notes + r.ssh_keys + r.cards + r.addresses > 0;
             Ok((r, changed))
         })?;
-        let keys = match report.ssh_keys {
+        let mut keys = match report.ssh_keys {
             0 => String::new(),
             n => format!(", {n} SSH keys"),
         };
+        if report.cards + report.addresses > 0 {
+            keys.push_str(&format!(
+                ", {} cards, {} addresses",
+                report.cards, report.addresses
+            ));
+        }
         log(&format!(
             "imported {} logins and {} notes{keys} ({name})",
             report.logins, report.notes

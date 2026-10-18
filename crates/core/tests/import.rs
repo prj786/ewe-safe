@@ -116,30 +116,53 @@ fn a_1pux_export_maps_every_category() {
         (Kind::Login, "router-pw-55")
     );
 
+    // a Credit Card is a card: its own fields, the rest custom fields
     let v = find(&b, "Visa");
-    assert_eq!(v.draft.kind, Kind::Note);
-    let text = v.draft.notes.as_str();
-    assert!(text.starts_with("Credit card\n"), "{text}");
-    assert!(text.contains("number: 4111111111111111"));
-    assert!(text.contains("expiry date: 2027-04"));
-    assert!(text.contains("Contact Information\nissuing bank: Ewe Bank"));
-    assert!(text.ends_with("Daily card"));
-    let num = v
+    assert_eq!(v.draft.kind, Kind::Card);
+    let c = &v.draft.card;
+    assert_eq!(c.holder, "Sam Shepherd");
+    assert_eq!(c.number.as_str(), "4111111111111111");
+    assert_eq!(c.security_code.as_str(), "123");
+    assert_eq!(c.pin.as_str(), "9876");
+    assert_eq!(c.expiry, "04/2027");
+    assert_eq!(c.brand, "visa");
+    assert_eq!(v.draft.notes.as_str(), "Daily card", "the notes alone");
+    assert_eq!(
+        field(v, "Contact Information: issuing bank"),
+        Some("Ewe Bank")
+    );
+    assert_eq!(field(v, "valid from"), Some("2023-04"));
+    assert_eq!(field(v, "Additional Details: credit limit"), Some("5000"));
+    for taken in [
+        "number",
+        "verification number",
+        "Additional Details: PIN",
+        "type",
+    ] {
+        assert!(field(v, taken).is_none(), "{taken} is the card's own");
+    }
+
+    // an Identity is an address
+    let id = find(&b, "Sam Shepherd");
+    assert_eq!(id.draft.kind, Kind::Address);
+    let a = &id.draft.address;
+    assert_eq!(a.full_name, "Sam Shepherd");
+    assert_eq!(a.organization, "Flock Ltd");
+    assert_eq!((a.line1.as_str(), a.line2.as_str()), ("1 Hill Rd", ""));
+    assert_eq!(
+        (a.city.as_str(), a.postal_code.as_str()),
+        ("Ewetown", "9012")
+    );
+    assert_eq!(a.country, "NZ");
+    assert_eq!(a.phone, "+64 21 000 001");
+    assert_eq!(a.email, "sam@example.org");
+    assert_eq!(field(id, "Identification: birth date"), Some("1990-01-01"));
+    let answer = id
         .fields
         .iter()
-        .find(|f| f.name == "number")
-        .expect("number");
-    assert!(num.protected, "a card number is also a protected field");
-    assert!(
-        field(v, "cardholder name").is_none(),
-        "plain fields only in the text"
-    );
-
-    let id = find(&b, "Sam Shepherd");
-    let text = id.draft.notes.as_str();
-    assert!(text.contains("birth date: 1990-01-01"));
-    assert!(text.contains("address:\n  1 Hill Rd\n  Ewetown, 9012\n  nz"));
-    assert!(text.contains("email: sam@example.org"));
+        .find(|f| f.name == "Internet Details: reminder answer")
+        .expect("kept");
+    assert!(answer.protected, "a concealed field stays protected");
 
     let n = find(&b, "Wi-Fi at home");
     assert_eq!(n.draft.kind, Kind::Note);
@@ -242,7 +265,7 @@ fn op_items_map_like_the_export() {
             .ok_or_else(|| "no such file".to_string())
     };
     let b = import::read_op(&op_items(), &mut fetch);
-    assert_eq!(b.items.len(), 4);
+    assert_eq!(b.items.len(), 5);
     let d = find(&b, "Discord");
     assert_eq!(d.draft.username, "sam");
     assert_eq!(d.draft.password.as_str(), "Disc-pw-Zq9!");
@@ -260,11 +283,23 @@ fn op_items_map_like_the_export() {
     assert_eq!(p.files[0].name, "passport.pdf");
     assert_eq!(find(&b, "Old forum").folder, "Archive");
     let v = find(&b, "Visa");
-    assert_eq!(v.draft.kind, Kind::Note);
-    assert!(v.draft.notes.starts_with("Credit card\n"));
-    assert!(v.draft.notes.contains("expiry date: 2027-04"));
-    assert!(v.fields.iter().any(|f| f.name == "number" && f.protected));
+    assert_eq!(v.draft.kind, Kind::Card);
+    assert_eq!(v.draft.card.number.as_str(), "4111111111111111");
+    assert_eq!(v.draft.card.expiry, "04/2027");
+    assert_eq!(v.draft.card.pin.as_str(), "9876");
+    assert_eq!(v.draft.card.brand, "visa");
     assert_eq!(v.folder, "Work");
+    let w = find(&b, "Sam at work");
+    assert_eq!(w.draft.kind, Kind::Address);
+    assert_eq!(w.draft.address.full_name, "Sam Shepherd");
+    assert_eq!(w.draft.address.region, "Canterbury");
+    assert_eq!(w.draft.address.country, "NZ");
+    assert_eq!(w.draft.address.email, "sam@work.example");
+    assert!(
+        w.fields.is_empty(),
+        "every field taken: {:?}",
+        w.fields.iter().map(|f| &f.name).collect::<Vec<_>>()
+    );
     assert!(asked.iter().any(|f| f.document && f.item == "i2"));
     assert!(asked.iter().any(|f| !f.document && f.file == "f1"));
 }
@@ -288,7 +323,8 @@ fn duplicates_are_counted_and_kept_or_skipped() {
     let p = import::plan(&b, &s.items(), &Options::default());
     assert_eq!(p.report.duplicates, 1);
     assert_eq!(p.report.logins, 4, "Discord, Router, Old forum, GitHub");
-    assert_eq!(p.report.notes, 5);
+    assert_eq!(p.report.notes, 3, "Wi-Fi, Passport scan, Laptop key");
+    assert_eq!((p.report.cards, p.report.addresses), (1, 1));
     assert_eq!(p.report.otps, 2);
     assert_eq!(p.report.attachments, 2);
     assert_eq!(p.report.folders, ["Archive", "Personal", "Work"]);
@@ -324,7 +360,10 @@ fn an_import_survives_a_verified_save_with_every_field() {
     let mut s = Safe::create("x", cheap());
     let before = s.clone().to_bytes(&pw).expect("write");
     let report = s.import(&b, &Options::default()).expect("import");
-    assert_eq!(report.logins + report.notes, 9);
+    assert_eq!(
+        report.logins + report.notes + report.cards + report.addresses,
+        9
+    );
     let bytes = s.to_bytes(&pw).expect("verified write");
     assert_ne!(before, bytes);
     let back = Safe::open(&bytes, &pw).expect("open");
@@ -350,7 +389,20 @@ fn an_import_survives_a_verified_save_with_every_field() {
     assert_eq!(back.reveal(&d.id, &Field::OtpCode).unwrap().len(), 6);
     assert_eq!(id("Old forum").folder, "Archive");
     assert_eq!(id("GitHub").folder, "Work");
-    assert_eq!(id("Visa").kind, Kind::Note);
+    let visa = id("Visa");
+    assert_eq!(visa.kind, Kind::Card);
+    let info = visa.card.clone().expect("card");
+    assert_eq!(
+        (info.last4.as_str(), info.expiry.as_str()),
+        ("1111", "04/2027")
+    );
+    assert_eq!(
+        back.reveal(&visa.id, &Field::Other("number".into()))
+            .unwrap()
+            .as_str(),
+        "4111111111111111"
+    );
+    assert_eq!(id("Sam Shepherd").address.expect("address").city, "Ewetown");
 
     let db = back.database();
     let entry = db

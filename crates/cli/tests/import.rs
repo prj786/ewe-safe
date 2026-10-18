@@ -402,7 +402,12 @@ fn a_1pux_export_comes_in_whole_and_nothing_lies_around() {
             r["notes"].clone(),
             r["duplicates"].clone()
         ),
-        (json!(4), json!(5), json!(1))
+        (json!(4), json!(3), json!(1))
+    );
+    // 1Password's Credit Card and Identity (docs/IMPORT.md)
+    assert_eq!(
+        (r["cards"].clone(), r["addresses"].clone()),
+        (json!(1), json!(1))
     );
     assert_eq!(s.titles(), ["My Discord"]);
     assert_eq!(
@@ -425,7 +430,11 @@ fn a_1pux_export_comes_in_whole_and_nothing_lies_around() {
             r["attachments"].clone(),
             r["duplicates"].clone()
         ),
-        (json!(4), json!(5), json!(2), json!(2), json!(1))
+        (json!(4), json!(3), json!(2), json!(2), json!(1))
+    );
+    assert_eq!(
+        (r["cards"].clone(), r["addresses"].clone()),
+        (json!(1), json!(1))
     );
     assert_eq!(r["folders"], json!(["Archive", "Personal", "Work"]));
     assert!(v["hint"].as_str().unwrap().contains("Delete the export"));
@@ -481,13 +490,10 @@ fn a_1pux_export_comes_in_whole_and_nothing_lies_around() {
             "BACKUP-CODES 1111 2222\n"
         );
         assert_eq!(d["tags"], json!(["chat", "Favorite"]));
-        assert!(
-            kp["Visa"]["notes"]
-                .as_str()
-                .unwrap()
-                .contains("number: 4111111111111111")
-        );
-        assert_eq!(kp["Visa"]["custom"]["number"], "4111111111111111");
+        assert_eq!(kp["Visa"]["notes"], "Daily card");
+        assert_eq!(kp["Visa"]["custom"]["Number"], "4111111111111111");
+        assert_eq!(kp["Visa"]["custom"]["Expiry"], "04/2027");
+        assert_eq!(kp["Sam Shepherd"]["custom"]["City"], "Ewetown");
         assert_eq!(kp["Old forum"]["group"], "Archive");
         assert_eq!(
             kp["Passport scan"]["attachments"]["passport.pdf"],
@@ -511,7 +517,7 @@ fn a_1pux_export_comes_in_whole_and_nothing_lies_around() {
     s.assert_no_plaintext();
     let log = std::fs::read_to_string(s.root.join("daemon.log")).unwrap_or_default();
     assert!(
-        log.contains("imported 4 logins and 5 notes (1pux)"),
+        log.contains("imported 4 logins and 3 notes, 1 cards, 1 addresses (1pux)"),
         "{log}"
     );
     for t in ["Discord", "Visa", "sam"] {
@@ -549,9 +555,11 @@ fn a_csv_export_and_the_1password_app_through_op() {
     assert_eq!(
         (
             one["report"]["logins"].clone(),
-            one["report"]["notes"].clone()
+            one["report"]["notes"].clone(),
+            one["report"]["cards"].clone(),
+            one["report"]["addresses"].clone()
         ),
-        (json!(0), json!(1))
+        (json!(0), json!(0), json!(1), json!(1))
     );
     assert!(one.get("hint").is_none(), "no export file to delete");
     let all = s.ok(&["import", "op"]);
@@ -562,7 +570,7 @@ fn a_csv_export_and_the_1password_app_through_op() {
             r["notes"].clone(),
             r["attachments"].clone()
         ),
-        (json!(2), json!(2), json!(2))
+        (json!(2), json!(1), json!(2))
     );
     assert_eq!(r["folders"], json!(["Archive", "Personal", "Work"]));
     let discord = s.id_of("Discord");

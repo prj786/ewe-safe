@@ -117,6 +117,8 @@ pub const SETTINGS: &[&str] = &[
     "generator_words",
     // login unlock (docs/SYSTEM.md §2): unlock the safe at login too
     "unlock_at_login",
+    // filling a card asks for the password again (docs/SYSTEM.md D5)
+    "confirm_cards",
 ];
 
 /// `unix_chkpwd "$USER" nullok` with the login password on stdin; `ok: true`

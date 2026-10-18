@@ -55,6 +55,7 @@ Every reply has `"ok"`. A failure is:
 | `source-error` | an import's source can't be read: not a 1PUX/CSV export, unreadable, or `op` failed (`message` has op's own words) |
 | `excluded` | `passkey-create`: a credential in `exclude` is already in the safe (the browser answers `InvalidStateError`) |
 | `unsupported` | `passkey-create`: no algorithm in the site's list is one Safe makes; `passkey-get`: the stored key is a type Safe can't sign with (RSA). The browser answers `NotSupportedError` |
+| `confirm-needed` | `fields` on a card while `[safe] confirm_cards` is on and no password was typed in the last 5 minutes: `hint` is `ewe-safe confirm --ask`; confirm, then ask again (below, "Cards and addresses") |
 | `internal` | a bug; `message` has the detail |
 
 ### Shapes
@@ -77,12 +78,15 @@ protected custom field are.
   "has_otp": false,
   "modified": "2026-10-14T16:02:11Z",
   "passkey": {"rp_id": "discord.com", "username": "sam"},
-  "ssh": null
+  "ssh": null,
+  "card": null,
+  "address": null
 }
 ```
 
 - `id`: the KDBX entry UUID, lowercase and hyphenated.
-- `kind`: `login`, `note` or `ssh-key`; a note's `username` is `""`. A
+- `kind`: `login`, `note`, `ssh-key`, `card` or `address`; a note's, a
+  card's and an address's `username` is `""` (and `has_password` false). A
   caller that knows only logins and notes skips other kinds.
 - `ssh`: an SSH key's public part, `null` for the other kinds:
   `{"public_key": "ssh-ed25519 AAAA… comment", "fingerprint": "SHA256:…",
@@ -95,6 +99,16 @@ protected custom field are.
 - `passkey`: the item's passkey, `{"rp_id", "username"}` (the site's
   `user.name`), or `null`. Never the key, the credential id or the user
   handle.
+- `card`: a card's `{"brand": "visa", "last4": "4242", "expiry": "08/2029",
+  "holder": "Sam Moe", "has_number": true, "has_security_code": true,
+  "has_pin": false}`, `null` for the other kinds. `brand` is one of
+  `visa` `mastercard` `amex` `discover` `jcb` `unionpay` `diners` `maestro`
+  `mir` `other`; `last4` is `""` when the number has fewer than ten digits;
+  `expiry` is `MM/YYYY` or `""`. **Never** the number, the security code or
+  the PIN (docs/FORMAT.md, "Cards and addresses").
+- `address`: an address's `{"name": "Sam Moe", "line1": "12 Main St",
+  "city": "Tbilisi", "country": "GE"}`, `null` for the other kinds
+  (`show` gives every part, below).
 
 **Place** — never contains a secret.
 
@@ -142,10 +156,10 @@ protected custom field are.
 | `login enable` | `login-enable`: `login_password`, and `password` (the master) when the safe is locked | `enabled`. Seals the safe's master password on this computer under W, and W under the login password. The CLI and the window check the login password with `/usr/bin/unix_chkpwd` first — the daemon can't (`NoNewPrivileges` blocks the setuid helper). `EWE_SAFE_CHKPWD` replaces the helper for tests |
 | `login disable` | `login-disable` | `enabled: false`. Deletes `master.wrap`; the login password no longer opens Safe |
 | `lock` | | `locked: true` |
-| `list` | `[--kind login\|note\|ssh-key] [--tag T] [--deleted]` | `items: [summary…]` (by title) |
+| `list` | `[--kind login\|note\|ssh-key\|card\|address] [--tag T] [--deleted]` | `items: [summary…]` (by title) |
 | `search` | `<text>` | `items: [summary…]` (best first) |
 | `match` | `[--class C] [--title T] [--url U] [--query Q] [--limit N]` | `items: [summary + "score", "reason"]` best first; nothing matched → every login by title (so the picker's search still finds it) |
-| `show` | `<id>` | `item: summary + "notes"` for a login (a note's text only with `--reveal-notes`) |
+| `show` | `<id>` | `item: summary + "notes"` for a login (a note's, an SSH key's, a card's and an address's notes only with `--reveal-notes`). An address's `address` has every part: `name`, `full_name`, `organization`, `line1`, `line2`, `city`, `region`, `postal_code`, `country`, `phone`, `email`. A card's number, code and PIN never: `reveal` them |
 | `reveal` | `<id> --field password\|username\|otp\|notes\|<custom name> [--json]` | bare value; with `--json`: `value` (and `expires_in` seconds for `otp`). On an SSH key, `private_key` is the key (OpenSSH form) and `public_key` its public line |
 | `copy` | `<id> --field … [--clear-after S]` | `copied`, `cleared_after` (seconds; default `[safe] clipboard_clear_seconds`, 0 = keep). The daemon runs `wl-copy` (value on stdin) after dropping the clipboard plugin's `$XDG_RUNTIME_DIR/ewe-clip-skip` marker, so the history skips it — `wl-copy` can't offer the `x-kde-passwordManagerHint` type next to the text. It clears the clipboard later, and on lock, only if it still holds this value (it keeps a hash, not the value). The CLI sends its `WAYLAND_DISPLAY` as `wayland_display` |
 | `add` | `--kind login\|note --title T [--username U] [--url U]… [--app CLASS]… [--tag T]… [--folder F] [--generate [--length N \| --words N]] [--password-stdin] [--notes-stdin]` | `item_id` (the new item's id — not `id`, which is the socket's own request id), `sync`. `--folder Work/Mail` makes the folders that are missing. The item is in the cache (verified) when the answer comes; the place gets it moments later, so `sync.state` is usually `pending` here |
@@ -156,8 +170,13 @@ protected custom field are.
 | `sync` | | `sync` — a nudge; never fails because the place is offline (that's a state) |
 | `place` | | `place`, `sync`, `probe` (`{guarded, checked_at}`) |
 | `passwd` | new password twice on tty/stdin (current one first if locked) | `sync`. Needs the place: the other machines' changes come in under the old password first (`place-error` while offline) |
-| `import` | `<format> [<file>] [--dry-run] [--folder F] [--skip-duplicates] [--vault V]… [--account A]` — formats: `1pux` (1Password's export), `1password-csv` (1Password 8's CSV: logins and passwords only), `op` (live from the 1Password app through its `op` CLI: no file; `--vault` (repeatable, a name or an id) picks vaults, default all; `--account` when `op` knows several accounts); more formats later (Bitwarden, browsers, KeePass, pass). docs/IMPORT.md has the mapping | `report`: `{logins, notes, ssh_keys, attachments, otps, duplicates, skipped: [{title, reason}], folders}`; with `--dry-run` also `dry_run: true` and nothing changes, without it `sync`. One save for the whole import (one merge, one upload); an import that adds nothing saves nothing. Duplicate = a website host (without `www.`) and a username an item already in the safe has; kept unless `--skip-duplicates`, which lists them under `skipped`. 1Password's SSH Keys become **SSH key** items (below, "SSH keys"). Items 1Password calls Credit Card, Identity, Bank Account, … become **Notes** whose text lists their fields; their secret fields are also kept as protected custom fields. Vaults become folders (below `--folder`); 1Password's trash is skipped, its archive goes to the folder `Archive`. `skipped` also names attachments left out (`"<title> — <file>"`: missing, or bigger than 25 MB), and SSH keys kept as notes (`"<title> — SSH key"`, `"kept as a note: <why>"`). The file is a plaintext export: for `1pux` and `1password-csv` the reply's `hint` says to delete it. The daemon reads the file itself (same uid; the CLI sends the full path); `op` runs as argv from the daemon (`vault list`, `item list --include-archive`, `item get`, `read` for attachments, `document get`), and its first call may wait for the user to approve Safe in 1Password. Needs the safe unlocked, a dry run too (duplicates are counted against it) |
+| `import` | `<format> [<file>] [--dry-run] [--folder F] [--skip-duplicates] [--vault V]… [--account A]` — formats: `1pux` (1Password's export), `1password-csv` (1Password 8's CSV: logins and passwords only), `op` (live from the 1Password app through its `op` CLI: no file; `--vault` (repeatable, a name or an id) picks vaults, default all; `--account` when `op` knows several accounts); more formats later (Bitwarden, browsers, KeePass, pass). docs/IMPORT.md has the mapping | `report`: `{logins, notes, ssh_keys, cards, addresses, attachments, otps, duplicates, skipped: [{title, reason}], folders}`; with `--dry-run` also `dry_run: true` and nothing changes, without it `sync`. One save for the whole import (one merge, one upload); an import that adds nothing saves nothing. Duplicate = a website host (without `www.`) and a username an item already in the safe has; kept unless `--skip-duplicates`, which lists them under `skipped`. 1Password's SSH Keys become **SSH key** items (below, "SSH keys"). 1Password's Credit Cards become **cards** and its Identities **addresses** (docs/IMPORT.md); items it calls Bank Account, Server, … become **Notes** whose text lists their fields; their secret fields are also kept as protected custom fields. Vaults become folders (below `--folder`); 1Password's trash is skipped, its archive goes to the folder `Archive`. `skipped` also names attachments left out (`"<title> — <file>"`: missing, or bigger than 25 MB), and SSH keys kept as notes (`"<title> — SSH key"`, `"kept as a note: <why>"`). The file is a plaintext export: for `1pux` and `1password-csv` the reply's `hint` says to delete it. The daemon reads the file itself (same uid; the CLI sends the full path); `op` runs as argv from the daemon (`vault list`, `item list --include-archive`, `item get`, `read` for attachments, `document get`), and its first call may wait for the user to approve Safe in 1Password. Needs the safe unlocked, a dry run too (duplicates are counted against it) |
 | `edit` | `<id> --remove-passkey` | `sync`. Removes the item's passkey: every `KPEX_PASSKEY_*` field and the tag `Passkey` (docs/FORMAT.md). The login and its password stay; the item's history keeps the old version. An item without one saves nothing |
+| `add` | `--kind card [--title T] [--holder H] [--expiry MM/YY] [--brand B] [--card-stdin] [--tag T]… [--folder F] [--notes-stdin]`; `--kind address [--title T] [--full-name N] [--organization O] [--line1 L] [--line2 L] [--city C] [--region R] [--postal-code P] [--country C] [--phone P] [--email E]` | `item_id`, `sync`, and `warning` (a sentence) when the number looks mistyped (Luhn, or not 12–19 digits): Safe keeps it anyway. Over the socket the fields travel in one object: `card: {holder, number, expiry, security_code, pin, brand}` (its secrets are `number`, `security_code`, `pin`), `address: {full_name, organization, line1, line2, city, region, postal_code, country, phone, email}`. The title defaults to "Visa •• 4242" (brand and last four digits) or "Home"; the brand to the number's; the expiry is read as `MM/YY`, `MM/YYYY`, `M/YY` (anything else is `bad-request`); a two-letter country becomes its upper-case code. `--card-stdin` reads three lines: the number, the security code, the PIN (no echo on a terminal; an empty line is none); with `--notes-stdin` too, the notes follow them. A `card` object on another kind (or `address`) is `bad-request` |
+| `edit` | `<id>` + the card or address flags above | `sync`, `warning` as for `add`. Only the keys sent change; `""` clears one (`--holder ""`). In `edit`, a `--card-stdin` line left empty keeps that value and `-` clears it. A new number sent without a brand takes the number's brand; a card still titled as Safe titles a new one ("Visa •• 4242") follows its new number unless a title is sent. An edit that changes nothing saves nothing |
+| `reveal` | `<id> --field number\|security_code\|pin\|holder\|expiry\|brand` (a card), `--field full_name\|line1\|…` (an address) | as above; the KDBX names work too (`--field "Security code"`). `copy` takes the same names |
+| `convert` | `--from-1password [--dry-run]` | `converted: [{item_id, title, kind}]`, `skipped: [{title, reason}]`, and `dry_run: true` or `sync`. Turns the Notes an earlier 1Password import made from Credit Cards and Identities into cards and addresses, in place (same id; docs/FORMAT.md, "Cards and addresses"). A run that finds nothing saves nothing |
+| `fields` | **socket only**, for the browser. `item_id` | a card: `kind: "card"`, `fields: {holder, number, expiry_month: "08", expiry_year: "2029", security_code, brand}` (**never the PIN**) and `confirmed_for` (seconds the last confirm still lasts); an address: `kind: "address"`, `fields: {full_name, given_name, family_name, organization, line1, line2, city, region, postal_code, country, phone, email}` (`given_name` / `family_name`: the full name split before its last word). A card needs a fresh confirm while `[safe] confirm_cards` is on: else `confirm-needed`. Another kind is `bad-request`; an item in the recycle bin `not-found`. Like `reveal`, its reply carries values; nothing is logged |
 | `passkey list` | `[--rp R]` | the socket's `passkey-list` (below), every passkey without `--rp` |
 | `passkey-list` | **socket only.** `rp_id` (absent: every passkey), optional `allow` (credential ids) | `passkeys: [{item_id, title, username, rp_id, credential_id}]`, best first (last used, then title); only those `allow` names when it names any. From memory, like `match`. `username` is the site's `user.name` (the item's username when that is empty) |
 | `passkey-create` | **socket only.** `rp_id`, `rp_name`, `user_id`, `user_name`, `user_display_name`, `client_data_hash`, `algorithms` (COSE ids, the site's order; empty = ES256), `exclude` (credential ids), optional `item_id`, `origin`, `user_verified` | `item_id`, `credential_id`, `attestation_object`, `authenticator_data`, `public_key` (SPKI DER), `public_key_algorithm` (`-7` or `-8`), `sync`. One save, like `add`. `user_display_name` is taken but not stored (KeePassXC keeps none either); `rp_name` and `user_name` longer than 64 UTF-8 bytes are cut on a character boundary, not refused |
@@ -205,6 +224,26 @@ bytes. Anything else is `bad-request`.
   `452b824e-42d3-4324-bc6c-581888ca2851`.
 - Errors as everywhere: `locked`, `not-set-up`, `read-only` (create). Nothing
   a passkey verb receives or answers is logged.
+
+### Cards and addresses (for the ewe browser and the window)
+
+Cards and addresses are items in the safe file (docs/FORMAT.md): the
+summary shows what a list may show, `reveal` and `copy` give one field,
+and the browser fills a form with `fields`.
+
+- **The gate (`[safe] confirm_cards`, a boolean, default `true`):** a card's
+  `fields` needs a password typed in the last 5 minutes (the `confirm` verb:
+  docs/SYSTEM.md §4 and §7, built by the login stream). Without it the
+  answer is `confirm-needed`, `"message": "Safe needs your password again
+  before it fills a card."`, `"hint": "ewe-safe confirm --ask"`. The confirm
+  ends when the safe locks. Addresses need none. Like `ssh_confirm` it cuts
+  down on surprises; it is not a security boundary against a program running
+  as you while Safe is unlocked (`reveal` reads a card's number too).
+- The browser fills cards into `https` frames only (or `localhost`), and
+  never puts a number or a code in a log, a toast or the CLI
+  (docs/SYSTEM.md §5).
+- `import` reports `cards` and `addresses` next to `logins` and `notes`
+  (docs/IMPORT.md).
 
 ### SSH keys and the agent
 
@@ -261,7 +300,8 @@ Newline-delimited JSON, one object per line, UTF-8.
 `"text"`. Secrets travel as `"password"`, `"new_password"`,
 `"password_value"` (for `add`/`edit`), `"notes"`, `"passphrase"` and
 `"private_key"` (for `ssh-add`), and `"login_password"` (for `unlock`,
-`login-enable`, `confirm`; docs/SYSTEM.md §2). Booleans are JSON booleans.
+`login-enable`, `confirm`; docs/SYSTEM.md §2); every string in `add`/`edit`'s
+`"card"` object is wiped like them. Booleans are JSON booleans.
 
 **Reply:** the CLI's JSON object plus `"v": 1` and the request's `"id"`. So no reply field is ever called `id`: the envelope's would overwrite it (an item's id is `item_id` or sits inside `item`).
 `reveal` over the socket always answers `{"ok": true, "value": "…"}`;

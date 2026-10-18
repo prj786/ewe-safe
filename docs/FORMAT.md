@@ -31,6 +31,7 @@ The reference the daemon is built against. The decisions are in PLAN.md
 | kind Note | custom data `ewe.kind = note`; its notes are protected |
 | kind SSH key | a KeeAgent entry, below; custom data `ewe.kind = ssh-key`, its notes protected |
 | passkey | KeePassXC's `KPEX_PASSKEY_*` fields and the tag `Passkey` (below) |
+| kind Card, kind Address | custom data `ewe.kind = card` / `address`; plain fields (below, "Cards and addresses") |
 
 Everything else in an entry (custom fields, attachments, icons, colours,
 auto-type) is left as it was.
@@ -105,6 +106,69 @@ so a passkey made in Safe works in them, and theirs work in Safe.
   its signatures; merges; with `SAFE_KEEPASSXC_CLI` or `keepassxc-cli` on
   the PATH, KeePassXC shows a Safe passkey field by field and its rewrite
   keeps it), `crates/cli/tests/passkeys.rs` (the daemon over the socket).
+
+## Cards and addresses
+
+Two more kinds of item in the same file (docs/SYSTEM.md §4, D4): the copy in
+the place is the encrypted KDBX like everything else, so Nextcloud only ever
+holds a locked file. Every KeePass app shows the fields as plain custom
+fields. Code: `safe_core::card`.
+
+| Safe | KDBX field | protected |
+|---|---|---|
+| kind | custom data `ewe.kind = card` / `address` | — |
+| card: name of the card | `Title` (default "Visa •• 4242", from the brand and the last four digits) | no |
+| cardholder | `Cardholder` | no |
+| number | `Number` (digits only) | **yes** |
+| expiry | `Expiry` (`MM/YYYY`) | no |
+| security code | `Security code` | **yes** |
+| PIN | `PIN` | **yes** |
+| brand | `Brand`: `visa` `mastercard` `amex` `discover` `jcb` `unionpay` `diners` `maestro` `mir` `other` | no |
+| address: name of it | `Title` (default "Home") | no |
+| the address | `Full name`, `Organization`, `Address line 1`, `Address line 2`, `City`, `Region`, `Postal code`, `Country`, `Phone`, `Email` | no |
+| both | `Notes` (protected, as for notes) | **yes** |
+
+- **Empty values leave no field:** a card without a PIN has no `PIN` field,
+  so other apps show no empty rows. `UserName`, `Password` and `URL` are
+  there and empty, as on a Note.
+- **The number** is kept as digits (`4242 4242-4242` is typed, `424242424242`
+  stored). Letters are refused; the Luhn check and a length outside 12–19
+  only **warn** (`warning` in the reply), Safe keeps the number.
+- **The brand** is the one given, else the number's (the networks'
+  published ranges: Visa 4, Mastercard 51–55 and 2221–2720, Amex 34/37,
+  Discover 6011/644–649/65/622126–622925, JCB 3528–3589, UnionPay 62/81,
+  Diners 300–305/3095/36/38/39, Maestro 50/56–58/67/6304/6390, Mir
+  2200–2204), else `other`. A new number sent without a brand takes its
+  own brand again. Names other apps write are read too ("MC", "American
+  Express", "Diners Club", "Carte Blanche").
+- **The expiry** is stored `MM/YYYY`; `MM/YY`, `M/YY`, `MMYY`, `MM-YYYY` and
+  1Password's `YYYY-MM` are read. A value another app wrote in another form
+  is shown as it is.
+- **The country** is an upper-case ISO 3166-1 alpha-2 code when it is two
+  letters ("ge" → "GE"), else kept as typed.
+- **What a list shows** (the summary's `card` object): the brand, the last
+  four digits (none when the number has fewer than ten: four digits of a
+  short one would say too much), the expiry, the holder, and whether a
+  number, a code and a PIN are there. Never the number, the code or the PIN.
+- **Merge:** a card is an entry like any other: rule 3 (below) decides the
+  whole version, and the other machine's version joins the history.
+  Tested: a card edited on two machines (a new code here, a new number
+  there), both merge directions (`crates/core/tests/cards.rs`).
+- **`convert --from-1password`** finds a Note an earlier import made from
+  1Password's Credit Card or Identity: its text starts with the category
+  line the importer wrote (`Credit card`, `Identity`); a card also needs
+  exactly one protected field holding 12–19 digits. In one tracked edit it
+  sets the kind and the fields above: the number, the code and the PIN
+  **move** from their protected custom fields (`number`, `verification
+  number`, `…: PIN`); the holder, the expiry, the type, an identity's name,
+  company, address, phone and e-mail come from the note's `label: value`
+  lines (1Password's English labels), and those lines leave the text; the
+  rest of the text and every other field stay. The id, the title, tags and
+  folder stay; the note as it was goes to the history. An identity's
+  address was one `street / city, state zip / country` field: it is split
+  back as well as it can be (the country is a last line of two letters,
+  the postal code the last words with a digit) — the history keeps the
+  original.
 
 ## SSH keys
 
