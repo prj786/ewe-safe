@@ -16,7 +16,7 @@ members = [
 exclude = ["vendor", "app"]
 
 [workspace.package]
-version = "0.3.0-beta"
+version = "0.3.1-beta"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/prj786/ewe-safe"

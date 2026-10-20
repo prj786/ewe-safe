@@ -628,7 +628,9 @@ fn unlock_ask() -> Value {
     if !ok(&st) {
         return st;
     }
-    if st.get("set_up").and_then(Value::as_bool) != Some(true) {
+    // not set up but `offer`ed: the master password opens the safe the
+    // account holds, so the same prompt works (the daemon's `unlock` opens it)
+    if st.get("set_up").and_then(Value::as_bool) != Some(true) && st.get("offer").is_none() {
         return json!({
             "ok": false,
             "error": "not-set-up",

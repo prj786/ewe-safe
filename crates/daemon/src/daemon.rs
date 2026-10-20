@@ -246,6 +246,17 @@ impl Daemon {
         let Some(m) = Machine::read(&self.paths.machine()) else {
             return;
         };
+        // ewe.conf is how the other machines find this safe: a place that
+        // never reached it (ewe-conf failed at `init`, or the file was
+        // restored from an older backup) is written again
+        let s = self.settings();
+        if s.place.as_deref() != Some(m.kind.as_str())
+            || s.location.as_deref() != Some(m.location.as_str())
+        {
+            config::conf_set("place", &m.kind);
+            config::conf_set("location", &m.location);
+            self.reload_settings();
+        }
         match place_for(&m.kind, &m.location).and_then(|p| {
             Syncer::new(p, &self.paths.state, &safe_store::machine_name()).map_err(Fail::from)
         }) {
@@ -291,6 +302,21 @@ impl Daemon {
 
     pub fn is_set_up(&self) -> bool {
         lk(&self.machine).is_some()
+    }
+
+    /// The safe another machine keeps in a shared place, when this one
+    /// isn't set up: ewe.conf `[safe]` names it (synced with the rest of
+    /// the file). `(kind, location)`; never a This-computer path, which is
+    /// a file on the other machine's disk.
+    pub fn offer(&self) -> Option<(String, String)> {
+        if self.is_set_up() {
+            return None;
+        }
+        let s = self.settings();
+        let kind = s.place.filter(|k| k != "local")?;
+        let location = self.normalize(&kind, s.location.as_deref()).ok()?;
+        place_for(&kind, &location).ok()?;
+        Some((kind, location))
     }
 
     // ── events ──────────────────────────────────────────────────────────
@@ -368,7 +394,11 @@ impl Daemon {
 
     pub fn unlock(&self, password: &Zeroizing<String>) -> Result<usize, Fail> {
         if !self.is_set_up() {
-            return Err(Fail::not_set_up());
+            // a new machine: the master password opens the safe the account
+            // already holds — the same as `open` with the offered place
+            let (kind, location) = self.offer().ok_or_else(Fail::not_set_up)?;
+            let v = self.open(&kind, Some(&location), password)?;
+            return Ok(v["items"].as_u64().unwrap_or(0) as usize);
         }
         if let Some(h) = rd(&self.held).as_ref() {
             return Ok(h.safe.items().len());

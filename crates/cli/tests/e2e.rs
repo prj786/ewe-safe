@@ -684,6 +684,107 @@ fn two_machines_on_one_nextcloud() {
     );
 }
 
+/// A new machine whose ewe.conf (synced) names the safe: `status` offers
+/// it, and the master password alone sets the machine up — no `open
+/// --place`. A This-computer place is never offered; a set-up machine whose
+/// ewe.conf lost the place writes it back at start.
+#[test]
+fn a_new_machine_opens_the_safe_the_account_offers() {
+    let mock = Mock::start();
+    let mut a = Sandbox::new("offer-a");
+    let mut b = Sandbox::new("offer-b");
+    a.cloud(&mock.base());
+    b.cloud(&mock.base());
+    a.start();
+    a.init(&["--place", "nextcloud"]);
+    a.ok(&[
+        "add",
+        "--title",
+        "Shared",
+        "--username",
+        "both",
+        "--generate",
+    ]);
+    a.ok(&["sync"]);
+
+    // nothing in b's ewe.conf yet: plainly not set up, nothing offered
+    b.start();
+    let st = b.ok(&["status"]);
+    assert_eq!(
+        (st["set_up"].clone(), st.get("offer")),
+        (json!(false), None),
+        "{st}"
+    );
+    assert_eq!(
+        b.cli_in(&["unlock"], &format!("{MASTER}\n"))["error"],
+        "not-set-up"
+    );
+
+    // ewe-conf sync brings a's [safe]; the daemon reads it at start
+    b.stop();
+    std::fs::copy(
+        a.root.join("config/fake-ewe-conf.json"),
+        b.root.join("config/fake-ewe-conf.json"),
+    )
+    .expect("copy ewe.conf");
+    b.start();
+    let st = b.ok(&["status"]);
+    assert_eq!(st["set_up"], false);
+    assert_eq!(
+        st["offer"],
+        json!({"place": "nextcloud", "location": "ewe/safe/passwords.kdbx"}),
+        "{st}"
+    );
+
+    // a wrong password leaves the machine as it was, still offered
+    assert_eq!(b.cli_in(&["unlock"], "not it\n")["error"], "wrong-key");
+    let st = b.ok(&["status"]);
+    assert_eq!(
+        (st["set_up"].clone(), st["offer"]["place"].clone()),
+        (json!(false), json!("nextcloud"))
+    );
+
+    // the master password opens it and sets the machine up
+    let u = b.cli_in(&["unlock"], &format!("{MASTER}\n"));
+    assert_eq!(u["items"], 1, "{u}");
+    let st = b.ok(&["status"]);
+    assert_eq!(
+        (st["set_up"].clone(), st["locked"].clone()),
+        (json!(true), json!(false)),
+        "{st}"
+    );
+    assert!(
+        st.get("offer").is_none(),
+        "a set-up machine offers nothing: {st}"
+    );
+    assert_eq!(b.titles(), ["Shared"]);
+
+    // a This-computer place is someone else's disk: never offered
+    let mut c = Sandbox::new("offer-c");
+    std::fs::write(
+        c.root.join("config/fake-ewe-conf.json"),
+        r#"{"safe": {"place": "local", "location": "/home/other/.local/share/ewe/safe/passwords.kdbx"}}"#,
+    )
+    .expect("conf");
+    c.start();
+    let st = c.ok(&["status"]);
+    assert!(st.get("offer").is_none(), "{st}");
+
+    // a set-up machine whose ewe.conf lost [safe] writes the place back
+    a.stop();
+    std::fs::write(a.root.join("config/fake-ewe-conf.json"), "{}").expect("conf");
+    a.start();
+    let conf: Value = serde_json::from_slice(
+        &std::fs::read(a.root.join("config/fake-ewe-conf.json")).expect("conf"),
+    )
+    .expect("json");
+    assert_eq!(conf["safe"]["place"], "nextcloud", "{conf}");
+    assert_eq!(
+        conf["safe"]["location"], "ewe/safe/passwords.kdbx",
+        "{conf}"
+    );
+}
+
 /// `status`, `summary`, `match` and `list` answer from memory while the
 /// place hangs; `lock` doesn't wait for it either.
 #[test]

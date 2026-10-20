@@ -23,7 +23,10 @@
   // null = follow whether login unlock is on; true/false = the user chose
   let useLogin = $state(null);
 
-  const place = $derived(safe.status?.place);
+  // a new machine (status.offer): the safe another computer keeps in the
+  // account — the master password opens it and sets this one up
+  const offer = $derived(safe.status?.offer);
+  const place = $derived(safe.status?.place ?? (offer ? { kind: offer.place, location: offer.location } : null));
   // a This-computer safe's location is a full path: its file name says enough here
   const where = $derived(
     place
@@ -131,7 +134,7 @@
     <span class="ewe-appicon safe-tile"><Icon name="lock" /></span>
     <div class="safe-compact__body">
       <div class="safe-head">
-        <div class="h3">{safe.keyChanged ? "The master password was changed" : "Unlock Safe"}</div>
+        <div class="h3">{safe.keyChanged ? "The master password was changed" : offer ? `Open your safe from ${placeLabel(place)}` : "Unlock Safe"}</div>
         <div class="caption safe-muted">{safe.keyChanged ? "Type the new one. Changes on this computer are kept." : loginMode ? "Type your login password." : where}</div>
       </div>
       <div class="safe-compact__row">
