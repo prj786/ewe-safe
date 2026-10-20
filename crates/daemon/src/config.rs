@@ -112,6 +112,11 @@ pub struct Settings {
     /// `confirm_cards`: filling a card (the browser's `fields`) needs a
     /// password typed in the last 5 minutes (docs/SYSTEM.md D5).
     pub confirm_cards: bool,
+    /// `place` and `location`: where the safe lives, as the machine that
+    /// set it up recorded it. ewe-conf syncs them, so a machine that isn't
+    /// set up yet knows which safe to offer (PLAN.md §12, the new machine).
+    pub place: Option<String>,
+    pub location: Option<String>,
 }
 
 impl Default for Settings {
@@ -127,6 +132,8 @@ impl Default for Settings {
             ssh_confirm: CONFIRM_FIRST_USE.to_string(),
             unlock_at_login: true,
             confirm_cards: true,
+            place: None,
+            location: None,
         }
     }
 }
@@ -153,6 +160,12 @@ impl Settings {
         let d = Settings::default();
         let num = |k: &str, dflt: u64| t.get(k).and_then(Value::as_u64).unwrap_or(dflt);
         let flag = |k: &str, dflt: bool| t.get(k).and_then(Value::as_bool).unwrap_or(dflt);
+        let text = |k: &str| {
+            t.get(k)
+                .and_then(Value::as_str)
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty())
+        };
         Settings {
             lock_after_minutes: num("lock_after_minutes", d.lock_after_minutes),
             lock_on_screen_lock: flag("lock_on_screen_lock", d.lock_on_screen_lock),
@@ -169,6 +182,8 @@ impl Settings {
                 .unwrap_or(d.ssh_confirm),
             unlock_at_login: truthy(t.get("unlock_at_login"), d.unlock_at_login),
             confirm_cards: truthy(t.get("confirm_cards"), d.confirm_cards),
+            place: text("place"),
+            location: text("location"),
         }
     }
 

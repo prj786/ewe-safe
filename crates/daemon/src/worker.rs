@@ -40,8 +40,15 @@ pub fn spawn(d: Arc<Daemon>) {
                 Err(RecvTimeoutError::Disconnected) => return,
             }
             if last_settings.elapsed() >= SETTINGS_EVERY {
+                let before = d.offer();
                 d.reload_settings();
                 last_settings = Instant::now();
+                // ewe.conf just brought (or took away) the place of a safe
+                // made on another machine: the bar and Quick Access ask
+                // `status` again and offer it
+                if d.offer() != before {
+                    d.emit(serde_json::json!({"v": 1, "event": "changed"}));
+                }
             }
             let idle = idle_override.or_else(|| match d.settings().lock_after_minutes {
                 0 => None,

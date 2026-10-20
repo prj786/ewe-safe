@@ -273,6 +273,11 @@ fn status(d: &Daemon) -> Value {
         v["upgrade_from"] = json!(u);
     }
     drop(snap);
+    // a new machine: the safe ewe.conf names, waiting in the account — the
+    // master password alone opens it (`unlock`, or `open` with this place)
+    if let Some((place, location)) = d.offer() {
+        v["offer"] = json!({"place": place, "location": location});
+    }
     // Safe as the keyring (docs/KEYRING.md)
     v["keyring"] = crate::keyring::status_json(d);
     v

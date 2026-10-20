@@ -774,7 +774,7 @@ dependencies = [
 
 [[package]]
 name = "ewe-safe"
-version = "0.3.0-beta"
+version = "0.3.1-beta"
 dependencies = [
  "ed25519-dalek",
  "libc",
@@ -791,7 +791,7 @@ dependencies = [
 
 [[package]]
 name = "ewe-safed"
-version = "0.3.0-beta"
+version = "0.3.1-beta"
 dependencies = [
  "chrono",
  "keepass",
@@ -1748,7 +1748,7 @@ checksum = "cf54715a573b99ac80df0bc206da022bcd442c974952c7b9720069370852e21f"
 
 [[package]]
 name = "safe-client"
-version = "0.3.0-beta"
+version = "0.3.1-beta"
 dependencies = [
  "libc",
  "serde_json",
@@ -1757,7 +1757,7 @@ dependencies = [
 
 [[package]]
 name = "safe-core"
-version = "0.3.0-beta"
+version = "0.3.1-beta"
 dependencies = [
  "base32",
  "base64 0.23.1",
@@ -1784,7 +1784,7 @@ dependencies = [
 
 [[package]]
 name = "safe-login"
-version = "0.3.0-beta"
+version = "0.3.1-beta"
 dependencies = [
  "base64 0.23.1",
  "chacha20poly1305",
@@ -1798,7 +1798,7 @@ dependencies = [
 
 [[package]]
 name = "safe-secrets"
-version = "0.3.0-beta"
+version = "0.3.1-beta"
 dependencies = [
  "aes",
  "base64 0.23.1",
@@ -1817,7 +1817,7 @@ dependencies = [
 
 [[package]]
 name = "safe-store"
-version = "0.3.0-beta"
+version = "0.3.1-beta"
 dependencies = [
  "base64 0.23.1",
  "chrono",
@@ -1835,7 +1835,7 @@ dependencies = [
 
 [[package]]
 name = "safe-testkit"
-version = "0.3.0-beta"
+version = "0.3.1-beta"
 dependencies = [
  "base64 0.23.1",
 ]

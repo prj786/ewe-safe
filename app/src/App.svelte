@@ -62,7 +62,8 @@
 {:else if mode === "confirm"}
   <Confirm {reason} />
 {:else if mode === "unlock"}
-  {#if !safe.daemon.available || (safe.status && !safe.status.set_up)}
+  <!-- not set up but offered: the account's safe opens with the master password here -->
+  {#if !safe.daemon.available || (safe.status && !safe.status.set_up && !safe.status.offer)}
     <div class="safe-compact">
       <span class="ewe-appicon safe-tile"><Icon name="lock" /></span>
       <div class="safe-compact__body">
