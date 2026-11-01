@@ -438,6 +438,8 @@ pub fn remove() -> bool {
             false
         }
     };
+    let env = env_file();
+    gone |= remove_if(&env, ours(&env, ENV_MARK));
     let cfg = config_file();
     gone |= remove_if(&cfg, ours(&cfg, CONFIG_MARK));
     let dir = gate_dir();
@@ -450,9 +452,8 @@ pub fn remove() -> bool {
             gone |= remove_if(&e.path(), safes);
         }
     }
+    // the folder last: once it is gone, so is everything else
     let _ = std::fs::remove_dir(&dir);
-    let env = env_file();
-    gone |= remove_if(&env, ours(&env, ENV_MARK));
     gone
 }
 

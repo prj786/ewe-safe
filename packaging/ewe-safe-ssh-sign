@@ -1,0 +1,3 @@
+#!/bin/sh
+# Git's gpg.ssh.program when Safe signs commits (ewe-safe ssh sign-commits): ssh-keygen through Safe's agent, even from a terminal opened before the gate.
+SSH_AUTH_SOCK="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/ewe-safe-ssh.sock" exec ssh-keygen "$@"

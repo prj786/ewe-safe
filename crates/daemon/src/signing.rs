@@ -9,13 +9,13 @@
 //! while it still holds Safe's value.
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use serde_json::{Map, Value, json};
 
 use crate::config;
-use crate::daemon::{Daemon, Fail};
+use crate::daemon::{Daemon, Fail, lk};
 use crate::gate;
 use crate::log;
 
@@ -25,6 +25,9 @@ type Args = Map<String, Value>;
 pub const PROGRAM: &str = "ewe-safe-ssh-sign";
 const ALLOWED: &str = "~/.ssh/ewe-safe/allowed_signers";
 const KEY_PREFIX: &str = "~/.ssh/ewe-safe/key-";
+/// What this computer's Git was last made to match (`git_sign`): set by
+/// the verbs and by [`converge`]. None: not looked at yet.
+static APPLIED: Mutex<Option<Option<String>>> = Mutex::new(None);
 
 /// The six keys and their values, for a key's public file (`~` form).
 fn wanted(file: &str) -> [(&'static str, String); 6] {
@@ -71,7 +74,8 @@ fn safes_in_git(g: &HashMap<String, String>) -> bool {
         || g.get("gpg.ssh.program").is_some_and(|v| v == PROGRAM)
 }
 
-/// The email for `allowed_signers`: `--email`, else Git's `user.email`.
+/// The email for `allowed_signers`: `--email`, else Git's global
+/// `user.email`.
 pub fn email(arg: Option<&str>) -> Result<String, Fail> {
     if let Some(e) = arg.map(str::trim).filter(|e| !e.is_empty()) {
         if e.chars().any(|c| c.is_whitespace() || c.is_control()) {
@@ -79,7 +83,8 @@ pub fn email(arg: Option<&str>) -> Result<String, Fail> {
         }
         return Ok(e.to_string());
     }
-    git(&["config", "--get", "user.email"])
+    // --global: the daemon's working folder may be any repository
+    git(&["config", "--global", "--get", "user.email"])
         .filter(|(c, o)| *c == 0 && !o.trim().is_empty())
         .map(|(_, o)| o.trim().to_string())
         .ok_or_else(|| {
@@ -190,6 +195,7 @@ pub fn turn_on(d: &Daemon, item_id: &str, email: &str) -> Result<Value, Fail> {
     }
     gate::ensure_on(d)?;
     configure(&key, Some(email))?;
+    *lk(&APPLIED) = Some(Some(key.fingerprint.clone()));
     let recorded = config::conf_store("git_sign", &key.fingerprint);
     d.reload_settings();
     log("ssh sign-commits: Git signs commits with a key in Safe");
@@ -212,6 +218,7 @@ fn keys_ok(k: &gate::SafeKey) -> bool {
 pub fn sign(d: &Arc<Daemon>, a: &Args) -> Result<Value, Fail> {
     if a.get("off").and_then(Value::as_bool) == Some(true) {
         let gone = unconfigure();
+        *lk(&APPLIED) = Some(None);
         let recorded = config::conf_store("git_sign", "");
         d.reload_settings();
         log("ssh sign-commits: off");
@@ -234,6 +241,7 @@ pub fn off_for_disable(d: &Daemon) -> bool {
     let was = d.settings().git_sign.is_some() || safes_in_git(&global());
     if was {
         unconfigure();
+        *lk(&APPLIED) = Some(None);
         config::conf_store("git_sign", "");
         d.reload_settings();
     }
@@ -245,17 +253,12 @@ pub fn off_for_disable(d: &Daemon) -> bool {
 /// with it; with signing off (or the agent off), Safe's values go.
 pub fn converge(d: &Daemon) {
     let st = d.settings();
-    // with signing off, Git is looked at once, and again only after a change
+    // with signing off and Git already made to match, nothing to look at
     // (one `git config` a minute for nothing is not worth it)
-    static LAST: std::sync::Mutex<Option<Option<String>>> = std::sync::Mutex::new(None);
-    {
-        let mut last = crate::daemon::lk(&LAST);
-        let same = last.as_ref() == Some(&st.git_sign);
-        *last = Some(st.git_sign.clone());
-        if same && st.git_sign.is_none() {
-            return;
-        }
+    if st.git_sign.is_none() && *lk(&APPLIED) == Some(None) {
+        return;
     }
+    *lk(&APPLIED) = Some(st.git_sign.clone());
     match st.git_sign.as_deref() {
         Some(fp) if st.ssh_agent && d.is_set_up() => {
             let Some(key) = gate::safe_keys(d).into_iter().find(|k| k.fingerprint == fp) else {

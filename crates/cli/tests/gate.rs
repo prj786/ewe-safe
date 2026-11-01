@@ -1463,3 +1463,174 @@ fn a_real_sshd_lets_safe_in() {
         "{used}"
     );
 }
+
+impl Sandbox {
+    /// Git in the sandbox: its HOME, `GIT_CONFIG_GLOBAL`, no system config.
+    fn git(&self, args: &[&str]) -> (String, String, i32) {
+        let out = Command::new("git")
+            .args(args)
+            .env_clear()
+            .envs(self.env())
+            .stdin(Stdio::null())
+            .output()
+            .expect("git");
+        (
+            String::from_utf8_lossy(&out.stdout).into_owned(),
+            String::from_utf8_lossy(&out.stderr).into_owned(),
+            out.status.code().unwrap_or(-1),
+        )
+    }
+
+    fn git_global(&self, key: &str) -> Option<String> {
+        let (out, _, code) = self.git(&["config", "--global", "--get", key]);
+        (code == 0).then(|| out.trim().to_string())
+    }
+}
+
+/// S25: Git signs commits and tags through Safe's agent (`ewe-safe-ssh-sign`
+/// from packaging/), `git verify-commit` checks them, the computer follows
+/// `[safe] git_sign`, and off unsets only Safe's values.
+#[test]
+fn git_commits_are_signed_through_safe() {
+    let mut s = Sandbox::new("sign");
+    let helper = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packaging/ewe-safe-ssh-sign");
+    std::fs::copy(&helper, s.bin.join("ewe-safe-ssh-sign")).unwrap();
+    s.start();
+    s.init();
+    let k = s.ok(&["ssh", "new", "--title", "Signing key"]);
+    let id = k["item_id"].as_str().unwrap().to_string();
+    let fp = k["ssh"]["fingerprint"].as_str().unwrap().to_string();
+    let public = k["ssh"]["public_key"].as_str().unwrap().to_string();
+
+    let no = s.cli(&["ssh", "sign-commits", &id]);
+    assert_eq!(no["error"], "bad-request", "{no}");
+    assert!(
+        no["message"]
+            .as_str()
+            .unwrap()
+            .starts_with("Tell Safe your Git email: --email")
+    );
+    for (k, v) in [
+        ("user.email", "sam@example.com"),
+        ("user.name", "Sam"),
+        ("commit.verbose", "true"),
+    ] {
+        assert_eq!(s.git(&["config", "--global", k, v]).2, 0);
+    }
+
+    let on = s.ok(&["ssh", "sign-commits", &id]);
+    assert_eq!(on["signing"]["fingerprint"], json!(fp), "{on}");
+    assert_eq!(on["signing"]["email"], "sam@example.com");
+    assert_eq!(on["signing"]["recorded"], true);
+    let file = format!("~/.ssh/ewe-safe/key-{}.pub", tag(&fp));
+    for (k, v) in [
+        ("gpg.format", "ssh"),
+        ("user.signingkey", file.as_str()),
+        ("gpg.ssh.program", "ewe-safe-ssh-sign"),
+        ("commit.gpgsign", "true"),
+        ("tag.gpgsign", "true"),
+        (
+            "gpg.ssh.allowedSignersFile",
+            "~/.ssh/ewe-safe/allowed_signers",
+        ),
+    ] {
+        assert_eq!(s.git_global(k).as_deref(), Some(v), "{k}");
+    }
+    let signers = s.gate_dir().join("allowed_signers");
+    assert_eq!(
+        read(&signers),
+        format!("sam@example.com namespaces=\"git\" {}\n", bare(&public))
+    );
+    assert_eq!(s.conf()["safe"]["git_sign"], json!(fp));
+    let st = s.ok(&["ssh", "status"])["signing"].clone();
+    assert_eq!(
+        st,
+        json!({"item_id": id, "title": "Signing key", "fingerprint": fp, "active": true})
+    );
+
+    // a real commit and a tag, signed through the agent, verified
+    let repo = s.root.join("repo");
+    assert_eq!(s.git(&["init", "-q", repo.to_str().unwrap()]).2, 0);
+    let r = repo.to_str().unwrap();
+    let (_, err, code) = s.git(&["-C", r, "commit", "--allow-empty", "-q", "-m", "first"]);
+    assert_eq!(code, 0, "signed commit: {err}\n{}", s.daemon_log());
+    let (_, err, code) = s.git(&["-C", r, "verify-commit", "HEAD"]);
+    assert_eq!(code, 0, "{err}");
+    assert!(
+        err.contains("Good \"git\" signature for sam@example.com"),
+        "{err}"
+    );
+    assert!(
+        s.approvals()
+            .iter()
+            .any(|a| a.starts_with("ssh-keygen (from git)|Signing key")),
+        "{:?}",
+        s.approvals()
+    );
+    assert_eq!(s.git(&["-C", r, "tag", "-m", "one", "v1"]).2, 0);
+    assert_eq!(s.git(&["-C", r, "verify-tag", "v1"]).2, 0);
+
+    // the account turned it off elsewhere: only Safe's values go here
+    s.set_conf(|c| c["safe"]["git_sign"] = json!(""));
+    // allowed_signers goes last
+    wait_until("signing off here", 10, || !signers.exists());
+    assert_eq!(s.git_global("gpg.ssh.program"), None);
+    assert_eq!(s.git_global("user.signingkey"), None);
+    assert_eq!(s.git_global("commit.gpgsign"), None);
+    assert_eq!(
+        s.git_global("commit.verbose").as_deref(),
+        Some("true"),
+        "the user's own"
+    );
+    // … and on again elsewhere: this computer has the key, so it follows
+    s.set_conf(|c| c["safe"]["git_sign"] = json!(fp));
+    // gpg.ssh.allowedSignersFile is the last key set
+    wait_until("signing on here", 10, || {
+        s.git_global("gpg.ssh.allowedSignersFile").is_some() && signers.exists()
+    });
+    assert_eq!(
+        s.git_global("gpg.ssh.program").as_deref(),
+        Some("ewe-safe-ssh-sign")
+    );
+    assert_eq!(
+        s.git(&["-C", r, "commit", "--allow-empty", "-q", "-m", "second"])
+            .2,
+        0
+    );
+    assert_eq!(s.git(&["-C", r, "verify-commit", "HEAD"]).2, 0);
+
+    // off by the verb
+    let off = s.ok(&["ssh", "sign-commits", "--off"]);
+    assert_eq!(off["unset"].as_array().unwrap().len(), 6, "{off}");
+    assert_eq!(s.conf()["safe"]["git_sign"], "");
+    assert_eq!(s.ok(&["ssh", "status"])["signing"], Value::Null);
+    assert_eq!(s.git_global("commit.verbose").as_deref(), Some("true"));
+    assert_eq!(
+        s.git(&["-C", r, "commit", "--allow-empty", "-q", "-m", "plain"])
+            .2,
+        0
+    );
+
+    // connect --sign; and disable takes signing along (it needs the agent)
+    let gl = s.ok(&["ssh", "connect", "gitlab", "--sign", "--no-open"]);
+    assert_eq!(gl["signing"]["title"], "GitLab", "{gl}");
+    assert!(
+        gl["steps"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|x| x.as_str().unwrap().contains("Usage type"))
+    );
+    assert_eq!(
+        s.git_global("gpg.ssh.program").as_deref(),
+        Some("ewe-safe-ssh-sign")
+    );
+    let dis = s.ok(&["ssh", "disable"]);
+    assert_eq!(dis["signing_off"], true, "{dis}");
+    assert_eq!(s.git_global("gpg.ssh.program"), None);
+    assert_eq!(
+        s.git(&["-C", r, "commit", "--allow-empty", "-q", "-m", "after"])
+            .2,
+        0
+    );
+}
