@@ -153,8 +153,10 @@ pub fn cleanup() {
 
 pub struct Agent {
     d: Arc<Daemon>,
-    /// (app's files, public key) pairs allowed since the safe was unlocked.
-    allowed: Mutex<HashSet<(String, String)>>,
+    /// (app's files, public key, destination) allowed since the safe was
+    /// unlocked; the destination is the bound server's host key
+    /// fingerprint, or "unbound" (docs/GATE.md S27).
+    allowed: Mutex<HashSet<(String, String, String)>>,
     /// One approval prompt at a time.
     asking: Mutex<()>,
     /// One unlock prompt at a time.
@@ -187,6 +189,7 @@ impl Drop for Counted {
 #[derive(Clone, Debug, PartialEq)]
 struct Bind {
     host_key: Vec<u8>,
+    session_id: Vec<u8>,
     forwarding: bool,
 }
 
@@ -195,6 +198,8 @@ struct Bind {
 #[derive(Clone, Debug, Default, PartialEq)]
 struct Dest {
     host: Option<String>,
+    /// The last bound server's host key fingerprint; None: not bound.
+    bound: Option<String>,
     forwarded: bool,
 }
 
@@ -505,18 +510,7 @@ impl Agent {
     /// session-bind whose signature doesn't check out).
     fn answer(&self, peer: &Peer, body: &[u8], binds: &mut Vec<Bind>) -> (Vec<u8>, bool) {
         if body[0] == EXTENSION {
-            return match extension(&body[1..]) {
-                Ext::Bound(b) if binds.len() < MAX_BINDS => {
-                    binds.push(b);
-                    (vec![SUCCESS], false)
-                }
-                Ext::Bound(_) => (vec![FAILURE], false),
-                Ext::BadBind => {
-                    log("ssh agent: a session-bind with a bad signature: connection closed");
-                    (vec![FAILURE], true)
-                }
-                Ext::Other => (vec![FAILURE], false),
-            };
+            return on_extension(binds, &body[1..]);
         }
         (self.answer_one(peer, body, binds), false)
     }
@@ -542,6 +536,15 @@ impl Agent {
                     Some((blob, data, flags))
                 })();
                 let dest = destination(binds);
+                // a connection bound for an authentication: a userauth
+                // request must be for that session (OpenSSH's ssh-agent)
+                let parsed = parsed.filter(|(_, data, _)| {
+                    let ok = userauth_ok(binds, data);
+                    if !ok {
+                        log("ssh agent: a sign request for another session than the one bound: refused");
+                    }
+                    ok
+                });
                 match parsed
                     .and_then(|(blob, data, flags)| self.sign(peer, blob, data, flags, &dest))
                 {
@@ -721,16 +724,18 @@ impl Agent {
         if mode == "never" {
             return true;
         }
-        if peer.own_child {
+        if peer.own_child && !dest.forwarded {
             log(
                 "ssh agent: no question for the daemon's own ssh (ssh test: the user pressed Check)",
             );
             return true;
         }
-        // a program whose file can't be seen is asked every time
-        let pair = peer.identity.clone().map(|id| (id, key.to_string()));
+        // a program whose file can't be seen is asked every time; an
+        // answer holds for that program, key and server only
+        let to = dest.bound.clone().unwrap_or_else(|| "unbound".to_string());
+        let pair = peer.identity.clone().map(|id| (id, key.to_string(), to));
         let first_use = mode == config::CONFIRM_FIRST_USE && !dest.forwarded;
-        let known = |p: &Option<(String, String)>| {
+        let known = |p: &Option<(String, String, String)>| {
             first_use && p.as_ref().is_some_and(|p| lk(&self.allowed).contains(p))
         };
         if known(&pair) {
@@ -813,7 +818,8 @@ struct Peer {
     /// What an approval is remembered by: the program's file and its
     /// parent's. None when the kernel doesn't say: then it always asks.
     identity: Option<String>,
-    /// The daemon itself started this program: the `ssh` of `ssh test`
+    /// The daemon itself started this program, and it is the system's
+    /// `ssh` (or `EWE_SAFE_SSH`, a test switch): the `ssh` of `ssh test`
     /// (docs/GATE.md S24), run because the user pressed Check.
     own_child: bool,
 }
@@ -891,7 +897,7 @@ impl Peer {
             };
         };
         let up_pid = parent_of(pid);
-        let own_child = up_pid == Some(std::process::id() as i32) && me.name == "ssh";
+        let own_child = up_pid == Some(std::process::id() as i32) && own_ssh(&me.path);
         let parent = up_pid.filter(|p| *p > 1).and_then(program);
         let file = |p: &Program| p.file.map(|(d, i)| format!("{d}:{i}"));
         match parent {
@@ -1107,6 +1113,18 @@ fn ask(paths: &Paths, peer: &Peer, key: &str, dest: &Dest) -> bool {
     false
 }
 
+/// The daemon's own `ssh`: `/usr/bin/ssh`, or the program `EWE_SAFE_SSH`
+/// names (a test switch).
+fn own_ssh(path: &str) -> bool {
+    if path == "/usr/bin/ssh" {
+        return true;
+    }
+    std::env::var_os("EWE_SAFE_SSH")
+        .filter(|v| !v.is_empty())
+        .and_then(|v| std::fs::canonicalize(v).ok())
+        .is_some_and(|p| p == Path::new(path))
+}
+
 /// "Allow ssh (from git) to use GitHub key for github.com?"
 fn question(app: &str, key: &str, dest: &Dest) -> String {
     let to = dest
@@ -1149,9 +1167,12 @@ fn extension(mut rest: &[u8]) -> Ext {
         Some((key, sid, sig, *fwd != 0, tail.is_empty()))
     })();
     match parsed {
-        Some((key, sid, sig, forwarding, true)) if keys::verify_session(key, sid, sig) => {
+        Some((key, sid, sig, forwarding, true))
+            if !sid.is_empty() && keys::verify_session(key, sid, sig) =>
+        {
             Ext::Bound(Bind {
                 host_key: key.to_vec(),
+                session_id: sid.to_vec(),
                 forwarding,
             })
         }
@@ -1159,37 +1180,128 @@ fn extension(mut rest: &[u8]) -> Ext {
     }
 }
 
+/// OpenSSH's ssh-agent rules for a new binding (`process_ext_session_bind`):
+/// nothing after a binding for an authentication (a non-forwarded one); the
+/// same session id again only with the same key (then nothing is recorded);
+/// at most 16. `Ok(true)`: record it.
+fn bind_rule(binds: &[Bind], new: &Bind) -> Result<bool, &'static str> {
+    if binds.len() >= MAX_BINDS {
+        return Err("too many sessions on one connection");
+    }
+    for b in binds {
+        if !b.forwarding {
+            return Err("this connection is bound for an authentication already");
+        }
+        if b.session_id == new.session_id {
+            return if b.host_key == new.host_key {
+                Ok(false)
+            } else {
+                Err("that session is bound to another server's key")
+            };
+        }
+    }
+    Ok(true)
+}
+
+/// A userauth request (`string session_id, byte 50, …`) on a connection
+/// whose last binding is for an authentication must be for that session;
+/// anything else (an SSHSIG for `ssh-keygen -Y sign`, a connection that is
+/// not bound or is forwarded) passes.
+fn userauth_ok(binds: &[Bind], data: &[u8]) -> bool {
+    const USERAUTH_REQUEST: u8 = 50;
+    let Some(last) = binds.last().filter(|b| !b.forwarding) else {
+        return true;
+    };
+    let mut rest = data;
+    let Some(sid) = take_string(&mut rest) else {
+        return true;
+    };
+    if sid.is_empty() || rest.first() != Some(&USERAUTH_REQUEST) {
+        return true;
+    }
+    sid == last.session_id.as_slice()
+}
+
+/// A host name fit for a question and an environment variable: host-name
+/// characters only (letters, digits, `.`, `-`, and `:`, `[`, `]` for a
+/// port or an IPv6 address), at most 253; anything else is unknown.
+fn clean_host(name: &str) -> Option<String> {
+    let ok = !name.is_empty()
+        && name.len() <= 253
+        && !name.starts_with('-')
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | ':' | '[' | ']'));
+    ok.then(|| name.to_string())
+}
+
 /// The name a host key goes by: the services' shipped `known_hosts` first,
 /// then the plain (unhashed) lines of `~/.ssh/known_hosts`; the first name
 /// on the line (`[host]:port` read as `host:port`).
 fn host_name(host_key: &[u8]) -> Option<String> {
-    let mine =
-        std::fs::read_to_string(crate::hosts::ssh_dir().join("known_hosts")).unwrap_or_default();
-    [crate::gate::KNOWN_HOSTS, mine.as_str()]
-        .iter()
-        .flat_map(|t| t.lines())
-        .find_map(|l| {
-            let l = l.trim();
-            if l.is_empty() || l.starts_with('#') || l.starts_with('@') || l.starts_with('|') {
-                return None;
+    name_in(crate::gate::KNOWN_HOSTS, host_key).or_else(|| {
+        let mine = std::fs::read_to_string(crate::hosts::ssh_dir().join("known_hosts")).ok()?;
+        name_in(&mine, host_key)
+    })
+}
+
+/// The first plain line of a `known_hosts` text with this key: its first
+/// name, cleaned ([`clean_host`]).
+fn name_in(text: &str, host_key: &[u8]) -> Option<String> {
+    text.lines().find_map(|l| {
+        let l = l.trim();
+        if l.is_empty() || l.starts_with('#') || l.starts_with('@') || l.starts_with('|') {
+            return None;
+        }
+        let mut f = l.split_whitespace();
+        let names = f.next()?;
+        let line = format!("{} {}", f.next()?, f.next()?);
+        if keys::public_blob(&line)? != host_key {
+            return None;
+        }
+        let first = names.split(',').next().unwrap_or(names);
+        let shown = match first.strip_prefix('[').and_then(|x| x.split_once("]:")) {
+            Some((h, p)) if h.contains(':') => format!("[{h}]:{p}"),
+            Some((h, p)) => format!("{h}:{p}"),
+            None => first.to_string(),
+        };
+        // a name Safe won't show is no name: keep looking
+        clean_host(&shown)
+    })
+}
+
+/// `SSH_AGENTC_EXTENSION`: the reply, and whether to close the connection
+/// (a session-bind whose signature doesn't check out).
+fn on_extension(binds: &mut Vec<Bind>, body: &[u8]) -> (Vec<u8>, bool) {
+    match extension(body) {
+        Ext::Bound(b) => match bind_rule(binds, &b) {
+            Ok(true) => {
+                binds.push(b);
+                (vec![SUCCESS], false)
             }
-            let mut f = l.split_whitespace();
-            let names = f.next()?;
-            let line = format!("{} {}", f.next()?, f.next()?);
-            (keys::public_blob(&line)? == host_key).then(|| {
-                let first = names.split(',').next().unwrap_or(names);
-                match first.strip_prefix('[').and_then(|x| x.split_once("]:")) {
-                    Some((h, p)) => format!("{h}:{p}"),
-                    None => first.to_string(),
-                }
-            })
-        })
+            // the same session and key again: nothing new
+            Ok(false) => (vec![SUCCESS], false),
+            Err(why) => {
+                log(&format!("ssh agent: a session-bind refused: {why}"));
+                (vec![FAILURE], false)
+            }
+        },
+        Ext::BadBind => {
+            log("ssh agent: a session-bind with a bad signature: connection closed");
+            (vec![FAILURE], true)
+        }
+        Ext::Other => (vec![FAILURE], false),
+    }
 }
 
 /// Where a signature goes: the last server bound, and any forwarding.
 fn destination(binds: &[Bind]) -> Dest {
     Dest {
         host: binds.last().and_then(|b| host_name(&b.host_key)),
+        bound: binds
+            .last()
+            .and_then(|b| keys::fingerprint_of_blob(&b.host_key)),
+        // once forwarded, always: a later binding can't clear it
         forwarded: binds.iter().any(|b| b.forwarding),
     }
 }
@@ -1216,7 +1328,7 @@ mod tests {
     }
 
     #[test]
-    fn a_session_bind_is_checked_and_remembered() {
+    fn a_session_bind_is_checked() {
         let sid = [7u8; 32];
         for kind in ["ed25519", "ecdsa", "rsa"] {
             let host = keys::generate(kind, None, "host").unwrap();
@@ -1226,6 +1338,7 @@ mod tests {
                     b,
                     Bind {
                         host_key: blob.clone(),
+                        session_id: sid.to_vec(),
                         forwarding: false
                     },
                     "{kind}"
@@ -1248,11 +1361,141 @@ mod tests {
         let at = m.windows(ka.len()).position(|w| w == ka).unwrap();
         m[at..at + ka.len()].copy_from_slice(&kb);
         assert!(matches!(extension(&m), Ext::BadBind));
+        // an empty session id is no session
+        assert!(matches!(
+            extension(&bind_msg(&a, &[], false, false)),
+            Ext::BadBind
+        ));
         // other extensions keep their answer (FAILURE)
         let mut q = Vec::new();
         put_string(&mut q, b"query");
         assert!(matches!(extension(&q), Ext::Other));
         assert!(matches!(extension(&[0, 0]), Ext::Other));
+    }
+
+    /// OpenSSH's ssh-agent rules, message by message on one connection.
+    #[test]
+    fn bindings_follow_openssh_s_rules() {
+        let (a, b, c) = (
+            keys::generate("ed25519", None, "a").unwrap(),
+            keys::generate("ecdsa", None, "b").unwrap(),
+            keys::generate("ed25519", None, "c").unwrap(),
+        );
+        let ok = (vec![SUCCESS], false);
+        let no = (vec![FAILURE], false);
+
+        // bound for an authentication: nothing more may bind
+        let mut conn = Vec::new();
+        assert_eq!(
+            on_extension(&mut conn, &bind_msg(&a, &[1; 32], false, false)),
+            ok
+        );
+        assert_eq!(
+            on_extension(&mut conn, &bind_msg(&b, &[2; 32], false, false)),
+            no
+        );
+        assert_eq!(
+            on_extension(&mut conn, &bind_msg(&b, &[2; 32], true, false)),
+            no
+        );
+        assert_eq!(
+            on_extension(&mut conn, &bind_msg(&a, &[1; 32], false, false)),
+            no
+        );
+        assert_eq!(conn.len(), 1);
+
+        // a forwarded channel (the local ssh binds it, is_forwarding = 1),
+        // then the far side's own binding: allowed, and forwarded for good
+        let mut conn = Vec::new();
+        assert_eq!(
+            on_extension(&mut conn, &bind_msg(&a, &[1; 32], true, false)),
+            ok
+        );
+        // the same session and key again: fine, nothing new
+        assert_eq!(
+            on_extension(&mut conn, &bind_msg(&a, &[1; 32], true, false)),
+            ok
+        );
+        // the same session with another server's key: refused
+        assert_eq!(
+            on_extension(&mut conn, &bind_msg(&b, &[1; 32], true, false)),
+            no
+        );
+        assert_eq!(
+            on_extension(&mut conn, &bind_msg(&c, &[3; 32], false, false)),
+            ok
+        );
+        assert_eq!(conn.len(), 2);
+        let d = destination(&conn);
+        assert!(d.forwarded, "a later binding can't clear forwarding");
+        assert_eq!(
+            d.bound,
+            keys::fingerprint_of_line(&c.public_key),
+            "the last server"
+        );
+        assert_eq!(
+            on_extension(&mut conn, &bind_msg(&b, &[4; 32], true, false)),
+            no
+        );
+
+        // a bad signature closes the connection
+        let mut conn = Vec::new();
+        assert_eq!(
+            on_extension(&mut conn, &bind_msg(&a, &[1; 32], false, true)),
+            (vec![FAILURE], true)
+        );
+        assert!(conn.is_empty());
+
+        // at most 16
+        let mut conn = Vec::new();
+        for n in 0..MAX_BINDS {
+            assert_eq!(
+                on_extension(&mut conn, &bind_msg(&a, &[n as u8 + 1; 32], true, false)),
+                ok
+            );
+        }
+        assert_eq!(
+            on_extension(&mut conn, &bind_msg(&a, &[99; 32], true, false)),
+            no
+        );
+    }
+
+    /// A userauth request on a connection bound for an authentication must
+    /// be for that session; an SSHSIG (ssh-keygen -Y sign) is no userauth.
+    #[test]
+    fn a_sign_request_must_be_for_the_bound_session() {
+        let userauth = |sid: &[u8]| {
+            let mut d = Vec::new();
+            put_string(&mut d, sid);
+            d.push(50);
+            put_string(&mut d, b"sam");
+            put_string(&mut d, b"ssh-connection");
+            put_string(&mut d, b"publickey");
+            d
+        };
+        let bind = |sid: &[u8], forwarding| Bind {
+            host_key: vec![1],
+            session_id: sid.to_vec(),
+            forwarding,
+        };
+        let sshsig = b"SSHSIG\0\0\0\x04file".to_vec();
+        // not bound: anything goes
+        assert!(userauth_ok(&[], &userauth(&[9; 32])));
+        // bound for an authentication
+        let conn = [bind(&[1; 32], false)];
+        assert!(userauth_ok(&conn, &userauth(&[1; 32])));
+        assert!(
+            !userauth_ok(&conn, &userauth(&[9; 32])),
+            "unexpected session ID"
+        );
+        assert!(userauth_ok(&conn, &sshsig));
+        assert!(
+            userauth_ok(&conn, b"\0\0\0\x01x\x33"),
+            "not a userauth request"
+        );
+        // forwarded: OpenSSH doesn't check either
+        let conn = [bind(&[1; 32], true)];
+        assert!(userauth_ok(&conn, &userauth(&[9; 32])));
     }
 
     #[test]
@@ -1262,32 +1505,56 @@ mod tests {
             .find(|l| l.starts_with("github.com ssh-ed25519 "))
             .unwrap();
         let blob = keys::public_blob(&github["github.com ".len()..]).unwrap();
-        assert_eq!(host_name(&blob).as_deref(), Some("github.com"));
+        // the shipped list answers first (no file is read for it)
+        assert_eq!(
+            name_in(crate::gate::KNOWN_HOSTS, &blob).as_deref(),
+            Some("github.com")
+        );
         let d = destination(&[
             Bind {
                 host_key: vec![1, 2, 3],
+                session_id: vec![1],
                 forwarding: true,
             },
             Bind {
-                host_key: blob,
+                host_key: blob.clone(),
+                session_id: vec![2],
                 forwarding: false,
             },
         ]);
+        assert!(d.forwarded);
+        assert_eq!(d.bound, keys::fingerprint_of_blob(&blob));
         assert_eq!(
-            d,
-            Dest {
-                host: Some("github.com".into()),
-                forwarded: true
-            }
-        );
-        assert_eq!(
-            question("ssh (from git)", "GitHub key", &d),
+            question(
+                "ssh (from git)",
+                "GitHub key",
+                &Dest {
+                    host: Some("github.com".into()),
+                    ..d
+                }
+            ),
             "Allow ssh (from git) to use GitHub key for github.com through a forwarded connection?"
         );
         assert_eq!(
             question("ssh", "GitHub key", &Dest::default()),
             "Allow ssh to use GitHub key?"
         );
+        // a user's known_hosts line: its first name, cleaned; a name that
+        // isn't a host name is unknown
+        let line = github["github.com ".len()..].to_string();
+        let mine = format!(
+            "|1|hashed= {line}\n@revoked * {line}\nbox$(touch-x),other {line}\n[10.0.0.2]:2222,x {line}\n"
+        );
+        assert_eq!(name_in(&mine, &blob).as_deref(), Some("10.0.0.2:2222"));
+        assert_eq!(
+            name_in(&format!("[::1]:22 {line}\n"), &blob).as_deref(),
+            Some("[::1]:22")
+        );
+        assert_eq!(name_in(&format!("x\u{202e}y {line}\n"), &blob), None);
+        for bad in ["a b", "box;rm", "x\"y", "", "-oProxy", &"a".repeat(254)] {
+            assert_eq!(clean_host(bad), None, "{bad:?}");
+        }
+        assert_eq!(clean_host("github.com").as_deref(), Some("github.com"));
     }
 
     #[test]
