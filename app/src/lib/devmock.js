@@ -22,7 +22,8 @@
 //                         lines yet); the gate on but 1Password still named
 //                         by the hosts work and work-proxy, one key only in
 //                         1Password, two key files not in Safe (one with the
-//                         passphrase "mock"); all good
+//                         passphrase "mock"); all good; &gate=problem the gate
+//                         can't go on (a symlinked ~/.ssh/ewe-safe)
 //   &hosts=0              no hosts (default: github.com, work, work-proxy,
 //                         dev-vm in ewe.conf; emoh and nas in your own lines)
 //   &test=fail|changed    every Check fails (GitHub doesn't know the key) / the
@@ -185,7 +186,8 @@ export function install(params) {
     config_file: "/home/sam/.ssh/ewe-safe/config",
     overridden: s.hosts.filter((h) => h._agent).map((h) => ({ host: h.alias, agent: h._agent })),
     key_files: g.files.map((f) => ({ path: f.path, fingerprint: f.fingerprint, in_safe: f.in_safe })),
-    other_agents: g.op ? [{ socket: "/home/sam/.1password/agent.sock", name: "1Password", keys: g.op.keys, missing_from_safe: g.op.missing.length }] : []
+    other_agents: g.op ? [{ socket: "/home/sam/.1password/agent.sock", name: "1Password", keys: g.op.keys, missing_from_safe: g.op.missing.length }] : [],
+    ...(gateFlag === "problem" ? { problem: "~/.ssh/ewe-safe is a link to another folder. Safe doesn't write through links: make it a plain folder (or remove it) and turn the agent on again." } : {})
   });
   // the catalogue (GATE.md S24); the daemon's steps win, these are samples
   const COPIED = "Safe copied your public key.";

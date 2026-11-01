@@ -44,6 +44,8 @@ export function gateOf(st, hosts = []) {
   if (!st) return null;
   if (!st.enabled) return { kind: "off" };
   const g = st.gate;
+  // the gate can't go on (a symlinked ~/.ssh/ewe-safe, …): moving won't help
+  if (g?.problem) return { kind: "problem", problem: g.problem, on: false, hosts: [], ownLines: [], missing: 0, files: [], agent: "" };
   // a daemon before the gate: only whether ssh reaches the agent
   if (!g) {
     const others = (st.ssh_config_agents ?? []).filter((a) => !a.endsWith("ewe-safe-ssh.sock"));

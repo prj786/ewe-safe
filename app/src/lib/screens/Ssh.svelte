@@ -175,6 +175,14 @@
           <button class="ewe-btn ewe-btn--primary" disabled={safe.busy === "ssh-enable"} onclick={turnOn}>{safe.busy === "ssh-enable" ? "Turning on…" : "Turn on"}</button>
         </div>
       </div>
+    {:else if gate?.kind === "problem"}
+      <div class="ewe-alert ewe-alert--danger" role="status">
+        <Icon name="circle-alert" />
+        <div class="ewe-alert__body">
+          <div class="ewe-alert__title">Safe can't be your SSH agent yet</div>
+          <div class="ewe-alert__desc">{gate.problem}</div>
+        </div>
+      </div>
     {:else if gate?.kind === "move"}
       <div class="ewe-alert ewe-alert--warning" role="status">
         <Icon name="triangle-alert" />
@@ -273,6 +281,9 @@
             </span>
             <span class="ewe-row__desc">{keyTypeName(k.ssh?.key_type)} · <span class="mono">{shortFp(k.ssh?.fingerprint)}</span></span>
             <span class="ewe-row__desc">{lastUsed(k.ssh?.last_used, now)}</span>
+            {#if signs && signing?.active === false && signing?.reason}
+              <span class="caption safe-muted">Not signing on this computer: {signing.reason}</span>
+            {/if}
             {#if used.length}
               <span class="safe-chips safe-chips--start"><span class="caption">Used by</span>{#each used as h (h.alias)}<span class="ewe-tag">{h.alias}</span>{/each}</span>
             {/if}
@@ -318,6 +329,7 @@
             <span class="safe-rowtitle">
               <span class="ewe-row__title mono">{h.alias}</span>
               {#if h.source === "yours"}<span class="ewe-badge" title="Your own line in ~/.ssh/config. Safe doesn't change it."><span class="ewe-badge__label">yours</span></span>{/if}
+              {#if h.readable === false}<span class="ewe-badge" title="Safe can't read this host in ewe.conf, so it leaves it as it is."><span class="ewe-badge__label">can't read</span></span>{/if}
             </span>
             <span class="ewe-row__desc mono">{hostLine(h)}</span>
             <span class="safe-chips safe-chips--start">
@@ -335,7 +347,7 @@
           <span class="ewe-row__trail">
             <button class="ewe-btn ewe-btn--ghost ewe-btn--sm" title="Open a terminal: ssh {h.alias}" onclick={() => terminal(h)}><Icon name="square-terminal" />Open</button>
             <button class="ewe-btn ewe-btn--secondary ewe-btn--sm" disabled={checks[h.alias]?.busy} onclick={() => check(h)}>Check</button>
-            {#if h.source === "ewe"}
+            {#if h.source === "ewe" && h.readable !== false}
               <span class="safe-rel">
                 <button class="ewe-iconbtn ewe-iconbtn--ghost ewe-iconbtn--sm" aria-label="More for {h.alias}" aria-haspopup="menu" aria-expanded={menu === `host:${h.alias}`} onclick={() => (menu = menu === `host:${h.alias}` ? "" : `host:${h.alias}`)}><Icon name="ellipsis" /></button>
                 {#if menu === `host:${h.alias}`}
