@@ -1,8 +1,9 @@
 <script>
   // The unlocked window (App shell card): side navigation, a header with
-  // search, New and Lock, then the list and the item — or Settings, Import.
-  // SSH keys have their own New (make one, or add a key file) and the
-  // agent's state above the list. New on a list of one kind makes that
+  // search, New and Lock, then the list and the item — or Settings, Import,
+  // SSH (the gate, services, keys, hosts: docs/GATE.md S28). SSH keys have
+  // their own New (make one, or add a key file). The connect sheet opens
+  // over any of them (the SSH page, an SSH key's Connect…). New on a list of one kind makes that
   // kind; elsewhere it asks which (a login, a note, a card, an address…).
   // Keyboard first: type anywhere to search, arrows move, Enter or Ctrl+C
   // copies the password, Ctrl+Shift+C the username, Ctrl+N is a new login,
@@ -12,10 +13,11 @@
   import ItemDetail from "../components/ItemDetail.svelte";
   import ItemEdit from "../components/ItemEdit.svelte";
   import SshKeyNew from "../components/SshKeyNew.svelte";
-  import SshAgentBar from "../components/SshAgentBar.svelte";
+  import SshConnect from "../components/SshConnect.svelte";
   import Toasts from "../components/Toasts.svelte";
   import Settings from "./Settings.svelte";
   import Import from "./Import.svelte";
+  import Ssh from "./Ssh.svelte";
   import { safe } from "../safe.svelte.js";
   import { ui } from "../ui.svelte.js";
   import { hostOf, letter } from "../format.js";
@@ -171,6 +173,8 @@
       <Settings />
     {:else if ui.view === "import"}
       <Import />
+    {:else if ui.view === "ssh"}
+      <Ssh />
     {:else}
       <div class="ewe-headerbar">
         <div class="ewe-headerbar__titles">
@@ -220,8 +224,6 @@
           </div>
         </div>
       {/if}
-
-      {#if f.kind === "ssh-key"}<SshAgentBar />{/if}
 
       {#if safe.items.length === 0 && !f.trash && !ui.editing}
         <div class="safe-split" style="align-items:center;justify-content:center">
@@ -289,6 +291,7 @@
         </div>
       {/if}
     {/if}
+    {#if ui.connect}<SshConnect />{/if}
     <Toasts />
   </div>
 </div>

@@ -1,7 +1,8 @@
 //! The desktop around the window: the ewe tools it reads (`ewe-theme`,
-//! `ewe-conf`, `ewe-cloud`), the open windows for "Pick a window…", links,
-//! and ewe-sync. Every program runs as argv, never through a shell, with a
-//! time limit; none of them ever sees a secret.
+//! `ewe-conf`, `ewe-cloud`, `ewe-remote`), the open windows for "Pick a
+//! window…", links, terminals, and ewe-sync. Every program runs as argv,
+//! never through a shell, with a time limit; none of them ever sees a
+//! secret.
 
 use std::io::Read;
 use std::path::PathBuf;
@@ -242,6 +243,150 @@ pub fn open_url(url: &str) -> Value {
     spawn(Command::new("xdg-open").arg(url))
 }
 
+/// A program on `PATH`, as a full path.
+fn which(name: &str) -> Option<PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    std::env::split_paths(&path)
+        .map(|d| d.join(name))
+        .find(|p| p.is_file())
+}
+
+/// A service's page (docs/GATE.md S24: GitHub's "New SSH key", …) in ewe
+/// browser (`ewe-browser open <url>`), else the default browser. Only
+/// http(s).
+pub fn open_page(url: &str) -> Value {
+    let lower = url.to_ascii_lowercase();
+    if !(lower.starts_with("https://") || lower.starts_with("http://")) {
+        return json!({"ok": false, "error": "bad-request", "message": "Only web addresses open from Safe."});
+    }
+    match which("ewe-browser") {
+        Some(b) => spawn_detached(Command::new(b).args(["open", url])),
+        None => spawn_detached(Command::new("xdg-open").arg(url)),
+    }
+}
+
+/// Your ewe computers (RFC-009), from the account record and the
+/// pairings, without asking the network (`ewe-remote status --offline`).
+/// Only what the page shows: never this computer's pairing code. No
+/// ewe-remote → `{ok: false, code: "missing"}` (the page hides the part).
+pub fn remote_status() -> Value {
+    remote_reply(tool_json(
+        "ewe-remote",
+        &["status", "--offline"],
+        Duration::from_secs(15),
+    ))
+}
+
+fn remote_reply(v: Value) -> Value {
+    if v.get("ok").and_then(Value::as_bool) != Some(true) {
+        let mut v = v;
+        if let Value::Object(m) = &mut v {
+            m.insert("ok".into(), Value::from(false));
+            let code = m
+                .get("error")
+                .and_then(Value::as_str)
+                .unwrap_or("failed")
+                .to_string();
+            m.insert("code".into(), Value::from(code));
+        }
+        return v;
+    }
+    const KEEP: &[&str] = &[
+        "id",
+        "name",
+        "user",
+        "online",
+        "paired",
+        "allowed",
+        "sharing",
+        "last_seen",
+    ];
+    let computers: Vec<Value> = v
+        .get("computers")
+        .and_then(Value::as_array)
+        .map(|cs| {
+            cs.iter()
+                .filter_map(Value::as_object)
+                .map(|c| {
+                    Value::Object(
+                        c.iter()
+                            .filter(|(k, _)| KEEP.contains(&k.as_str()))
+                            .map(|(k, v)| (k.clone(), v.clone()))
+                            .collect(),
+                    )
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let this = v.get("this").cloned().unwrap_or(Value::Null);
+    json!({
+        "ok": true,
+        "this": {"name": this.get("name"), "sharing": this.get("sharing")},
+        "computers": computers,
+    })
+}
+
+/// An ewe-remote computer id: 16 hex digits (ewe-remote's `ID_RE`).
+fn remote_id(id: &str) -> bool {
+    id.len() == 16
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
+/// A terminal on one of your ewe computers: `ewe-remote terminal <id>`
+/// (kitty, already signed in with that computer's own key).
+pub fn remote_terminal(id: &str) -> Value {
+    if !remote_id(id) {
+        return json!({"ok": false, "error": "bad-request", "message": "That isn't an ewe computer."});
+    }
+    tool_json("ewe-remote", &["terminal", id], Duration::from_secs(30))
+}
+
+/// A host alias `ssh` can take as its one argument: no option (`-…`), no
+/// space, no pattern.
+fn ssh_alias(alias: &str) -> bool {
+    !alias.is_empty()
+        && alias.len() <= 255
+        && !alias.starts_with('-')
+        && alias
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"._-@:+[]%".contains(&b))
+}
+
+/// A kitty terminal that runs `ssh <alias>`, on its own (closing Safe
+/// leaves it open). With the gate on, that ssh asks Safe for the key.
+pub fn ssh_terminal(alias: &str) -> Value {
+    if !ssh_alias(alias) {
+        return json!({"ok": false, "error": "bad-request", "message": "That isn't a host name ssh can open."});
+    }
+    let Some(kitty) = which("kitty") else {
+        return json!({"ok": false, "error": "missing", "message": "kitty is not installed."});
+    };
+    spawn_detached(Command::new(kitty).args(["--title", alias, "ssh", alias]))
+}
+
+/// Start a program in its own process group (it outlives the window) and
+/// reap it when it ends.
+fn spawn_detached(cmd: &mut Command) -> Value {
+    use std::os::unix::process::CommandExt;
+    match cmd
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .process_group(0)
+        .spawn()
+    {
+        Ok(mut child) => {
+            std::thread::spawn(move || {
+                let _ = child.wait();
+            });
+            json!({"ok": true})
+        }
+        Err(e) => json!({"ok": false, "error": "failed", "message": e.to_string()}),
+    }
+}
+
 /// ewe-sync, where the ewe account is signed in (rule 6: one place for
 /// the account and sync).
 pub fn open_ewe_sync() -> Value {
@@ -295,5 +440,54 @@ mod tests {
     fn only_web_addresses_open() {
         assert_eq!(open_url("file:///etc/passwd")["error"], "bad-request");
         assert_eq!(open_url("javascript:alert(1)")["error"], "bad-request");
+        assert_eq!(open_page("file:///etc/passwd")["error"], "bad-request");
+    }
+
+    #[test]
+    fn a_terminal_opens_only_a_plain_host() {
+        for ok in [
+            "github.com",
+            "work-proxy",
+            "github-work",
+            "sam@emoh.lan",
+            "10.0.0.2",
+        ] {
+            assert!(ssh_alias(ok), "{ok}");
+        }
+        for bad in [
+            "",
+            "-oProxyCommand=x",
+            "a b",
+            "*",
+            "host?",
+            "!x",
+            "a;b",
+            "$(x)",
+        ] {
+            assert!(!ssh_alias(bad), "{bad}");
+        }
+        assert_eq!(ssh_terminal("-oProxyCommand=x")["error"], "bad-request");
+        assert!(remote_id("0123456789abcdef"));
+        assert!(!remote_id("0123456789ABCDEF") && !remote_id("--help"));
+    }
+
+    #[test]
+    fn remote_status_keeps_what_the_page_shows() {
+        let v = remote_reply(json!({
+            "ok": true,
+            "this": {"name": "laptop", "sharing": true, "code": "12345678", "code_display": "1234 5678"},
+            "computers": [{"id": "0123456789abcdef", "name": "desk", "online": true, "paired": true, "addresses": {"lan": ["10.0.0.2"]}}],
+        }));
+        assert_eq!(v["ok"], true);
+        assert!(v["this"].get("code").is_none() && v["this"].get("code_display").is_none());
+        assert_eq!(v["computers"][0]["name"], "desk");
+        assert!(v["computers"][0].get("addresses").is_none());
+        let m = remote_reply(
+            json!({"ok": false, "error": "missing", "message": "ewe-remote is not installed."}),
+        );
+        assert_eq!(
+            (m["ok"].clone(), m["code"].clone()),
+            (json!(false), json!("missing"))
+        );
     }
 }

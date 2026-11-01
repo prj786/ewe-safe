@@ -3,10 +3,12 @@
   // password hidden until asked, copies through the daemon (the clipboard
   // clears itself), a live one-time code, websites, apps, tags, notes. An
   // SSH key shows its public key (Copy, kept on the clipboard), fingerprint,
-  // type and whether the agent offers it. A card shows its face (brand,
+  // type, whether the agent offers it, the hosts that use it and when it was
+  // last used (docs/GATE.md S22), and Connect… (the connect sheet). A card shows its face (brand,
   // •••• last 4, expiry, holder) with the number, the security code and the
   // PIN hidden until asked; an address shows its lines, each one to copy.
   // A revealed value lives here for 30 s at most and goes with the item.
+  import { untrack } from "svelte";
   import Icon from "./Icon.svelte";
   import { api } from "../api.js";
   import { safe } from "../safe.svelte.js";
@@ -14,6 +16,7 @@
   import { toasts } from "../toast.svelte.js";
   import { day, hostOf, href, letter } from "../format.js";
   import { addressLines, brandName, countryName, expired, expiryShort, grouped, masked } from "../cards.js";
+  import { lastUsed, usedBy } from "../ssh.js";
 
   let { item, trash = false } = $props();
 
@@ -75,6 +78,8 @@
       }
     })();
     if (item.has_otp) loadOtp(id);
+    // an SSH key: the hosts that use it ("Used by")
+    if (item.kind === "ssh-key") untrack(() => safe.loadSshHosts());
     return () => clearTimeout(hideTimer);
   });
 
@@ -204,6 +209,11 @@
       <Icon name="rotate-ccw" />Restore
     </button>
   {:else}
+    {#if isKey}
+      <button class="ewe-btn ewe-btn--secondary ewe-btn--sm" disabled={safe.readOnly} onclick={() => (ui.connect = { key: item.id })}>
+        <Icon name="link" />Connect…
+      </button>
+    {/if}
     <button
       class="ewe-btn ewe-btn--secondary ewe-btn--sm"
       disabled={safe.readOnly}
@@ -372,6 +382,23 @@
         </span>
       {/if}
     </div>
+    {#if !trash}
+      {@const used = usedBy(safe.ssh.hosts, item.id)}
+      <div class="ewe-list__divider"></div>
+      <div class="ewe-row">
+        <span class="ewe-row__text"><span class="ewe-row__title">Used by</span></span>
+        <span class="ewe-row__trail">
+          <span class="safe-chips">
+            {#each used as h (h.alias)}<span class="ewe-tag"><Icon name="server" />{h.alias}</span>{:else}<span class="safe-muted">No host yet</span>{/each}
+          </span>
+        </span>
+      </div>
+      <div class="ewe-list__divider"></div>
+      <div class="ewe-row">
+        <span class="ewe-row__text"><span class="ewe-row__title">Last used</span></span>
+        <span class="ewe-row__trail"><span class="safe-val">{lastUsed(item.ssh?.last_used).replace(/^Last used /, "")}</span></span>
+      </div>
+    {/if}
     <div class="ewe-list__divider"></div>
     <div class="ewe-row">
       <span class="ewe-row__text"><span class="ewe-row__title">Fingerprint</span></span>
