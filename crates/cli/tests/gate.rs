@@ -140,7 +140,12 @@ elif len(a) == 3 and a[0] == "set":
         v = a[2]
     node, last = dig(a[1], True)
     node[last] = v
-    json.dump(d, open(p, "w"))
+    # atomically, like the real ewe-conf: the daemon re-reads the settings
+    # on its own, and a half-written file read as "no [safe]" (a CI flake)
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(p), prefix=".fake-ewe-conf.")
+    with os.fdopen(fd, "w") as f:
+        json.dump(d, f)
+    os.replace(tmp, p)
     with open(p + ".log", "a") as f:
         f.write(a[1] + "\n")
     if a[1] == "network.ssh.hosts":
