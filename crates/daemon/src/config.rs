@@ -62,6 +62,12 @@ impl Paths {
         self.state.join("ssh-public.json")
     }
 
+    /// `$XDG_STATE_HOME/ewe/safe/ssh-used.json`: when each key last signed
+    /// here, and for which program (docs/GATE.md S22). No titles.
+    pub fn ssh_used(&self) -> PathBuf {
+        self.state.join("ssh-used.json")
+    }
+
     pub fn machine(&self) -> PathBuf {
         self.state.join("machine.json")
     }
@@ -117,6 +123,10 @@ pub struct Settings {
     /// set up yet knows which safe to offer (PLAN.md §12, the new machine).
     pub place: Option<String>,
     pub location: Option<String>,
+    /// `git_sign`: the fingerprint (`SHA256:…`) of the key that signs Git
+    /// commits on every computer of the account (docs/GATE.md S25); None
+    /// or "" = off.
+    pub git_sign: Option<String>,
 }
 
 impl Default for Settings {
@@ -134,6 +144,7 @@ impl Default for Settings {
             confirm_cards: true,
             place: None,
             location: None,
+            git_sign: None,
         }
     }
 }
@@ -184,19 +195,55 @@ impl Settings {
             confirm_cards: truthy(t.get("confirm_cards"), d.confirm_cards),
             place: text("place"),
             location: text("location"),
+            git_sign: text("git_sign"),
         }
     }
 
-    /// `ewe-conf get safe`; anything missing or unreadable is a default.
-    pub fn read() -> Settings {
-        match ewe_conf(&["get", "safe"]) {
-            Some(out) => match serde_json::from_slice::<Value>(&out) {
-                Ok(t) if t.is_object() && t.get("error").is_none() => Settings::from_table(&t),
-                _ => Settings::default(),
-            },
-            None => Settings::default(),
+    /// `ewe-conf get safe`, or None when ewe-conf didn't answer (missing,
+    /// broken, too slow). No `[safe]` table yet is the defaults: only a
+    /// real answer may turn something off (the SSH gate's convergence,
+    /// docs/GATE.md S21).
+    pub fn read_checked() -> Option<Settings> {
+        match conf_get("safe") {
+            Ok(Some(t)) if t.is_object() => Some(Settings::from_table(&t)),
+            Ok(_) => Some(Settings::default()),
+            Err(()) => None,
         }
     }
+}
+
+/// `ewe-conf get <key>` as JSON: `Ok(None)` when the file has no such key,
+/// `Err` when ewe-conf didn't answer. A text value that isn't JSON comes
+/// back as a JSON string.
+pub fn conf_get(key: &str) -> Result<Option<Value>, ()> {
+    let Some((code, out, err)) = run_full("ewe-conf", &["get", key], &[], Duration::from_secs(10))
+    else {
+        return Err(());
+    };
+    let said = |b: &[u8]| String::from_utf8_lossy(b).contains("no-key");
+    match code {
+        0 => {
+            let text = String::from_utf8_lossy(&out);
+            let text = text.trim();
+            let v = serde_json::from_str::<Value>(text).unwrap_or_else(|_| json!(text));
+            if v.get("error").and_then(Value::as_str) == Some("no-key") {
+                return Ok(None);
+            }
+            Ok(Some(v))
+        }
+        1 if said(&out) || said(&err) => Ok(None),
+        _ => Err(()),
+    }
+}
+
+/// `ewe-conf set <key> <json>` (a whole value: `network.ssh.hosts`);
+/// whether ewe-conf stored it.
+pub fn conf_set_json(key: &str, value: &Value) -> bool {
+    let ok = ewe_conf(&["set", key, &value.to_string()]).is_some();
+    if !ok {
+        log(&format!("ewe-conf could not store {key}"));
+    }
+    ok
 }
 
 /// Store a `[safe]` key through `ewe-conf` (for the other machines: where
@@ -224,6 +271,53 @@ fn ewe_conf(args: &[&str]) -> Option<Vec<u8>> {
 /// Run a program as argv (never a shell); its stdout if it exits 0 in time.
 pub fn run(program: &str, args: &[&str], limit: Duration) -> Option<Vec<u8>> {
     run_env(program, args, &[], limit)
+}
+
+/// Run a program as argv (never a shell): its exit code, stdout and stderr
+/// when it ends in time (None when it can't start or is killed).
+pub fn run_full(
+    program: &str,
+    args: &[&str],
+    envs: &[(String, String)],
+    limit: Duration,
+) -> Option<(i32, Vec<u8>, Vec<u8>)> {
+    let mut child = Command::new(program)
+        .args(args)
+        .envs(envs.iter().map(|(k, v)| (k, v)))
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .ok()?;
+    // both pipes drain while the program runs (a full pipe would stall it)
+    let mut out_pipe = child.stdout.take()?;
+    let mut err_pipe = child.stderr.take()?;
+    let out_t = std::thread::spawn(move || {
+        let mut b = Vec::new();
+        let _ = out_pipe.read_to_end(&mut b);
+        b
+    });
+    let err_t = std::thread::spawn(move || {
+        let mut b = Vec::new();
+        let _ = err_pipe.read_to_end(&mut b);
+        b
+    });
+    let start = Instant::now();
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break Some(status),
+            Ok(None) if start.elapsed() < limit => std::thread::sleep(Duration::from_millis(20)),
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                break None;
+            }
+        }
+    };
+    let out = out_t.join().unwrap_or_default();
+    let err = err_t.join().unwrap_or_default();
+    let status = status?;
+    Some((status.code().unwrap_or(-1), out, err))
 }
 
 pub fn run_env(

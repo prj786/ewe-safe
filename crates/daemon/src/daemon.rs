@@ -195,6 +195,8 @@ impl From<std::io::Error> for Fail {
 pub struct Daemon {
     pub paths: Paths,
     settings: RwLock<Settings>,
+    /// The last settings read got an answer from ewe-conf.
+    fresh: std::sync::atomic::AtomicBool,
     machine: Mutex<Option<Machine>>,
     pub syncer: Mutex<Option<Syncer>>,
     pub held: RwLock<Option<Held>>,
@@ -215,6 +217,7 @@ impl Daemon {
         Daemon {
             paths,
             settings: RwLock::new(Settings::default()),
+            fresh: std::sync::atomic::AtomicBool::new(false),
             machine: Mutex::new(None),
             syncer: Mutex::new(None),
             held: RwLock::new(None),
@@ -273,9 +276,26 @@ impl Daemon {
         }
     }
 
+    /// Read ewe.conf `[safe]` again. A read ewe-conf didn't answer leaves
+    /// the defaults (the agent off) but marks the settings stale, so
+    /// [`Daemon::converge`] changes nothing on the strength of it.
     pub fn reload_settings(&self) {
-        let s = Settings::read();
-        *wr(&self.settings) = s;
+        let read = Settings::read_checked();
+        self.fresh
+            .store(read.is_some(), std::sync::atomic::Ordering::SeqCst);
+        *wr(&self.settings) = read.unwrap_or_default();
+    }
+
+    /// Make this computer match the account's `[safe]` settings: the SSH
+    /// gate's files and lines (docs/GATE.md S21) and Git's signing
+    /// (S25). Nothing is written when all is in place, and nothing is
+    /// removed when the last read of the settings failed.
+    pub fn converge(&self) {
+        if !self.fresh.load(std::sync::atomic::Ordering::SeqCst) {
+            return;
+        }
+        crate::gate::converge(self);
+        crate::signing::converge(self);
     }
 
     pub fn settings(&self) -> Settings {

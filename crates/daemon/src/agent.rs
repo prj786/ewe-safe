@@ -157,6 +157,9 @@ pub struct Agent {
     cooldown: Mutex<(Option<Instant>, Duration, bool)>,
     /// What `ssh-public.json` holds now.
     cached: Mutex<String>,
+    /// `ssh-used.json`: each key's last signature here (fingerprint →
+    /// `{at, program}`), read once.
+    used: Mutex<Option<serde_json::Map<String, Value>>>,
     listening: Mutex<bool>,
     connections: AtomicUsize,
     /// When a connection over the limit was last logged.
@@ -188,6 +191,7 @@ pub fn spawn(d: Arc<Daemon>) -> Arc<Agent> {
         unlocking: Mutex::new(()),
         cooldown: Mutex::new((None, COOLDOWN, false)),
         cached: Mutex::new(String::new()),
+        used: Mutex::new(None),
         listening: Mutex::new(false),
         connections: AtomicUsize::new(0),
         crowded: Mutex::new(None),
@@ -294,10 +298,18 @@ impl Agent {
         let Some(found) = self.unlocked_keys() else {
             return;
         };
+        // the item id and the fingerprint too (docs/GATE.md S22, S24: the
+        // window and `ssh hosts` name a key while locked)
         let keys: Vec<Value> = found
             .iter()
-            .filter_map(|(_, title, line)| {
-                Some(json!({"public_key": keys::public_line(&keys::public_blob(line)?)?, "comment": title}))
+            .filter_map(|(id, title, line)| {
+                let blob = keys::public_blob(line)?;
+                Some(json!({
+                    "public_key": keys::public_line(&blob)?,
+                    "comment": title,
+                    "item_id": id,
+                    "fingerprint": keys::fingerprint_of_blob(&blob),
+                }))
             })
             .collect();
         let text = format!(
@@ -323,6 +335,54 @@ impl Agent {
         match written {
             Ok(()) => *cached = text,
             Err(e) => log(&format!("ssh agent: can't write the public-key list: {e}")),
+        }
+        drop(cached);
+        // a public file for every key the agent offers (S22), with the list
+        let pairs: Vec<(String, String)> = found
+            .into_iter()
+            .filter(|(_, _, line)| keys::supported_line(line))
+            .map(|(_, title, line)| (line, title))
+            .collect();
+        if let Err(e) = crate::gate::sync_key_files(&pairs) {
+            log(&format!("ssh agent: can't write the public key files: {e}"));
+        }
+    }
+
+    /// `ssh-used.json`, read once.
+    fn used_map(&self) -> std::sync::MutexGuard<'_, Option<serde_json::Map<String, Value>>> {
+        let mut used = lk(&self.used);
+        if used.is_none() {
+            let read = std::fs::read(self.d.paths.ssh_used())
+                .ok()
+                .and_then(|b| serde_json::from_slice::<Value>(&b).ok())
+                .and_then(|v| v.get("keys").and_then(Value::as_object).cloned());
+            *used = Some(read.unwrap_or_default());
+        }
+        used
+    }
+
+    /// A key's last signature on this computer: `{at, program}`, or None.
+    pub fn last_used(&self, fingerprint: &str) -> Option<Value> {
+        self.used_map().as_ref()?.get(fingerprint).cloned()
+    }
+
+    /// Remember a signature (fingerprints, times and program names; no
+    /// titles).
+    fn record_use(&self, blob: &[u8], program: &str) {
+        let Some(fp) = keys::fingerprint_of_blob(blob) else {
+            return;
+        };
+        let at = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        let mut used = self.used_map();
+        let map = used.get_or_insert_with(Default::default);
+        map.insert(fp, json!({"at": at, "program": program}));
+        let text = format!(
+            "{}\n",
+            serde_json::to_string_pretty(&json!({"v": 1, "keys": map})).unwrap_or_default()
+        );
+        let path = self.d.paths.ssh_used();
+        if let Err(e) = safe_core::atomic::write(&path, text.as_bytes()) {
+            log(&format!("ssh agent: can't write when keys were used: {e}"));
         }
     }
 
@@ -488,6 +548,7 @@ impl Agent {
         };
         match keys::sign(&text, &pass, data, flags) {
             Ok(sig) => {
+                self.record_use(blob, &peer.label);
                 if asked {
                     log(&format!("ssh agent: signed for {}", peer.label));
                 } else {
@@ -599,6 +660,12 @@ impl Agent {
         if mode == "never" {
             return true;
         }
+        if peer.own_child {
+            log(
+                "ssh agent: no question for the daemon's own ssh (ssh test: the user pressed Check)",
+            );
+            return true;
+        }
         // a program whose file can't be seen is asked every time
         let pair = peer.identity.clone().map(|id| (id, key.to_string()));
         let first_use = mode == config::CONFIRM_FIRST_USE;
@@ -685,6 +752,9 @@ struct Peer {
     /// What an approval is remembered by: the program's file and its
     /// parent's. None when the kernel doesn't say: then it always asks.
     identity: Option<String>,
+    /// The daemon itself started this program: the `ssh` of `ssh test`
+    /// (docs/GATE.md S24), run because the user pressed Check.
+    own_child: bool,
 }
 
 /// One running program, from /proc.
@@ -756,9 +826,12 @@ impl Peer {
                 detail: "a program Safe can't see".to_string(),
                 system: false,
                 identity: None,
+                own_child: false,
             };
         };
-        let parent = parent_of(pid).filter(|p| *p > 1).and_then(program);
+        let up_pid = parent_of(pid);
+        let own_child = up_pid == Some(std::process::id() as i32) && me.name == "ssh";
+        let parent = up_pid.filter(|p| *p > 1).and_then(program);
         let file = |p: &Program| p.file.map(|(d, i)| format!("{d}:{i}"));
         match parent {
             Some(up) => Peer {
@@ -770,12 +843,14 @@ impl Peer {
                 detail: format!("{}, started by {}", shown(&me), shown(&up)),
                 system: me.system && up.system,
                 identity: file(&me).zip(file(&up)).map(|(a, b)| format!("{a}/{b}")),
+                own_child,
             },
             None => Peer {
                 label: me.name.clone(),
                 detail: shown(&me),
                 system: me.system,
                 identity: file(&me),
+                own_child,
             },
         }
     }

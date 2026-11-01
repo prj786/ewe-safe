@@ -22,14 +22,15 @@ fn secs_env(var: &str) -> Option<Duration> {
 pub fn spawn(d: Arc<Daemon>) {
     let (tx, rx) = mpsc::channel();
     d.set_wake(tx);
-    // test switches: a shorter exchange period and idle lock
+    // test switches: a shorter exchange period, settings period and idle lock
     let sync_every = secs_env("EWE_SAFE_SYNC_SECONDS").unwrap_or(SYNC_EVERY);
+    let settings_every = secs_env("EWE_SAFE_SETTINGS_SECONDS").unwrap_or(SETTINGS_EVERY);
     let idle_override = secs_env("EWE_SAFE_IDLE_SECONDS");
     std::thread::spawn(move || {
         let mut last_sync = Instant::now();
         let mut last_settings = Instant::now();
         loop {
-            match rx.recv_timeout(TICK.min(sync_every)) {
+            match rx.recv_timeout(TICK.min(sync_every).min(settings_every)) {
                 Ok(Wake::Push) => {
                     // a burst of edits is one exchange
                     while rx.try_recv().is_ok() {}
@@ -39,9 +40,11 @@ pub fn spawn(d: Arc<Daemon>) {
                 Err(RecvTimeoutError::Timeout) => {}
                 Err(RecvTimeoutError::Disconnected) => return,
             }
-            if last_settings.elapsed() >= SETTINGS_EVERY {
+            if last_settings.elapsed() >= settings_every {
                 let before = d.offer();
                 d.reload_settings();
+                // the SSH gate and Git signing follow the account (GATE.md)
+                d.converge();
                 last_settings = Instant::now();
                 // ewe.conf just brought (or took away) the place of a safe
                 // made on another machine: the bar and Quick Access ask
