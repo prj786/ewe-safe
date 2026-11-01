@@ -1,9 +1,13 @@
 <script>
-  // The generator popover (under the password field): characters or words,
-  // a preview from the daemon's `generate` (Safe's own generator, never the
+  // The password generator, a panel right under the password field (it
+  // pushes the form down, never covers it): characters or words, a preview
+  // from the daemon's `generate` (ewe Safe's own generator, never the
   // page's), the dice for another one, "Use password" to fill the field.
+  // It sits inside the editor's form, so every button here is
+  // type="button": choosing Words, the dice or Close never saves the item.
   import Icon from "./Icon.svelte";
   import { safe } from "../safe.svelte.js";
+  import { keys } from "../trap.js";
 
   let { onuse = () => {}, onclose = () => {} } = $props();
 
@@ -42,22 +46,25 @@
 
 <div
   class="ewe-popover safe-gen"
-  role="dialog"
+  role="group"
   aria-label="Password generator"
-  tabindex="-1"
-  onkeydown={(e) => e.key === "Escape" && (e.stopPropagation(), onclose())}
+  use:keys={(e) => {
+    // Esc closes the generator, not the editor; Enter on its controls never submits the form
+    if (e.key === "Escape") (e.stopPropagation(), e.preventDefault(), onclose());
+    else if (e.key === "Enter" && e.target instanceof HTMLInputElement) e.preventDefault();
+  }}
 >
   <div class="ewe-popover__head">
-    <span class="ewe-popover__title">New password</span>
-    <button class="ewe-iconbtn ewe-iconbtn--ghost ewe-iconbtn--sm" aria-label="Close" onclick={onclose}><Icon name="x" /></button>
+    <span class="ewe-popover__title">Generate a password</span>
+    <button type="button" class="ewe-iconbtn ewe-iconbtn--ghost ewe-iconbtn--sm" aria-label="Close the generator" onclick={onclose}><Icon name="x" /></button>
   </div>
   <div class="ewe-seg ewe-seg--block ewe-seg--sm" role="radiogroup" aria-label="Kind">
-    <button class="ewe-seg__item" class:is-selected={kind === "chars"} role="radio" aria-checked={kind === "chars"} onclick={() => (kind = "chars")}>Characters</button>
-    <button class="ewe-seg__item" class:is-selected={kind === "words"} role="radio" aria-checked={kind === "words"} onclick={() => (kind = "words")}>Words</button>
+    <button type="button" class="ewe-seg__item" class:is-selected={kind === "chars"} role="radio" aria-checked={kind === "chars"} onclick={() => (kind = "chars")}>Characters</button>
+    <button type="button" class="ewe-seg__item" class:is-selected={kind === "words"} role="radio" aria-checked={kind === "words"} onclick={() => (kind = "words")}>Words</button>
   </div>
   <div class="safe-gen__preview">
-    <span class="mono">{value}</span>
-    <button class="ewe-iconbtn ewe-iconbtn--ghost ewe-iconbtn--sm" aria-label="New password" onclick={roll}><Icon name="dices" /></button>
+    <span class="mono" aria-live="polite">{value}</span>
+    <button type="button" class="ewe-iconbtn ewe-iconbtn--ghost ewe-iconbtn--sm" aria-label="Another password" title="Another one" onclick={roll}><Icon name="dices" /></button>
   </div>
   {#if kind === "chars"}
     <div class="safe-gen__line">
@@ -70,17 +77,19 @@
       </div>
       <span class="mono-numeric">{length}</span>
     </div>
-    <div class="ewe-switch-row">
-      <span class="ewe-check__text"><span class="ewe-check__label">Digits</span></span>
-      <button type="button" role="switch" aria-checked={digits} aria-label="Digits" class="ewe-switch" class:is-on={digits} onclick={() => (digits = !digits)}>
-        <span class="ewe-switch__thumb"><Icon name={digits ? "check" : "x"} /></span>
-      </button>
-    </div>
-    <div class="ewe-switch-row">
-      <span class="ewe-check__text"><span class="ewe-check__label">Symbols</span></span>
-      <button type="button" role="switch" aria-checked={symbols} aria-label="Symbols" class="ewe-switch" class:is-on={symbols} onclick={() => (symbols = !symbols)}>
-        <span class="ewe-switch__thumb"><Icon name={symbols ? "check" : "x"} /></span>
-      </button>
+    <div class="safe-gen__switches">
+      <div class="ewe-switch-row">
+        <span class="ewe-check__text"><span class="ewe-check__label">Digits</span></span>
+        <button type="button" role="switch" aria-checked={digits} aria-label="Digits" class="ewe-switch" class:is-on={digits} onclick={() => (digits = !digits)}>
+          <span class="ewe-switch__thumb"><Icon name={digits ? "check" : "x"} /></span>
+        </button>
+      </div>
+      <div class="ewe-switch-row">
+        <span class="ewe-check__text"><span class="ewe-check__label">Symbols</span></span>
+        <button type="button" role="switch" aria-checked={symbols} aria-label="Symbols" class="ewe-switch" class:is-on={symbols} onclick={() => (symbols = !symbols)}>
+          <span class="ewe-switch__thumb"><Icon name={symbols ? "check" : "x"} /></span>
+        </button>
+      </div>
     </div>
   {:else}
     <div class="safe-gen__line">
@@ -94,9 +103,8 @@
       <span class="mono-numeric">{words}</span>
     </div>
   {/if}
-  {#if bits}<div class="caption safe-muted">{label} · about {bits} bits</div>{/if}
-  <div class="ewe-popover__foot">
-    <button class="ewe-btn ewe-btn--ghost" onclick={onclose}>Cancel</button>
-    <button class="ewe-btn ewe-btn--primary" disabled={!value} onclick={() => onuse(value)}>Use password</button>
+  <div class="ewe-popover__foot safe-gen__foot">
+    <span class="caption safe-muted">{bits ? `${label} · about ${bits} bits` : ""}</span>
+    <button type="button" class="ewe-btn ewe-btn--secondary ewe-btn--sm" disabled={!value} onclick={() => onuse(value)}><Icon name="check" />Use this password</button>
   </div>
 </div>
