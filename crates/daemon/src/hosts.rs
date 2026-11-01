@@ -255,13 +255,32 @@ pub fn config_and_includes(skip: &Path) -> Vec<(PathBuf, SshConfig)> {
 
 // ── ewe.conf's hosts ────────────────────────────────────────────────────
 
-/// One `[[network.ssh.hosts]]` entry: `{host, options: [[k, v], …]}`
-/// (anything else it holds is kept as it is).
+/// One `[[network.ssh.hosts]]` entry: `{host, options: [[k, v], …]}`.
+/// An entry is written back exactly as ewe.conf had it unless Safe changed
+/// it, and one Safe can't read (no string `host`, options that aren't
+/// `[name, value]` pairs) is kept as it is and never changed.
 #[derive(Clone, Debug, PartialEq)]
 pub struct EweHost {
     pub host: String,
+    /// The options as text (a number or a boolean read as text).
     pub options: Vec<(String, String)>,
-    rest: Map<String, Value>,
+    /// Each option as ewe.conf has it, beside `options`.
+    raw: Vec<Value>,
+    /// The entry as ewe.conf has it.
+    orig: Value,
+    changed: bool,
+    /// Safe could read it; one it can't is never changed.
+    pub readable: bool,
+}
+
+/// An option's value as text: a string, a number or a boolean.
+fn text_of(v: &Value) -> Option<String> {
+    match v {
+        Value::String(s) => Some(s.clone()),
+        Value::Number(n) => Some(n.to_string()),
+        Value::Bool(b) => Some(b.to_string()),
+        _ => None,
+    }
 }
 
 impl EweHost {
@@ -269,50 +288,68 @@ impl EweHost {
         EweHost {
             host: host.to_string(),
             options: Vec::new(),
-            rest: Map::new(),
+            raw: Vec::new(),
+            orig: json!({}),
+            changed: true,
+            readable: true,
         }
     }
 
-    fn from_json(v: &Value) -> Option<EweHost> {
-        let o = v.as_object()?;
-        let host = o.get("host")?.as_str()?.to_string();
-        let options = o
-            .get("options")
-            .and_then(Value::as_array)
-            .map(|a| {
-                a.iter()
-                    .filter_map(|kv| {
-                        let kv = kv.as_array()?;
-                        Some((
-                            kv.first()?.as_str()?.to_string(),
-                            kv.get(1).and_then(Value::as_str).unwrap_or("").to_string(),
-                        ))
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-        let mut rest = o.clone();
-        rest.remove("host");
-        rest.remove("options");
-        Some(EweHost {
-            host,
-            options,
-            rest,
-        })
+    fn from_json(v: &Value) -> EweHost {
+        let parsed = (|| {
+            let o = v.as_object()?;
+            let host = o.get("host")?.as_str()?.to_string();
+            let mut options = Vec::new();
+            let mut raw = Vec::new();
+            match o.get("options") {
+                None | Some(Value::Null) => {}
+                Some(Value::Array(a)) => {
+                    for kv in a {
+                        let pair = kv.as_array().filter(|p| p.len() == 2)?;
+                        options.push((pair[0].as_str()?.to_string(), text_of(&pair[1])?));
+                        raw.push(kv.clone());
+                    }
+                }
+                Some(_) => return None,
+            }
+            Some((host, options, raw))
+        })();
+        match parsed {
+            Some((host, options, raw)) => EweHost {
+                host,
+                options,
+                raw,
+                orig: v.clone(),
+                changed: false,
+                readable: true,
+            },
+            None => EweHost {
+                host: v
+                    .get("host")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string(),
+                options: Vec::new(),
+                raw: Vec::new(),
+                orig: v.clone(),
+                changed: false,
+                readable: false,
+            },
+        }
     }
 
     fn to_json(&self) -> Value {
-        let mut o = self.rest.clone();
+        if !self.changed || !self.readable {
+            return self.orig.clone();
+        }
+        let mut o = self.orig.as_object().cloned().unwrap_or_default();
         o.insert("host".into(), json!(self.host));
-        o.insert(
-            "options".into(),
-            json!(
-                self.options
-                    .iter()
-                    .map(|(k, v)| json!([k, v]))
-                    .collect::<Vec<_>>()
-            ),
-        );
+        let opts: Vec<Value> = if self.raw.len() == self.options.len() {
+            self.raw.clone()
+        } else {
+            self.options.iter().map(|(k, v)| json!([k, v])).collect()
+        };
+        o.insert("options".into(), Value::Array(opts));
         Value::Object(o)
     }
 
@@ -324,30 +361,74 @@ impl EweHost {
     }
 
     /// Set an option: the first one of that name changes (its spelling
-    /// kept), the others go; a new one goes at the end.
+    /// kept), the others go; a new one goes at the end. Unchanged, the
+    /// entry stays as it was.
     pub fn set(&mut self, key: &str, value: &str) {
-        let mut seen = false;
-        self.options.retain_mut(|(k, v)| {
-            if !k.eq_ignore_ascii_case(key) {
-                return true;
-            }
-            if seen {
-                return false;
-            }
-            seen = true;
-            *v = value.to_string();
-            true
-        });
-        if !seen {
-            self.options.push((key.to_string(), value.to_string()));
+        if self.get(key) == Some(value)
+            && self
+                .options
+                .iter()
+                .filter(|(k, _)| k.eq_ignore_ascii_case(key))
+                .count()
+                == 1
+        {
+            return;
         }
+        let mut seen = false;
+        let mut keep = Vec::new();
+        let mut keep_raw = Vec::new();
+        for (n, (k, v)) in self.options.iter().enumerate() {
+            let raw = self.raw.get(n).cloned().unwrap_or_else(|| json!([k, v]));
+            if !k.eq_ignore_ascii_case(key) {
+                keep.push((k.clone(), v.clone()));
+                keep_raw.push(raw);
+            } else if !seen {
+                seen = true;
+                keep.push((k.clone(), value.to_string()));
+                keep_raw.push(json!([k, value]));
+            }
+        }
+        if !seen {
+            keep.push((key.to_string(), value.to_string()));
+            keep_raw.push(json!([key, value]));
+        }
+        self.options = keep;
+        self.raw = keep_raw;
+        self.changed = true;
     }
 
     pub fn remove(&mut self, key: &str) -> bool {
         let before = self.options.len();
-        self.options.retain(|(k, _)| !k.eq_ignore_ascii_case(key));
-        self.options.len() != before
+        let mut n = 0;
+        let mut keep_raw = Vec::new();
+        self.options.retain(|(k, v)| {
+            let raw = self.raw.get(n).cloned().unwrap_or_else(|| json!([k, v]));
+            n += 1;
+            let keep = !k.eq_ignore_ascii_case(key);
+            if keep {
+                keep_raw.push(raw);
+            }
+            keep
+        });
+        self.raw = keep_raw;
+        let gone = self.options.len() != before;
+        self.changed |= gone;
+        gone
     }
+}
+
+/// An alias that ewe.conf has in an entry Safe can't read: Safe won't
+/// write a second one beside it (`conflict`).
+pub fn unreadable(ewe: &[EweHost], alias: &str) -> Result<(), Fail> {
+    if ewe.iter().any(|h| !h.readable && h.host == alias) {
+        return Err(Fail::conflict(
+            alias,
+            format!(
+                "ewe.conf has an entry for {alias} that Safe can't read. Change it with ewe-conf, or use --alias."
+            ),
+        ));
+    }
+    Ok(())
 }
 
 /// ewe.conf's hosts: `Err` when ewe-conf didn't answer (never taken as
@@ -355,8 +436,13 @@ impl EweHost {
 pub fn ewe_hosts() -> Result<Vec<EweHost>, Fail> {
     match config::conf_get("network.ssh.hosts") {
         Ok(None) => Ok(Vec::new()),
-        Ok(Some(Value::Array(a))) => Ok(a.iter().filter_map(EweHost::from_json).collect()),
-        Ok(Some(_)) => Ok(Vec::new()),
+        Ok(Some(Value::Array(a))) => Ok(a.iter().map(EweHost::from_json).collect()),
+        // not a list: nothing Safe writes may replace it
+        Ok(Some(_)) => Err(Fail::new(
+            "internal",
+            "ewe.conf's network.ssh.hosts isn't a list, so Safe won't change it",
+        )
+        .hint("Check it: ewe-conf get network.ssh.hosts")),
         Err(()) => Err(Fail::new(
             "internal",
             "ewe-conf didn't answer, so Safe can't read your SSH hosts",
@@ -408,12 +494,28 @@ pub fn yours(file: &SshConfig, alias: &str) -> bool {
 
 /// A host name for a `Host` line: no space and none of `* ? ! ,`.
 pub fn check_alias(alias: &str) -> Result<(), Fail> {
-    if !plain(alias) || alias.starts_with('-') || alias.chars().any(char::is_control) {
-        return Err(Fail::bad(format!(
-            "{alias:?} can't be a host name: no spaces and none of * ? ! ,"
-        )));
+    check_name("host name", alias)
+}
+
+/// One rule for every name Safe writes into a host definition or hands to
+/// `ssh` — an alias, a host, a user, an organization, a check's target:
+/// letters, digits and `. _ @ : -` only, not starting with `-`, at most 253
+/// characters. No quotes, `\`, `#`, `%`, `$`, `=`, `,`, spaces or control
+/// characters, so nothing can become an ssh option, a token or a second
+/// word (docs/GATE.md S24).
+pub fn check_name(what: &str, v: &str) -> Result<(), Fail> {
+    let ok = !v.is_empty()
+        && v.len() <= 253
+        && !v.starts_with('-')
+        && v.chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '@' | ':' | '-'));
+    if ok {
+        Ok(())
+    } else {
+        Err(Fail::bad(format!(
+            "{v:?} can't be a {what}: use letters, digits and . _ @ : - only"
+        )))
     }
-    Ok(())
 }
 
 /// `ssh-hosts`, `ssh-host-set`, `ssh-host-remove`.
@@ -486,15 +588,44 @@ Host work
         assert!(glob_match("x?", "xy"));
         assert!(!glob_match("*.conf", "a.conf~"));
         assert!(check_alias("github-work").is_ok());
-        for bad in ["a b", "*", "x?", "!x", "-oProxyCommand=x", ""] {
+        for bad in [
+            "a b",
+            "*",
+            "x?",
+            "!x",
+            "-oProxyCommand=x",
+            "",
+            "a#b",
+            "x$y",
+            "a=b",
+            "a,b",
+            "a\\b",
+            "%h",
+            "a\"b",
+            "it's",
+            "a\tb",
+            "a\nb",
+            "[::1]",
+        ] {
             assert!(check_alias(bad).is_err(), "{bad:?}");
+        }
+        assert!(check_alias(&"a".repeat(254)).is_err());
+        for good in [
+            "github.com",
+            "git_box-2",
+            "10.0.0.2",
+            "::1",
+            "sam@box",
+            "work.example.com",
+        ] {
+            assert!(check_name("host name", good).is_ok(), "{good}");
         }
     }
 
     #[test]
     fn an_ewe_host_keeps_what_it_doesnt_know() {
         let v = json!({"host": "gh", "options": [["HostName", "github.com"], ["User", "git"]], "note": 1});
-        let mut h = EweHost::from_json(&v).unwrap();
+        let mut h = EweHost::from_json(&v);
         h.set("user", "sam");
         h.set("Port", "2222");
         assert!(h.remove("HOSTNAME"));
@@ -502,5 +633,40 @@ Host work
             h.to_json(),
             json!({"host": "gh", "options": [["User", "sam"], ["Port", "2222"]], "note": 1})
         );
+    }
+
+    #[test]
+    fn entries_safe_cant_read_stay_as_they_are() {
+        // a number is read as text, and written back as a number
+        let v = json!({"host": "box", "options": [["Port", 2222], ["User", "sam"]]});
+        let mut h = EweHost::from_json(&v);
+        assert!(h.readable);
+        assert_eq!(h.get("port"), Some("2222"));
+        assert_eq!(h.to_json(), v, "unchanged: as it was");
+        h.set("User", "sam");
+        assert_eq!(h.to_json(), v, "the same value: still as it was");
+        h.set("User", "root");
+        assert_eq!(
+            h.to_json(),
+            json!({"host": "box", "options": [["Port", 2222], ["User", "root"]]}),
+            "the number stays a number"
+        );
+        // no string host, options that aren't pairs, not an object
+        for odd in [
+            json!({"options": [["User", "x"]]}),
+            json!({"host": 7}),
+            json!({"host": "x", "options": "User x"}),
+            json!({"host": "x", "options": [["User"]]}),
+            json!({"host": "x", "options": [["User", ["a"]]]}),
+            json!("just text"),
+        ] {
+            let mut h = EweHost::from_json(&odd);
+            assert!(!h.readable, "{odd}");
+            h.set("User", "y");
+            assert_eq!(h.to_json(), odd, "never changed");
+        }
+        let hosts = vec![EweHost::from_json(&json!({"host": "odd", "options": 3}))];
+        assert_eq!(unreadable(&hosts, "odd").unwrap_err().code, "conflict");
+        assert!(unreadable(&hosts, "other").is_ok());
     }
 }

@@ -183,7 +183,8 @@ pub fn takeover(d: &Arc<Daemon>, a: &mut Args) -> Result<Value, Fail> {
         |v: &str| v.ends_with(&format!("/{}", config::SSH_SOCKET)) || Path::new(v) == socket;
     let mut fixed = Vec::new();
     for h in &mut ewe {
-        if h.get("identityagent").is_some_and(|v| !is_ours(v)) {
+        // an entry Safe can't read is never changed
+        if h.readable && h.get("identityagent").is_some_and(|v| !is_ours(v)) {
             h.remove("identityagent");
             fixed.push(h.host.clone());
         }

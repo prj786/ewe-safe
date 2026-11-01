@@ -406,17 +406,6 @@ fn port(a: &Args) -> Result<Option<u16>, Fail> {
     }
 }
 
-/// A host name or a user name as ssh takes it: no space, no leading `-`.
-fn check_word(what: &str, v: &str) -> Result<(), Fail> {
-    if v.starts_with('-')
-        || v.chars()
-            .any(|c| c.is_whitespace() || c.is_control() || c == '"' || c == '\'')
-    {
-        return Err(Fail::bad(format!("{v:?} can't be a {what}.")));
-    }
-    Ok(())
-}
-
 fn unlocked(d: &Daemon) -> Result<(), Fail> {
     let snap = rd(&d.snap);
     if !snap.set_up {
@@ -600,13 +589,13 @@ pub fn connect(d: &Arc<Daemon>, a: &Args) -> Result<Value, Fail> {
         }
     }
     if let Some(h) = host_arg {
-        check_word("host name", h)?;
+        hosts::check_name("host name", h)?;
     }
     if let Some(u) = user_arg {
-        check_word("user name", u)?;
+        hosts::check_name("user name", u)?;
     }
     if let Some(o) = org {
-        check_word("organization", o)?;
+        hosts::check_name("organization", o)?;
     }
     let display = s(a, "wayland_display");
     unlocked(d)?;
@@ -666,7 +655,8 @@ pub fn connect(d: &Arc<Daemon>, a: &Args) -> Result<Value, Fail> {
                 ),
             ));
         }
-        if let Some(h) = ewe.iter().find(|h| &h.host == al)
+        hosts::unreadable(&ewe, al)?;
+        if let Some(h) = ewe.iter().find(|h| h.readable && &h.host == al)
             && let Some(f) = h.get("identityfile")
             && chosen_file.as_deref() != Some(f)
             && !replace
@@ -719,11 +709,11 @@ pub fn connect(d: &Arc<Daemon>, a: &Args) -> Result<Value, Fail> {
     if let (Some(al), Some(h)) = (&alias, host) {
         let mut entry = ewe
             .iter()
-            .find(|x| &x.host == al)
+            .find(|x| x.readable && &x.host == al)
             .cloned()
             .unwrap_or_else(|| EweHost::new(al));
         define(&mut entry, h, user.as_deref(), port, &tilde);
-        match ewe.iter_mut().find(|x| &x.host == al) {
+        match ewe.iter_mut().find(|x| x.readable && &x.host == al) {
             Some(x) => *x = entry,
             None => ewe.push(entry),
         }
@@ -911,7 +901,7 @@ fn split_target(t: &str) -> (Option<&str>, &str, Option<u16>) {
 pub fn test(d: &Arc<Daemon>, a: &Args) -> Result<Value, Fail> {
     let target =
         s(a, "target").ok_or_else(|| Fail::bad("ssh test needs a host, a service or user@host"))?;
-    check_word("target", target)?;
+    hosts::check_name("target", target)?;
     unlocked(d)?;
     let file_cfg = hosts::read_config();
     let ewe = hosts::ewe_hosts_or_block(&file_cfg);
@@ -956,7 +946,7 @@ pub fn test(d: &Arc<Daemon>, a: &Args) -> Result<Value, Fail> {
         (service_of_host(&hn), target.to_string(), None, hn)
     } else {
         let (user, h, p) = split_target(target);
-        check_word("host name", h)?;
+        hosts::check_name("host name", h)?;
         let dest = match user {
             Some(u) => format!("{u}@{h}"),
             None => h.to_string(),
@@ -975,6 +965,17 @@ pub fn test(d: &Arc<Daemon>, a: &Args) -> Result<Value, Fail> {
     let sock = d.paths.ssh_socket();
     let mut args: Vec<String> = [
         "-T",
+        // a check forwards nothing and shares no connection: no agent, no
+        // ports, no master socket another ssh could ride
+        "-a",
+        "-o",
+        "ForwardAgent=no",
+        "-o",
+        "ClearAllForwardings=yes",
+        "-o",
+        "ControlMaster=no",
+        "-o",
+        "ControlPath=none",
         "-o",
         "BatchMode=yes",
         "-o",
@@ -1004,6 +1005,8 @@ pub fn test(d: &Arc<Daemon>, a: &Args) -> Result<Value, Fail> {
     if let Some(p) = port {
         args.extend(["-p".into(), p.to_string()]);
     }
+    // the destination after `--`: never an option
+    args.push("--".into());
     args.push(dest);
     if answer == Answer::Exit {
         args.push("true".into());
@@ -1075,6 +1078,23 @@ fn host_json(
         "file": file,
         "service": svc,
         "agent": if gate_on { Some("safe".to_string()) } else { get("identityagent") },
+        "readable": true,
+    })
+}
+
+/// An ewe.conf entry Safe can't read: listed as it is, nothing guessed.
+fn unreadable_json(alias: &str) -> Value {
+    json!({
+        "alias": (!alias.is_empty()).then_some(alias),
+        "host_name": null,
+        "user": null,
+        "port": null,
+        "source": "ewe",
+        "key": null,
+        "file": null,
+        "service": null,
+        "agent": null,
+        "readable": false,
     })
 }
 
@@ -1090,7 +1110,9 @@ pub fn hosts_json(d: &Daemon) -> Result<Vec<Value>, Fail> {
         }
     }
     for h in &ewe {
-        if !hosts::yours(&file, &h.host) {
+        if !h.readable {
+            out.push(unreadable_json(&h.host));
+        } else if !hosts::yours(&file, &h.host) {
             out.push(host_json(&h.host, &h.options, "ewe", &safe, gate_on));
         }
     }
@@ -1112,10 +1134,10 @@ pub fn host_set(d: &Daemon, a: &Args) -> Result<Value, Fail> {
     let port = port(a)?;
     let (host, user) = (s(a, "host"), s(a, "user"));
     if let Some(h) = host {
-        check_word("host name", h)?;
+        hosts::check_name("host name", h)?;
     }
     if let Some(u) = user {
-        check_word("user name", u)?;
+        hosts::check_name("user name", u)?;
     }
     if s(a, "key").is_some() && b(a, "no_key") {
         return Err(Fail::bad("--key or --no-key, not both"));
@@ -1134,14 +1156,14 @@ pub fn host_set(d: &Daemon, a: &Args) -> Result<Value, Fail> {
         None => None,
     };
     let mut ewe = hosts::ewe_hosts()?;
-    let created = !ewe.iter().any(|h| h.host == alias);
+    hosts::unreadable(&ewe, alias)?;
+    let created = !ewe.iter().any(|h| h.readable && h.host == alias);
     if created {
         ewe.push(EweHost::new(alias));
     }
-    let h = ewe
-        .iter_mut()
-        .find(|h| h.host == alias)
-        .expect("the host is there");
+    let Some(h) = ewe.iter_mut().find(|h| h.readable && h.host == alias) else {
+        return Err(Fail::new("internal", "The host went missing."));
+    };
     if let Some(hn) = host {
         if hn == alias {
             h.remove("HostName");
@@ -1190,8 +1212,9 @@ pub fn host_remove(a: &Args) -> Result<Value, Fail> {
         ));
     }
     let mut ewe = hosts::ewe_hosts()?;
+    hosts::unreadable(&ewe, alias)?;
     let before = ewe.len();
-    ewe.retain(|h| h.host != alias);
+    ewe.retain(|h| !(h.readable && h.host == alias));
     if ewe.len() == before {
         return Err(Fail::new(
             "not-found",
