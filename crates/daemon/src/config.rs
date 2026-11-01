@@ -199,15 +199,16 @@ impl Settings {
         }
     }
 
-    /// `ewe-conf get safe`, or None when ewe-conf didn't answer (missing,
-    /// broken, too slow). No `[safe]` table yet is the defaults: only a
-    /// real answer may turn something off (the SSH gate's convergence,
-    /// docs/GATE.md S21).
+    /// `ewe-conf get safe`, or None unless ewe-conf answered with a
+    /// `[safe]` table: missing, broken, too slow, no `[safe]` at all, or
+    /// anything but a JSON object. Only a real `[safe]` may turn
+    /// something off (the SSH gate's and Git signing's convergence,
+    /// docs/GATE.md S21, S25); without one the daemon goes by the
+    /// defaults but changes nothing on disk.
     pub fn read_checked() -> Option<Settings> {
         match conf_get("safe") {
             Ok(Some(t)) if t.is_object() => Some(Settings::from_table(&t)),
-            Ok(_) => Some(Settings::default()),
-            Err(()) => None,
+            _ => None,
         }
     }
 }

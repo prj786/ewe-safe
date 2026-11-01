@@ -161,6 +161,12 @@ pub fn sync_key_files(list: &[(String, String)]) -> io::Result<bool> {
     if !home_ok() {
         return Err(io::Error::other("HOME isn't a full path"));
     }
+    let _one = lk(&WRITING);
+    sync_key_files_held(list)
+}
+
+/// [`sync_key_files`], with `WRITING` held by the caller.
+fn sync_key_files_held(list: &[(String, String)]) -> io::Result<bool> {
     let mut wanted = std::collections::HashSet::new();
     let mut changed = false;
     make_dirs()?;
@@ -277,9 +283,21 @@ fn mkdir_private(dir: &Path) -> io::Result<()> {
         .create(dir)
 }
 
-/// `~/.ssh` (0700 when made here) and `~/.ssh/ewe-safe` (0700).
+/// `~/.ssh/ewe-safe` is a link (to anywhere): Safe neither writes nor
+/// deletes through it.
+pub fn dir_is_link() -> bool {
+    std::fs::symlink_metadata(gate_dir()).is_ok_and(|m| m.file_type().is_symlink())
+}
+
+const LINK_PROBLEM: &str = "~/.ssh/ewe-safe is a link: Safe won't write or delete through it. Remove the link, and Safe makes the folder.";
+
+/// `~/.ssh` (0700 when made here) and `~/.ssh/ewe-safe` (0700), never
+/// through a link.
 fn make_dirs() -> io::Result<()> {
     mkdir_private(&hosts::ssh_dir())?;
+    if dir_is_link() {
+        return Err(io::Error::other(LINK_PROBLEM));
+    }
     let g = gate_dir();
     mkdir_private(&g)?;
     let mode = std::fs::metadata(&g)?.permissions().mode() & 0o777;
@@ -367,56 +385,107 @@ pub fn included() -> bool {
         .is_ok_and(|t| first_directive(&t) == Some(INCLUDE_LINE))
 }
 
-/// Write the user's `~/.ssh/config` atomically, keeping its mode (a link
-/// stays a link: its target is written).
-fn write_user_config(text: &str) -> io::Result<()> {
+/// The user's `~/.ssh/config` (its target, when it is a link: a link
+/// stays a link) and its text now ("" when there is none).
+fn user_config() -> io::Result<(PathBuf, String)> {
     let path = hosts::ssh_config_path();
     let real = if path.is_symlink() {
         std::fs::canonicalize(&path)?
     } else {
         path
     };
-    let mode = std::fs::metadata(&real)
+    let text = match std::fs::read_to_string(&real) {
+        Ok(t) => t,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => String::new(),
+        Err(e) => return Err(e),
+    };
+    Ok((real, text))
+}
+
+/// Replace `real` with `new`, keeping its mode, unless it no longer holds
+/// `expected` (ewe-conf rewrote its managed block meanwhile): the file is
+/// read again right before the rename. Whether it was written.
+fn replace_if_unchanged(real: &Path, expected: &str, new: &str) -> io::Result<bool> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    let dir = real.parent().unwrap_or(Path::new("."));
+    let mode = std::fs::metadata(real)
         .map(|m| m.permissions().mode() & 0o7777)
         .unwrap_or(0o600);
-    safe_core::atomic::write(&real, text.as_bytes())?;
-    std::fs::set_permissions(&real, std::fs::Permissions::from_mode(mode))
+    let tmp = dir.join(format!(".config.safe-{}", std::process::id()));
+    let _ = std::fs::remove_file(&tmp);
+    let written = (|| {
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&tmp)?;
+        f.write_all(new.as_bytes())?;
+        f.sync_all()?;
+        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(mode))?;
+        let now = match std::fs::read_to_string(real) {
+            Ok(t) => t,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => String::new(),
+            Err(e) => return Err(e),
+        };
+        if now != expected {
+            return Ok(false);
+        }
+        std::fs::rename(&tmp, real)?;
+        std::fs::File::open(dir)?.sync_all()?;
+        Ok(true)
+    })();
+    if !matches!(written, Ok(true)) {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    written
 }
+
+/// How often a read-modify-write of `~/.ssh/config` starts again when the
+/// file changed under it.
+const TRIES: usize = 5;
 
 /// Put the two lines on top of `~/.ssh/config` (S21.2). The file is first
 /// copied to `config.before-safe` (once). Nothing is written when they are
 /// there already.
 fn add_lines() -> io::Result<bool> {
-    let path = hosts::ssh_config_path();
-    let text = match std::fs::read_to_string(&path) {
-        Ok(t) => t,
-        Err(e) if e.kind() == io::ErrorKind::NotFound => String::new(),
-        Err(e) => return Err(e),
-    };
-    if first_directive(&text) == Some(INCLUDE_LINE) {
-        return Ok(false);
-    }
     mkdir_private(&hosts::ssh_dir())?;
-    let backup = hosts::ssh_dir().join("config.before-safe");
-    if path.exists() && !backup.exists() {
-        std::fs::copy(&path, &backup)?;
+    for _ in 0..TRIES {
+        let (real, text) = user_config()?;
+        if first_directive(&text) == Some(INCLUDE_LINE) {
+            return Ok(false);
+        }
+        let backup = hosts::ssh_dir().join("config.before-safe");
+        if real.exists() && !backup.exists() {
+            std::fs::copy(&real, &backup)?;
+        }
+        // lines of ours lower down (moved by hand) go to the top
+        let (rest, _) = without_our_lines(&text);
+        let new = format!("{INCLUDE_COMMENT}\n{INCLUDE_LINE}\n{rest}");
+        if replace_if_unchanged(&real, &text, &new)? {
+            return Ok(true);
+        }
     }
-    // lines of ours lower down (moved by hand) go to the top
-    let (rest, _) = without_our_lines(&text);
-    write_user_config(&format!("{INCLUDE_COMMENT}\n{INCLUDE_LINE}\n{rest}"))?;
-    Ok(true)
+    Err(io::Error::other(
+        "~/.ssh/config kept changing while Safe wrote it",
+    ))
 }
 
 /// Take Safe's two lines out of `~/.ssh/config`; nothing else changes.
 fn remove_lines() -> io::Result<bool> {
-    let Ok(text) = std::fs::read_to_string(hosts::ssh_config_path()) else {
-        return Ok(false);
-    };
-    let (rest, found) = without_our_lines(&text);
-    if found {
-        write_user_config(&rest)?;
+    for _ in 0..TRIES {
+        let (real, text) = user_config()?;
+        let (rest, found) = without_our_lines(&text);
+        if !found {
+            return Ok(false);
+        }
+        if replace_if_unchanged(&real, &text, &rest)? {
+            return Ok(true);
+        }
     }
-    Ok(found)
+    Err(io::Error::other(
+        "~/.ssh/config kept changing while Safe wrote it",
+    ))
 }
 
 fn remove_if(path: &Path, cond: bool) -> bool {
@@ -441,7 +510,7 @@ pub fn apply(d: &Daemon) -> io::Result<bool> {
     changed |= write_if_changed(&known_hosts_file(), KNOWN_HOSTS.as_bytes(), 0o644)?;
     if let Some(list) = cache_keys(d) {
         let pairs: Vec<(String, String)> = list.into_iter().map(|c| (c.line, c.title)).collect();
-        changed |= sync_key_files(&pairs)?;
+        changed |= sync_key_files_held(&pairs)?;
     }
     changed |= add_lines()?;
     Ok(changed)
@@ -466,6 +535,10 @@ pub fn remove() -> bool {
     };
     let env = env_file();
     gone |= remove_if(&env, ours(&env, ENV_MARK));
+    if dir_is_link() {
+        log("~/.ssh/ewe-safe is a link: Safe deletes nothing through it");
+        return gone;
+    }
     let cfg = config_file();
     gone |= remove_if(&cfg, ours(&cfg, CONFIG_MARK));
     let dir = gate_dir();
@@ -512,9 +585,10 @@ pub fn ensure_on(d: &Daemon) -> Result<bool, crate::daemon::Fail> {
     Ok(true)
 }
 
-/// The gate is on: the Include line on top, and Safe's config file.
+/// The gate is on: the Include line on top, and Safe's config file in
+/// Safe's own folder (not through a link).
 pub fn is_on() -> bool {
-    included() && ours(&config_file(), CONFIG_MARK)
+    included() && !dir_is_link() && ours(&config_file(), CONFIG_MARK)
 }
 
 /// Make this computer match `[safe] ssh_agent` (at start and on every
@@ -809,9 +883,11 @@ pub fn status_json(d: &Daemon, caller: Option<&str>) -> Value {
         })
         .collect();
     let include = included();
+    let link = dir_is_link();
     json!({
-        "on": include && ours(&config_file(), CONFIG_MARK),
+        "on": include && !link && ours(&config_file(), CONFIG_MARK),
         "include": include,
+        "problem": link.then_some(LINK_PROBLEM),
         "config_file": config_file(),
         "overridden": overridden(d, &file, &ewe)
             .into_iter()
@@ -842,6 +918,36 @@ mod tests {
         );
         assert_eq!(tag("MD5:aa:bb"), None);
         assert_eq!(tag("SHA256:short"), None);
+    }
+
+    /// Review F-d: a `~/.ssh/config` that changed since Safe read it (ewe-conf
+    /// rewrote its block) is not overwritten; the caller reads it again.
+    #[test]
+    fn a_config_changed_under_safe_is_not_overwritten() {
+        let d = std::env::temp_dir().join(format!("safe-gate-rmw-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        let f = d.join("config");
+        std::fs::write(&f, "A").unwrap();
+        std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(
+            !replace_if_unchanged(&f, "B", "C").unwrap(),
+            "changed meanwhile"
+        );
+        assert_eq!(std::fs::read_to_string(&f).unwrap(), "A");
+        assert!(replace_if_unchanged(&f, "A", "C").unwrap());
+        assert_eq!(std::fs::read_to_string(&f).unwrap(), "C");
+        assert_eq!(
+            std::fs::metadata(&f).unwrap().permissions().mode() & 0o777,
+            0o644
+        );
+        let left: Vec<_> = std::fs::read_dir(&d)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name())
+            .collect();
+        assert_eq!(left, ["config"], "no temp file left");
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]
