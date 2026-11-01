@@ -23,6 +23,9 @@ jobs:
       # the fidelity corpus (other projects' test files, never committed)
       - run: pip install pykeepass
       - run: tests/corpus/fetch.sh
+      # the SSH gate's real-server test runs its own sshd on loopback
+      # (crates/cli/tests/gate.rs); Ubuntu keeps it in openssh-server
+      - run: sudo apt-get install -y --no-install-recommends openssh-server
       - run: cargo test --locked
       - run: cargo build --locked
       # the go/no-go gate: files other KeePass apps wrote survive our save

@@ -1403,6 +1403,15 @@ esac
 /// is read.
 #[test]
 fn a_real_sshd_lets_safe_in() {
+    // Arch keeps sshd in /usr/bin, Debian and Ubuntu (CI) in /usr/sbin; a
+    // machine without the OpenSSH server skips this one test, out loud
+    let Some(sshd_bin) = ["/usr/bin/sshd", "/usr/sbin/sshd"]
+        .into_iter()
+        .find(|p| std::path::Path::new(p).exists())
+    else {
+        eprintln!("a_real_sshd_lets_safe_in: no sshd on this machine, skipped");
+        return;
+    };
     let mut s = Sandbox::new("sshd");
     let d = s.root.join("sshd");
     std::fs::create_dir_all(&d).unwrap();
@@ -1419,7 +1428,7 @@ fn a_real_sshd_lets_safe_in() {
     );
     std::fs::write(d.join("sshd_config"), cfg).unwrap();
     let log = std::fs::File::create(d.join("sshd.log")).unwrap();
-    let sshd = Command::new("/usr/bin/sshd")
+    let sshd = Command::new(sshd_bin)
         .args(["-D", "-e", "-f", d.join("sshd_config").to_str().unwrap()])
         .env_clear()
         .env("PATH", "/usr/bin:/bin")
