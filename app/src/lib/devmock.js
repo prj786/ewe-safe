@@ -15,7 +15,25 @@
 //   &mode=approve         the SSH agent's question (`--approve`); &system=0 a
 //                         program outside /usr and /opt
 //   &mode=confirm         a card fill's confirm (`--confirm`); &reason=…
-//   &view=ssh             the SSH keys      &agent=1   the SSH agent on
+//   &view=ssh             the SSH page (docs/GATE.md S28)   &view=sshkeys  the SSH key list
+//   &gate=off|old|1password|good   the SSH gate: the agent off (default; &agent=1
+//                         = good); on but ssh still asks 1Password (no gate
+//                         lines yet); the gate on but 1Password still named
+//                         by the hosts work and work-proxy, one key only in
+//                         1Password, two key files not in Safe (one with the
+//                         passphrase "mock"); all good
+//   &hosts=0              no hosts (default: github.com, work, work-proxy,
+//                         dev-vm in ewe.conf; emoh and nas in your own lines)
+//   &test=fail|changed    every Check fails (GitHub doesn't know the key) / the
+//                         server's key changed (default: works; work-proxy
+//                         can't be reached)
+//   &remote=0|offline|empty   no ewe-remote / all your ewe computers offline /
+//                         none (default: one online, one offline, one not paired)
+//   &signing=1            Git commits are signed with the GitHub key
+//   &email=0              git has no user.email: signing asks for it
+//   &connect=github|…|pick   the connect sheet open on that service (pick: the
+//                         list)       &takeover=1   the "Move SSH to Safe" sheet
+//   &select=key           show the GitHub key (in the SSH key list)
 //   &view=settings|import|trash   &edit=github|new   &gen=1 (generator open)
 //   &import=old           the daemon has no `import` verb yet
 //   &view=cards|addresses the cards, the addresses (sample data, fake numbers)
@@ -37,10 +55,12 @@ import { brandOf, digits } from "./cards.js";
 // networks' published test numbers
 export const MOCK_CARD = "0b6d2a1c-cccc-4c3d-8e9f-0a1b2c3d4e01";
 export const MOCK_ADDRESS = "0b6d2a1c-aaaa-4c3d-8e9f-0a1b2c3d4e01";
+export const MOCK_SSH = "0b6d2a1c-5555-4c3d-8e9f-0a1b2c3d4e01";
 
 export function install(params) {
   const flag = (k, dflt) => (params.has(k) ? params.get(k) === "1" : dflt);
   const clone = (x) => structuredClone(x);
+  const minsAgo = (m) => new Date(Date.now() - m * 60000).toISOString().replace(/\.\d+Z$/, "Z");
   const s = {
     daemon: flag("daemon", true),
     setUp: flag("setup", true),
@@ -63,7 +83,6 @@ export function install(params) {
       confirm_cards: true,
       ...(params.get("known") ? { place: params.get("known"), location: "ewe/safe/passwords.kdbx" } : {})
     },
-    agent: flag("agent", false),
     keyring: params.get("keyring") ?? "fine"
   };
   // the keyring's app secrets (names and dates only, as `keyring list`)
@@ -80,9 +99,10 @@ export function install(params) {
                 { id: "/org/freedesktop/secrets/collection/Default_5fkeyring/2", label: "ewe companion: anthropic API key", collection: s.keyring === "broken" ? "Default_keyring" : "login", app: "ewe-companion", created: minsAgo(60 * 24 * 8), modified: minsAgo(60 * 24 * 8) }
               ])
         ];
-  // an SSH key (TRIO.md S2): the fixture has none
-  const sshKey = (title, type, n) => ({
-    id: crypto.randomUUID(),
+  // an SSH key (TRIO.md S2; GATE.md S22: its public file, last use): the
+  // fixture has none
+  const sshKey = (title, type, n, extra = {}) => ({
+    id: extra.id ?? crypto.randomUUID(),
     kind: "ssh-key",
     title,
     username: "",
@@ -97,12 +117,99 @@ export function install(params) {
       public_key: `${type === "rsa" ? "ssh-rsa" : "ssh-ed25519"} AAAAC3NzaC1lZDI1NTE5AAAAIMock${n}KeyForTheWindowOnlyXXXXXXXXXXXXXXXX ${title}`,
       fingerprint: `SHA256:mock${n}Kp3zQ9xVt1bW7uYc2nRj8eLh5aGfD0sT4oM6iN`,
       key_type: type,
-      agent: true
+      agent: true,
+      file: `~/.ssh/ewe-safe/key-mock${n}Kp3zQ9xVt1b.pub`,
+      last_used: extra.last_used ?? null
     },
     passkey: null,
     _notes: ""
   });
-  if (!flag("empty", false)) s.items.push(sshKey("GitHub key", "ed25519", 1));
+  // the SSH gate (GATE.md S21–S28): keys, hosts, 1Password's agent, key files
+  const gateFlag = params.get("gate") ?? (flag("agent", false) ? "good" : "off");
+  const good = gateFlag === "good";
+  const g = {
+    enabled: gateFlag !== "off",
+    on: gateFlag === "1password" || good,
+    confirm: "first-use",
+    // 1Password's agent: its keys, and the ones Safe doesn't have
+    op: good ? null : { keys: 4, missing: [{ agent: "1Password", comment: "Staging deploy key", fingerprint: "SHA256:op9Qm2Lx7RkVt3eN1bW8uYc5", key_type: "ed25519" }] },
+    // private key files in ~/.ssh
+    files: [
+      { path: "/home/sam/.ssh/id_ed25519", fingerprint: "SHA256:file1Hk2QpX9mVt7cR4bN", comment: "sam@laptop", passphrase: "", in_safe: good, item_id: null },
+      { path: "/home/sam/.ssh/id_rsa_work", fingerprint: "SHA256:file2Lm8WqT3zYc6dK1eP", comment: "", passphrase: "mock", in_safe: good, item_id: null }
+    ],
+    signing: null,
+    gitEmail: flag("email", true),
+    test: params.get("test") ?? "ok",
+    remote: params.get("remote") ?? "1"
+  };
+  const OP_SOCK = "~/.1password/agent.sock";
+  const NEVER = "ssh_confirm is never: any program running as you can use your SSH keys while Safe is unlocked, without a question.";
+  const sshKeys = {};
+  if (!flag("empty", false)) {
+    sshKeys.github = sshKey("GitHub key", "ed25519", 1, { id: MOCK_SSH, last_used: { at: minsAgo(2), program: "ssh (from git)" } });
+    sshKeys.work = sshKey("Work laptop", "ed25519", 2, { last_used: { at: minsAgo(60 * 26), program: "ssh" } });
+    sshKeys.azure = sshKey("Azure DevOps", "rsa", 3);
+    s.items.push(sshKeys.github, sshKeys.work, sshKeys.azure);
+    if (good) {
+      // the key files, already in Safe
+      g.files.forEach((f, n) => {
+        const k = sshKey(f.comment || f.path.split("/").pop(), n ? "rsa" : "ed25519", 4 + n, { last_used: n ? null : { at: minsAgo(60 * 24 * 3), program: "ssh" } });
+        f.item_id = k.id;
+        s.items.push(k);
+      });
+    }
+    if (flag("signing", false)) g.signing = MOCK_SSH;
+  }
+  const keyRef = (k) => (k ? { item_id: k.id, title: k.title, fingerprint: k.ssh.fingerprint } : null);
+  // ewe.conf's hosts (`source: "ewe"`) and the user's own lines (`yours`);
+  // `_agent`: the host's own IdentityAgent
+  const host = (alias, o) => ({ alias, host_name: null, user: null, port: null, source: "ewe", key: null, file: null, service: null, _agent: null, ...o });
+  const emohKey = s.items.find((i) => i.ssh && i.title === "sam@laptop");
+  s.hosts = !flag("hosts", true)
+    ? []
+    : [
+        host("github.com", { user: "git", key: keyRef(sshKeys.github), file: sshKeys.github?.ssh.file ?? null, service: "github" }),
+        host("work", { host_name: "work.example.com", user: "sam", _agent: good ? null : OP_SOCK }),
+        host("work-proxy", { host_name: "proxy.example.com", user: "sam", port: 2222, _agent: good ? null : OP_SOCK }),
+        host("dev-vm", { host_name: "20.61.14.2", user: "azureuser", key: keyRef(sshKeys.work), file: sshKeys.work?.ssh.file ?? null }),
+        host("emoh", { host_name: "emoh.lan", user: "sam", source: "yours", file: "~/.ssh/id_ed25519", key: keyRef(emohKey) }),
+        host("nas", { host_name: "nas.lan", user: "admin", source: "yours", _agent: OP_SOCK })
+      ];
+  const hostsReply = () =>
+    s.hosts.map(({ _agent, ...h }) => ({ ...h, agent: g.on ? "safe" : _agent }));
+  const gateReply = () => ({
+    on: g.on,
+    include: g.on,
+    config_file: "/home/sam/.ssh/ewe-safe/config",
+    overridden: s.hosts.filter((h) => h._agent).map((h) => ({ host: h.alias, agent: h._agent })),
+    key_files: g.files.map((f) => ({ path: f.path, fingerprint: f.fingerprint, in_safe: f.in_safe })),
+    other_agents: g.op ? [{ socket: "/home/sam/.1password/agent.sock", name: "1Password", keys: g.op.keys, missing_from_safe: g.op.missing.length }] : []
+  });
+  // the catalogue (GATE.md S24); the daemon's steps win, these are samples
+  const COPIED = "Safe copied your public key.";
+  const BACK = "Come back and press Check.";
+  const LATER = "Then add the address here and press Check.";
+  const SERVICES = [
+    { service: "github", name: "GitHub", group: "git", host: "github.com", user: "git", key_type: "ed25519", page: "https://github.com/settings/ssh/new", needs: [], signing: true, steps: [COPIED, "On the GitHub page, paste it into Key, give it a name and press Add SSH key.", BACK] },
+    { service: "gitlab", name: "GitLab", group: "git", host: "gitlab.com", user: "git", key_type: "ed25519", page: "https://gitlab.com/-/user_settings/ssh_keys", needs: [], signing: true, steps: [COPIED, "On the GitLab page, press Add new key. Paste it into Key and press Add key.", BACK] },
+    { service: "azure-devops", name: "Azure DevOps", group: "git", host: "ssh.dev.azure.com", user: "git", key_type: "rsa", page: "https://dev.azure.com/", needs: ["org"], signing: false, steps: [COPIED, "In Azure DevOps, open User settings (top right) → SSH public keys → New Key. Paste it into Public Key Data, give it a name and press Add.", BACK] },
+    { service: "bitbucket", name: "Bitbucket", group: "git", host: "bitbucket.org", user: "git", key_type: "ed25519", page: "https://bitbucket.org/account/settings/ssh-keys/", needs: [], signing: false, steps: [COPIED, "On the Bitbucket page, press Add key. Paste it into Key and press Add key.", BACK] },
+    { service: "codeberg", name: "Codeberg", group: "git", host: "codeberg.org", user: "git", key_type: "ed25519", page: "https://codeberg.org/user/settings/keys", needs: [], signing: false, steps: [COPIED, "On the Codeberg page, press Add key. Paste it into Content, give it a name and press Add key.", BACK] },
+    { service: "gitea", name: "Gitea or Forgejo", group: "git", host: null, user: "git", key_type: "ed25519", page: null, needs: ["host"], signing: false, steps: [COPIED, "On your server's page, press Add key. Paste it into Content, give it a name and press Add key.", BACK] },
+    { service: "azure-vm", name: "Azure virtual machine", group: "cloud", host: null, user: "azureuser", key_type: "ed25519", page: "https://portal.azure.com/#browse/Microsoft.Compute%2FVirtualMachines", needs: [], signing: false, steps: [COPIED, "Paste it as the SSH public key when you create the VM. For a VM you have: Help → Reset password → Reset SSH public key.", LATER] },
+    { service: "aws", name: "AWS EC2", group: "cloud", host: null, user: "ec2-user", key_type: "ed25519", page: "https://console.aws.amazon.com/ec2/home#ImportKeyPair:", needs: [], signing: false, steps: [COPIED, "On the AWS page, give the key a name, paste it and press Import key pair. Pick it when you start an instance.", LATER] },
+    { service: "gcloud", name: "Google Cloud VM", group: "cloud", host: null, user: "your name", key_type: "ed25519", page: "https://console.cloud.google.com/compute/metadata?tab=sshkeys", needs: [], signing: false, steps: [COPIED, "On the Google Cloud page, press Edit, then Add item. Paste it and press Save.", LATER] },
+    { service: "digitalocean", name: "DigitalOcean", group: "cloud", host: null, user: "root", key_type: "ed25519", page: "https://cloud.digitalocean.com/account/security", needs: [], signing: false, steps: [COPIED, "On the DigitalOcean page, press Add SSH Key. Paste it, give it a name and press Add SSH Key.", LATER] },
+    { service: "hetzner", name: "Hetzner Cloud", group: "cloud", host: null, user: "root", key_type: "ed25519", page: "https://console.hetzner.cloud/", needs: [], signing: false, steps: [COPIED, "Open your project → Security → SSH keys → Add SSH key. Paste it and press Add SSH key.", LATER] },
+    { service: "server", name: "A server you can log in to", group: "server", host: null, user: null, key_type: "ed25519", page: null, needs: ["host", "user"], signing: false, steps: ["Safe opens a terminal that puts your key on the server.", "Type your password for the server there, once.", BACK] }
+  ];
+  const svcOf = (id) => SERVICES.find((x) => x.service === id);
+  const svcName = (alias) => {
+    const h = s.hosts.find((x) => x.alias === alias);
+    const id = h?.service ?? SERVICES.find((x) => x.host && (x.host === alias || x.host === h?.host_name))?.service ?? (svcOf(alias) ? alias : null);
+    return svcOf(id)?.name ?? alias;
+  };
   const base = (id, kind, title) => ({
     id,
     kind,
@@ -154,7 +261,6 @@ export function install(params) {
   const listeners = { "safe-event": new Set(), "safe-daemon": new Set(), "safe-args": new Set() };
   const emit = (name, payload) => listeners[name]?.forEach((fn) => fn(payload));
   const fail = (error, message, hint) => ({ ok: false, error, message, ...(hint ? { hint } : {}) });
-  const minsAgo = (m) => new Date(Date.now() - m * 60000).toISOString().replace(/\.\d+Z$/, "Z");
   const syncKind = params.get("sync") ?? "in-sync";
   const sync = {
     state: ["rollback", "single-writer"].includes(syncKind) ? "in-sync" : syncKind,
@@ -442,28 +548,169 @@ export function install(params) {
       const skipped = params.get("convert") === "1" ? [{ title: "Store card", reason: "Safe found no card number in it" }] : [];
       return { ok: true, converted: found, skipped, ...(dryRun ? { dry_run: true } : { sync }) };
     },
-    ssh_enable: () => {
-      s.agent = true;
-      return { ok: true, enabled: true, recorded: true, socket: "/run/user/1000/ewe-safe-ssh.sock", identity_agent: "IdentityAgent /run/user/1000/ewe-safe-ssh.sock" };
+    // `ssh enable` turns the gate on too (GATE.md S21)
+    ssh_enable: ({ confirm }) => {
+      g.enabled = true;
+      g.on = true;
+      if (confirm) g.confirm = confirm;
+      return { ok: true, enabled: true, recorded: true, socket: "/run/user/1000/ewe-safe-ssh.sock", env_file: "/home/sam/.config/environment.d/90-ewe-safe-ssh.conf", identity_agent: "IdentityAgent /run/user/1000/ewe-safe-ssh.sock", ...(g.confirm === "never" ? { warning: NEVER } : {}), gate: gateReply() };
     },
     ssh_disable: () => {
-      s.agent = false;
+      g.enabled = false;
+      g.on = false;
       return { ok: true, enabled: false, recorded: true, env_file_removed: true };
     },
     ssh_status: () => ({
       ok: true,
-      enabled: s.agent,
-      confirm: "first-use",
+      enabled: g.enabled,
+      confirm: g.confirm,
       socket: "/run/user/1000/ewe-safe-ssh.sock",
       listening: true,
       keys: s.items.filter((i) => i.kind === "ssh-key").length,
       locked: s.locked,
-      ssh_auth_sock: s.agent ? "/run/user/1000/ewe-safe-ssh.sock" : null,
-      points_here: s.agent,
-      env_file: null,
+      ssh_auth_sock: g.enabled ? "/run/user/1000/ewe-safe-ssh.sock" : null,
+      points_here: g.on,
+      env_file: g.enabled ? "/home/sam/.config/environment.d/90-ewe-safe-ssh.conf" : null,
       identity_agent: "IdentityAgent /run/user/1000/ewe-safe-ssh.sock",
-      ssh_config_agents: []
+      ssh_config_agents: [...new Set(s.hosts.map((h) => h._agent).filter(Boolean))],
+      ...(g.confirm === "never" ? { warning: NEVER } : {}),
+      gate: gateReply(),
+      signing: keyRef(find(g.signing))
     }),
+    // GATE.md S23: a dry run lists, a real run moves; files are never changed
+    ssh_takeover: ({ dryRun, passphrases }) => {
+      const imported = [];
+      const already = [];
+      const needs = [];
+      const skipped = [];
+      for (const f of g.files) {
+        const title = f.comment || f.path.split("/").pop();
+        if (f.in_safe) {
+          already.push({ item_id: f.item_id, title, file: f.path });
+          continue;
+        }
+        if (f.passphrase) {
+          const p = passphrases?.[f.path];
+          if (!p) {
+            needs.push(f.path);
+            continue;
+          }
+          if (p !== f.passphrase) {
+            skipped.push({ file: f.path, reason: "That passphrase is wrong." });
+            continue;
+          }
+        }
+        let id = null;
+        if (!dryRun) {
+          const k = sshKey(title, f.path.includes("rsa") ? "rsa" : "ed25519", s.items.length);
+          s.items.push(k);
+          f.in_safe = true;
+          f.item_id = id = k.id;
+        }
+        imported.push({ item_id: id, title, file: f.path });
+      }
+      const fixed = s.hosts.filter((h) => h.source === "ewe" && h._agent);
+      const reply = {
+        ok: true,
+        enabled: true,
+        imported,
+        already,
+        needs_passphrase: needs,
+        skipped,
+        hosts_fixed: fixed.map((h) => h.alias),
+        overridden: s.hosts.filter((h) => h.source === "yours" && h._agent).map((h) => ({ host: h.alias, agent: h._agent })),
+        missing_from_safe: g.op?.missing ?? [],
+        files_left: [...imported, ...already].map((x) => x.file),
+        hint: g.op?.missing?.length
+          ? "Import them from 1Password first: Safe → Import (or `ewe-safe import op`), then `ewe-safe ssh adopt`."
+          : "Safe signs for these keys now. Delete the files when you are ready."
+      };
+      if (dryRun) return { ...reply, gate: gateReply(), dry_run: true };
+      g.enabled = true;
+      g.on = true;
+      fixed.forEach((h) => (h._agent = null));
+      changed();
+      return { ...reply, gate: gateReply(), sync };
+    },
+    ssh_services: () => ({ ok: true, services: clone(SERVICES) }),
+    ssh_connect: ({ service, key, title, host: h, user, port, alias, org, replace, sign, noOpen }) => {
+      const sv = svcOf(service);
+      if (!sv) return fail("bad-request", `Safe doesn't know the service ${service}.`);
+      if (service === "server" && (!h || !user)) return fail("bad-request", "A server needs its address and your user name on it.");
+      if (service === "gitea" && !h) return fail("bad-request", "Gitea needs its address: --host.");
+      let k = key ? find(key) : null;
+      if (key && !k?.ssh) return fail("not-found", `No SSH key ${key}.`);
+      const target = h || sv.host;
+      const a = target ? alias || target : null;
+      const there = a ? s.hosts.find((x) => x.alias === a) : null;
+      if (there?.source === "yours") return { ...fail("conflict", `You set up ${a} yourself in ~/.ssh/config. Change it there, or use --alias.`), alias: a };
+      if (there?.key && there.key.item_id !== k?.id && !replace)
+        return { ...fail("conflict", `${a} already uses the key ${there.key.title}. Use --replace, or --alias ${service}-2 for a second account.`), alias: a };
+      if (!k) {
+        k = sshKey(title || sv.name, sv.key_type === "rsa" ? "rsa" : "ed25519", s.items.length);
+        s.items.push(k);
+      }
+      if (a) {
+        const def = host(a, { host_name: a === target ? null : target, user: user || sv.user, port: port && Number(port) !== 22 ? Number(port) : null, key: keyRef(k), file: k.ssh.file, service: sv.service });
+        s.hosts = [...s.hosts.filter((x) => x.alias !== a), def];
+      }
+      if (sign) g.signing = k.id;
+      changed();
+      const page =
+        service === "gitlab" && h ? `https://${h}/-/user_settings/ssh_keys` : service === "gitea" ? `https://${h}/user/settings/keys` : service === "azure-devops" && org ? `https://dev.azure.com/${org}/_usersSettings/keys` : sv.page;
+      const hint = sv.group !== "git" || !a ? null : service === "azure-devops" ? `git@${a}:v3/${org || "<org>"}/<project>/<repo>` : `git@${a}:<owner>/<repo>.git`;
+      return { ok: true, item_id: k.id, ssh: k.ssh, service, alias: a, page, copied: true, opened: !noOpen, steps: sv.steps, remote_hint: hint, sync };
+    },
+    // GATE.md S24: the answer read the way a user would
+    ssh_test: ({ target }) => {
+      const name = svcName(target);
+      const known = s.hosts.find((x) => x.alias === target);
+      const line = (d) => d.slice(0, 400);
+      if (g.test === "changed")
+        return { ok: true, connected: false, account: null, host_key: "changed", message: "The server's key changed. Safe stopped. Check with the server's owner.", detail: line("@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\n@    WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!     @\nHost key verification failed.") };
+      if (target === "work-proxy" && g.test !== "fail")
+        return { ok: true, connected: false, account: null, host_key: "known", message: "Safe couldn't reach proxy.example.com. Check the address, and that you are online.", detail: "ssh: connect to host proxy.example.com port 2222: Connection timed out" };
+      if (g.test === "fail")
+        return { ok: true, connected: false, account: null, host_key: "known", message: `${name} doesn't know this key yet. Add it on the page, then check again.`, detail: `git@${known?.host_name ?? target}: Permission denied (publickey).` };
+      const git = ["github", "gitlab", "bitbucket", "codeberg", "gitea", "azure-devops"].includes(known?.service ?? target);
+      return { ok: true, connected: true, account: git ? "sam" : null, host_key: known ? "known" : "added", message: git ? `Connected to ${name} as sam.` : `Connected to ${name}.`, detail: git ? "Hi sam! You've successfully authenticated, but GitHub does not provide shell access." : "" };
+    },
+    ssh_hosts: () => ({ ok: true, hosts: hostsReply() }),
+    ssh_host_set: ({ alias, host: h, user, port, key, noKey }) => {
+      if (!alias || /[\s*?!]/.test(alias)) return fail("bad-request", "A host name can't be empty or have a space, *, ? or !.");
+      const there = s.hosts.find((x) => x.alias === alias);
+      if (there?.source === "yours") return { ...fail("conflict", `You set up ${alias} yourself in ~/.ssh/config. Change it there.`), alias };
+      const k = key ? find(key) : null;
+      if (key && !k?.ssh) return fail("not-found", `No SSH key ${key}.`);
+      const def = there ?? host(alias, {});
+      if (h !== undefined) def.host_name = h && h !== alias ? h : null;
+      if (user !== undefined) def.user = user || null;
+      if (port !== undefined) def.port = port && Number(port) !== 22 ? Number(port) : null;
+      if (k) Object.assign(def, { key: keyRef(k), file: k.ssh.file });
+      if (noKey) Object.assign(def, { key: null, file: null });
+      s.hosts = [...s.hosts.filter((x) => x.alias !== alias), def];
+      return { ok: true, alias, sync };
+    },
+    ssh_host_remove: ({ alias }) => {
+      const there = s.hosts.find((x) => x.alias === alias);
+      if (!there) return fail("not-found", `There is no host ${alias}.`);
+      if (there.source === "yours") return { ...fail("conflict", `You set up ${alias} yourself in ~/.ssh/config. Change it there.`), alias };
+      s.hosts = s.hosts.filter((x) => x !== there);
+      return { ok: true, alias, sync };
+    },
+    // GATE.md S25
+    ssh_sign: ({ itemId, email, off }) => {
+      if (off) {
+        g.signing = null;
+        return { ok: true, signing: null, sync };
+      }
+      const k = find(itemId);
+      if (!k?.ssh) return fail("not-found", `No SSH key ${itemId}.`);
+      if (!g.gitEmail && !email) return fail("bad-request", "Tell Safe your Git email: --email");
+      if (email) g.gitEmail = true;
+      g.signing = k.id;
+      return { ok: true, signing: keyRef(k), email: email || "sam@example.org", sync };
+    },
 
     keyring_status: () => {
       const broken = s.keyring === "broken" || s.keyring === "locked";
@@ -509,7 +756,8 @@ export function install(params) {
           : null,
       show: null,
       new: params.get("edit") === "new",
-      import: params.get("view") === "import"
+      import: params.get("view") === "import",
+      ssh: params.get("view") === "ssh"
     }),
     theme_tokens: () => (flag("light", false) ? light : null),
     theme_key: () => "mock",
@@ -530,7 +778,20 @@ export function install(params) {
         : { ok: true, signed_in: false },
     window_classes: () => ({ ok: true, classes: ["code", "discord", "firefox", "kitty", "slack", "steam"] }),
     open_url: () => ({ ok: true }),
+    open_page: () => ({ ok: true }),
     open_ewe_sync: () => ({ ok: true }),
+    // your ewe computers (RFC-009), as the window passes `ewe-remote status --offline` on
+    remote_status: () => {
+      if (g.remote === "0") return { ok: false, code: "missing", error: "missing", message: "ewe-remote is not installed." };
+      const all = [
+        { id: "a1b2c3d4e5f60718", name: "desk", user: "sam", online: g.remote !== "offline", paired: true, allowed: true, sharing: true, last_seen: Math.floor(Date.now() / 1000) - 60 },
+        { id: "0f1e2d3c4b5a6978", name: "travel laptop", user: "sam", online: false, paired: true, allowed: true, sharing: true, last_seen: Math.floor(Date.now() / 1000) - 86400 * 4 },
+        { id: "99aa88bb77cc66dd", name: "living-room", user: "sam", online: g.remote !== "offline", paired: false, allowed: false, sharing: true, last_seen: Math.floor(Date.now() / 1000) - 300 }
+      ];
+      return { ok: true, this: { name: "laptop", sharing: true }, computers: g.remote === "empty" ? [] : all };
+    },
+    remote_terminal: ({ id }) => (g.remote === "offline" ? fail("unreachable", "travel laptop can't be reached right now") : { ok: true, id }),
+    ssh_terminal: () => ({ ok: true }),
     pick_file: ({ kind }) =>
       kind === "ssh-key"
         ? { ok: true, path: "/home/sam/.ssh/id_ed25519" }
@@ -538,8 +799,8 @@ export function install(params) {
     print_page: () => ({ ok: true }),
     quit_app: () => ({ ok: true })
   };
-  const local = new Set(["daemon_state", "launch_args", "theme_tokens", "theme_key", "settings_get", "settings_set", "passwords_provider", "use_safe_for_passwords", "cloud_status", "window_classes", "open_url", "open_ewe_sync", "pick_file", "print_page", "quit_app", "check_login_password"]);
-  const needsUnlock = new Set(["list", "search", "match_items", "show", "reveal", "copy", "add", "edit", "rm", "restore", "import_items", "ssh_new", "ssh_add", "ssh_adopt", "confirm", "convert"]);
+  const local = new Set(["daemon_state", "launch_args", "theme_tokens", "theme_key", "settings_get", "settings_set", "passwords_provider", "use_safe_for_passwords", "cloud_status", "window_classes", "open_url", "open_page", "open_ewe_sync", "remote_status", "remote_terminal", "ssh_terminal", "pick_file", "print_page", "quit_app", "check_login_password"]);
+  const needsUnlock = new Set(["list", "search", "match_items", "show", "reveal", "copy", "add", "edit", "rm", "restore", "import_items", "ssh_new", "ssh_add", "ssh_adopt", "confirm", "convert", "ssh_takeover", "ssh_connect", "ssh_test", "ssh_sign"]);
 
   window.__SAFE_MOCK__ = {
     async invoke(cmd, args) {
@@ -571,7 +832,18 @@ export async function arrange(params, ui) {
   const view = params.get("view");
   if (view === "settings" || view === "import") ui.go(view);
   if (view === "trash") ui.pick({ trash: true });
-  if (view === "ssh") ui.pick({ kind: "ssh-key" });
+  if (view === "ssh") ui.go("ssh");
+  if (view === "sshkeys") ui.pick({ kind: "ssh-key" });
+  // the SSH page's sheets
+  const connect = params.get("connect");
+  if (connect) {
+    ui.go("ssh");
+    ui.connect = connect === "pick" ? {} : { service: connect };
+  }
+  if (params.get("takeover") === "1") {
+    ui.go("ssh");
+    ui.takeover = true;
+  }
   if (view === "cards") ui.pick({ kind: "card" });
   if (view === "addresses") ui.pick({ kind: "address" });
   const edit = params.get("edit");
@@ -588,6 +860,10 @@ export async function arrange(params, ui) {
   // &select=card|address: the sample Visa, the sample Home
   if (sel === "card") ui.selected = MOCK_CARD;
   if (sel === "address") ui.selected = MOCK_ADDRESS;
+  if (sel === "key") {
+    ui.pick({ kind: "ssh-key" });
+    ui.selected = MOCK_SSH;
+  }
   const fresh = params.get("new");
   if (fresh === "card" || fresh === "address") {
     ui.pick({ kind: fresh });

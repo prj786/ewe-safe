@@ -29,6 +29,10 @@ class Safe {
   keyChanged = $state(false);
   // a counter the screens watch to reload what they show (an item's notes)
   changes = $state(0);
+  // SSH (docs/GATE.md S28): the agent and the gate (`ssh-status`), the
+  // services Safe connects to, every host ssh knows, your ewe computers
+  // (`remote`: null when ewe-remote isn't there). Never a secret.
+  ssh = $state({ status: null, services: [], hosts: [], remote: null });
 
   #unlisten = [];
 
@@ -260,8 +264,82 @@ class Safe {
     return api.sshStatus();
   }
 
-  sshEnable(confirm) {
-    return this.#run("ssh-enable", () => api.sshEnable(confirm));
+  /** What the SSH page shows; `remote` asks ewe-remote too. */
+  async loadSsh({ remote = false } = {}) {
+    const [st, hosts, services, rm] = await Promise.all([
+      api.sshStatus(),
+      api.sshHosts(),
+      this.ssh.services.length ? null : api.sshServices(),
+      remote ? api.remoteStatus() : null
+    ]);
+    const next = { ...this.ssh };
+    if (st?.ok) next.status = st;
+    if (hosts?.ok) next.hosts = hosts.hosts ?? [];
+    if (services?.ok) next.services = services.services ?? [];
+    if (remote) next.remote = rm?.ok ? rm : null;
+    this.ssh = next;
+    return next;
+  }
+
+  /** The hosts alone (an SSH key's "Used by"). */
+  async loadSshHosts() {
+    const r = await api.sshHosts();
+    if (r?.ok) this.ssh = { ...this.ssh, hosts: r.hosts ?? [] };
+    return r;
+  }
+
+  /** After a change: the keys (a new one, `last_used`) and the page. */
+  async #sshChanged() {
+    await this.loadItems();
+    await this.loadSsh();
+  }
+
+  async sshEnable(confirm) {
+    const r = await this.#run("ssh-enable", () => api.sshEnable(confirm));
+    if (r?.ok) await this.loadSsh();
+    return r;
+  }
+
+  async sshDisable() {
+    const r = await this.#run("ssh-disable", () => api.sshDisable());
+    if (r?.ok) await this.loadSsh();
+    return r;
+  }
+
+  /** The passphrases are passed straight through; the caller drops them. */
+  async sshTakeover({ dryRun, passphrases }) {
+    const r = await this.#run(dryRun ? "ssh-takeover-check" : "ssh-takeover", () => api.sshTakeover({ dryRun, passphrases }));
+    if (r?.ok && !dryRun) await this.#sshChanged();
+    return r;
+  }
+
+  async sshConnect(opts) {
+    const r = await this.#run("ssh-connect", () => api.sshConnect(opts));
+    if (r?.ok) await this.#sshChanged();
+    return r;
+  }
+
+  /** Not `#run`: a check is inline, one host at a time, and an answer. */
+  sshTest(opts) {
+    return api.sshTest(opts);
+  }
+
+  async sshHostSet(opts) {
+    const r = await this.#run("ssh-host-set", () => api.sshHostSet(opts));
+    if (r?.ok) await this.loadSsh();
+    return r;
+  }
+
+  async sshHostRemove(alias) {
+    const r = await this.#run("ssh-host-remove", () => api.sshHostRemove(alias));
+    if (r?.ok) await this.loadSsh();
+    return r;
+  }
+
+  async sshSign(opts) {
+    const r = await this.#run("ssh-sign", () => api.sshSign(opts));
+    if (r?.ok) await this.loadSsh();
+    return r;
   }
 
   sync() {

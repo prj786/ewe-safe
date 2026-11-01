@@ -89,6 +89,22 @@ export const api = {
   sshEnable: (confirm) => invoke("ssh_enable", { confirm }),
   sshDisable: () => invoke("ssh_disable"),
   sshStatus: () => invoke("ssh_status"),
+  // Safe is the SSH gate (docs/GATE.md S21–S25). `passphrases` maps a key
+  // file's path to its passphrase: secrets, dropped by the caller once sent
+  sshTakeover: ({ dryRun, passphrases } = {}) => invoke("ssh_takeover", { dryRun, passphrases }),
+  sshServices: () => invoke("ssh_services"),
+  // service: the catalogue's `service`; key: an SSH key item, else a new
+  // one titled `title`; the window opens the page itself (`noOpen`)
+  sshConnect: ({ service, key, title, host, user, port, alias, org, replace, sign, noOpen }) =>
+    invoke("ssh_connect", { service, key, title, host, user, port, alias, org, replace, sign, noOpen }),
+  // target: an alias, a service or user@host[:port]
+  sshTest: ({ target, key }) => invoke("ssh_test", { target, key }),
+  sshHosts: () => invoke("ssh_hosts"),
+  // key: an SSH key item; noKey: any key
+  sshHostSet: ({ alias, host, user, port, key, noKey }) => invoke("ssh_host_set", { alias, host, user, port, key, noKey }),
+  sshHostRemove: (alias) => invoke("ssh_host_remove", { alias }),
+  // sign Git commits with a key, or stop (`off`)
+  sshSign: ({ itemId, email, off }) => invoke("ssh_sign", { itemId, email, off }),
   // cards and addresses (docs/SYSTEM.md §4): the notes an earlier
   // 1Password import made from them, turned into cards and addresses
   convert: (dryRun = false) => invoke("convert", { dryRun }),
@@ -111,6 +127,13 @@ export const api = {
   windowClasses: () => invoke("window_classes"),
   openUrl: (url) => invoke("open_url", { url }),
   openEweSync: () => invoke("open_ewe_sync"),
+  // a service's page (GitHub's "New SSH key") in ewe browser
+  openPage: (url) => invoke("open_page", { url }),
+  // your ewe computers (RFC-009): `{ok: false, code: "missing"}` without ewe-remote
+  remoteStatus: () => invoke("remote_status"),
+  remoteTerminal: (id) => invoke("remote_terminal", { id }),
+  // kitty running `ssh <alias>`
+  sshTerminal: (alias) => invoke("ssh_terminal", { alias }),
   pickFile: (kind) => invoke("pick_file", { kind }),
   print: () => {
     if (inTauri()) return invoke("print_page");
