@@ -84,7 +84,7 @@ async fn call_wait(verb: &'static str, args: Map<String, Value>, wait: Duration)
     tauri::async_runtime::spawn_blocking(move || safe_client::call(verb, Value::Object(args), wait))
         .await
         .unwrap_or_else(|_| {
-            json!({"ok": false, "error": "internal", "message": "The call to Safe's service failed."})
+            json!({"ok": false, "error": "internal", "message": "The call to ewe Safe’s service failed."})
         })
 }
 
@@ -667,7 +667,7 @@ fn forward_events(app: AppHandle) {
                     json!({
                         "available": false,
                         "error": "daemon-unavailable",
-                        "message": "Safe's service stopped. Trying again…",
+                        "message": "ewe Safe’s service stopped. Trying again…",
                     }),
                 );
             }
@@ -718,28 +718,28 @@ pub fn run() {
         .setup(move |app| {
             let w = if approve {
                 WebviewWindowBuilder::new(app, "approve", WebviewUrl::App("index.html".into()))
-                    .title("Allow the SSH key?")
+                    .title("Allow the SSH key? — ewe Safe")
                     .inner_size(560.0, 200.0)
                     .resizable(false)
                     .decorations(false)
                     .center()
             } else if confirm_only {
                 WebviewWindowBuilder::new(app, "confirm", WebviewUrl::App("index.html".into()))
-                    .title("Confirm")
+                    .title("Confirm it’s you — ewe Safe")
                     .inner_size(560.0, 200.0)
                     .resizable(false)
                     .decorations(false)
                     .center()
             } else if unlock_only {
                 WebviewWindowBuilder::new(app, "unlock", WebviewUrl::App("index.html".into()))
-                    .title("Unlock Safe")
+                    .title("Unlock ewe Safe")
                     .inner_size(560.0, 200.0)
                     .resizable(false)
                     .decorations(false)
                     .center()
             } else {
                 WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
-                    .title("Safe")
+                    .title("ewe Safe")
                     .inner_size(1040.0, 680.0)
                     .min_inner_size(760.0, 520.0)
                     .decorations(false)
@@ -821,7 +821,7 @@ pub fn run() {
             keyring::keyring_list,
         ])
         .run(tauri::generate_context!())
-        .expect("error while running the Safe window");
+        .expect("error while running the ewe Safe window");
 }
 
 #[cfg(test)]

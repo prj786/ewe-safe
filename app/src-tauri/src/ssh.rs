@@ -24,7 +24,7 @@ const MAX_KEY_FILE: u64 = 1024 * 1024;
 /// A private key file's text; one bigger than a key is not read.
 fn read_key(file: &str) -> Result<String, String> {
     use std::io::Read;
-    let cant = |e: std::io::Error| format!("Safe can't read {file}: {e}.");
+    let cant = |e: std::io::Error| format!("ewe Safe can’t read {file}: {e}.");
     let f = std::fs::File::open(file).map_err(cant)?;
     let size = f.metadata().map_err(cant)?.len();
     if size > MAX_KEY_FILE {

@@ -404,7 +404,7 @@ fn confirm(question: &str) -> bool {
             "--class",
             "ewe-safe-unlock",
             "--title",
-            "Safe",
+            "ewe Safe",
             "-e",
             &me,
             "git-credential",

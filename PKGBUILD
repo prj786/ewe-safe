@@ -14,7 +14,7 @@ pkgname=ewe-safe
 _tag=v0.4.0-beta
 pkgver=0.4.0beta
 pkgrel=1
-pkgdesc="Safe — ewe's password manager: one KeePass file in a place you choose, filled with Super+P"
+pkgdesc="ewe Safe — the password manager: one KeePass file in a place you choose, filled with Super+P"
 arch=('x86_64' 'aarch64')
 url="https://github.com/prj786/ewe-safe"
 license=('MIT')
@@ -28,8 +28,8 @@ depends=(
 optdepends=(
   'ewe: the desktop — ewe-conf ([safe] settings), ewe-cloud (your Nextcloud), the Super+P picker (plugin ewe.passwords)'
   '1password-cli: import straight from the 1Password app (op)'
-  'openssh: use the SSH keys in Safe with ssh and git (ewe-safe ssh enable), sign Git commits with them'
-  'git: sign Git commits with a key in Safe (ewe-safe ssh sign-commits)'
+  'openssh: use the SSH keys in ewe Safe with ssh and git (ewe-safe ssh enable), sign Git commits with them'
+  'git: sign Git commits with a key in ewe Safe (ewe-safe ssh sign-commits)'
   'kitty: the unlock prompt when the window is not installed'
 )
 makedepends=('rust' 'cargo' 'nodejs' 'npm')
