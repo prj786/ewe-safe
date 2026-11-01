@@ -981,3 +981,485 @@ fn takeover_moves_keys_and_hosts_and_names_what_only_1password_has() {
         assert!(!log.contains(never), "{never:?} in the log:\n{log}");
     }
 }
+
+fn read(p: &Path) -> String {
+    std::fs::read_to_string(p).unwrap_or_default()
+}
+
+fn host<'a>(list: &'a Value, alias: &str) -> &'a Value {
+    list.as_array()
+        .unwrap()
+        .iter()
+        .find(|h| h["alias"] == alias)
+        .unwrap_or_else(|| panic!("{alias} in {list}"))
+}
+
+/// S24: the catalogue, `connect` (a key, its file, the host in ewe.conf,
+/// the clipboard, the page), conflicts, and the hosts verbs.
+#[test]
+fn services_connect_and_hosts() {
+    let mut s = Sandbox::new("connect");
+    s.start();
+    s.init();
+    let out = s.root.join("out");
+
+    let cat = s.ok(&["ssh", "services"]);
+    let list = cat["services"].as_array().unwrap();
+    assert_eq!(list.len(), 12);
+    assert_eq!(
+        list[0],
+        json!({
+            "service": "github", "name": "GitHub", "group": "git", "host": "github.com",
+            "user": "git", "key_type": "ed25519", "key_bits": null,
+            "page": "https://github.com/settings/ssh/new", "needs": [], "optional": [],
+            "signing": true, "steps": list[0]["steps"], "signing_steps": list[0]["signing_steps"],
+        })
+    );
+
+    // GitHub: a new key, the gate on, the host in ewe.conf
+    let gh = s.ok(&["ssh", "connect", "github"]);
+    assert_eq!(
+        gh["enabled"], true,
+        "the agent was off: connect turns it on"
+    );
+    assert_eq!(gh["alias"], "github.com");
+    assert_eq!(gh["service"], "github");
+    assert_eq!(gh["ssh"]["key_type"], "ed25519");
+    assert_eq!(gh["copied"], true);
+    assert_eq!(gh["opened"], true);
+    assert_eq!(gh["remote_hint"], "git@github.com:<owner>/<repo>.git");
+    assert_eq!(gh["steps"].as_array().unwrap().len(), 3);
+    let gh_id = gh["item_id"].as_str().unwrap().to_string();
+    let fp = gh["ssh"]["fingerprint"].as_str().unwrap().to_string();
+    let file = format!("~/.ssh/ewe-safe/key-{}.pub", tag(&fp));
+    assert_eq!(gh["ssh"]["file"], file);
+    let public = gh["ssh"]["public_key"].as_str().unwrap().to_string();
+    assert_eq!(
+        read(&out.join("clipboard")),
+        format!("{} GitHub", bare(&public))
+    );
+    // the page opens in the background
+    wait_until("the page opened", 5, || {
+        read(&out.join("opened"))
+            .trim_end()
+            .ends_with(" https://github.com/settings/ssh/new")
+    });
+    assert_eq!(s.ok(&["ssh", "list"])["items"][0]["title"], "GitHub");
+    assert_eq!(
+        s.conf()["network"]["ssh"]["hosts"],
+        json!([{"host": "github.com", "options": [["User", "git"], ["IdentityFile", file], ["IdentitiesOnly", "yes"]]}])
+    );
+    assert!(s.gate_dir().join(format!("key-{}.pub", tag(&fp))).exists());
+    let g = s.ssh_g("github.com");
+    assert_eq!(get(&g, "identityfile"), [file.as_str()]);
+    assert_eq!(get(&g, "identitiesonly"), ["yes"]);
+    assert_eq!(get(&g, "user"), ["git"]);
+    assert_eq!(get(&g, "identityagent"), [s.agent().display().to_string()]);
+
+    // the same alias with another key: a conflict, nothing made
+    let again = s.cli(&["ssh", "connect", "github"]);
+    assert_eq!(again["error"], "conflict", "{again}");
+    assert_eq!(again["alias"], "github.com");
+    assert_eq!(
+        again["message"],
+        "github.com already uses the key GitHub. Use --replace, or --alias github-2 for a second account."
+    );
+    assert_eq!(s.ok(&["ssh", "list"])["items"].as_array().unwrap().len(), 1);
+    // the same key again is fine
+    s.ok(&["ssh", "connect", "github", "--key", &gh_id, "--no-open"]);
+    // a second account
+    let work = s.ok(&[
+        "ssh",
+        "connect",
+        "github",
+        "--alias",
+        "github-work",
+        "--title",
+        "Work GitHub",
+        "--no-open",
+    ]);
+    assert_eq!(work["alias"], "github-work");
+    assert_eq!(work["opened"], false);
+    assert_eq!(work["remote_hint"], "git@github-work:<owner>/<repo>.git");
+    let g = s.ssh_g("github-work");
+    assert_eq!(get(&g, "hostname"), ["github.com"]);
+    // --replace: github.com takes a new key
+    let rep = s.ok(&[
+        "ssh",
+        "connect",
+        "github",
+        "--replace",
+        "--title",
+        "GitHub 2",
+        "--no-open",
+    ]);
+    assert_ne!(rep["item_id"], json!(gh_id));
+
+    // the user's own lines are never edited
+    let cfg = s.ssh_dir().join("config");
+    let mine = format!(
+        "{}Host gitlab.com\n    User me\n",
+        read(&cfg)
+            .split("\n# >>> ewe managed hosts")
+            .next()
+            .unwrap()
+            .to_string()
+            + "\n"
+    );
+    let rest = read(&cfg)[read(&cfg).find("# >>> ewe managed hosts").unwrap()..].to_string();
+    std::fs::write(&cfg, format!("{mine}\n{rest}")).unwrap();
+    let gl = s.cli(&["ssh", "connect", "gitlab", "--no-open"]);
+    assert_eq!(gl["error"], "conflict", "{gl}");
+    assert_eq!(
+        gl["message"],
+        "You set up gitlab.com yourself in ~/.ssh/config. Change it there, or use --alias."
+    );
+
+    // Azure DevOps: RSA, the organization's page
+    let ed = s.cli(&[
+        "ssh",
+        "connect",
+        "azure-devops",
+        "--key",
+        &gh_id,
+        "--no-open",
+    ]);
+    assert_eq!(ed["error"], "bad-request", "{ed}");
+    let az = s.ok(&[
+        "ssh",
+        "connect",
+        "azure-devops",
+        "--org",
+        "fabrikam",
+        "--no-open",
+    ]);
+    assert_eq!(az["ssh"]["key_type"], "rsa");
+    assert_eq!(
+        az["page"],
+        "https://dev.azure.com/fabrikam/_usersSettings/keys"
+    );
+    assert_eq!(
+        az["remote_hint"],
+        "git@ssh.dev.azure.com:v3/fabrikam/<project>/<repo>"
+    );
+    let pubf = s.root.join("pub").join("az.pub");
+    std::fs::write(
+        &pubf,
+        format!("{}\n", az["ssh"]["public_key"].as_str().unwrap()),
+    )
+    .unwrap();
+    let (bits, _, _) = s.tool(
+        "ssh-keygen",
+        &["-l", "-f", pubf.to_str().unwrap()],
+        &[],
+        None,
+    );
+    assert!(bits.starts_with("3072 "), "{bits}");
+
+    // a cloud service: no host yet; Google Cloud wants the user name last
+    let aws = s.ok(&["ssh", "connect", "aws", "--no-open"]);
+    assert_eq!(
+        (aws["alias"].clone(), aws["page"].clone()),
+        (Value::Null, json!("https://console.aws.amazon.com/ec2/"))
+    );
+    assert_eq!(aws["remote_hint"], Value::Null);
+    let gc = s.ok(&["ssh", "connect", "gcloud", "--user", "sam", "--no-open"]);
+    assert!(read(&out.join("clipboard")).ends_with(" sam"), "{gc}");
+
+    // a server: a terminal runs ssh-copy-id
+    let no = s.cli(&["ssh", "connect", "server", "--host", "10.0.0.9"]);
+    assert_eq!(no["error"], "bad-request");
+    let sv = s.ok(&[
+        "ssh", "connect", "server", "--host", "10.0.0.9", "--user", "deploy", "--port", "2222",
+    ]);
+    assert_eq!(sv["alias"], "10.0.0.9");
+    let sv_fp = sv["ssh"]["fingerprint"].as_str().unwrap();
+    let want = format!(
+        "kitty --title Safe: copy your key to 10.0.0.9 ssh-copy-id -f -i {} -o PreferredAuthentications=keyboard-interactive,password,publickey -p 2222 deploy@10.0.0.9",
+        s.gate_dir()
+            .join(format!("key-{}.pub", tag(sv_fp)))
+            .display()
+    );
+    wait_until("the terminal opened", 5, || {
+        read(&out.join("opened")).lines().last() == Some(want.as_str())
+    });
+
+    // the hosts
+    let hosts = s.ok(&["ssh", "hosts"])["hosts"].clone();
+    let h = host(&hosts, "github.com");
+    assert_eq!(h["source"], "ewe");
+    assert_eq!(h["key"]["title"], "GitHub 2");
+    assert_eq!(h["service"], "github");
+    assert_eq!(h["agent"], "safe");
+    assert_eq!(host(&hosts, "github-work")["service"], "github");
+    assert_eq!(host(&hosts, "github-work")["key"]["title"], "Work GitHub");
+    assert_eq!(host(&hosts, "10.0.0.9")["port"], 2222);
+    assert_eq!(host(&hosts, "10.0.0.9")["user"], "deploy");
+    assert_eq!(host(&hosts, "gitlab.com")["source"], "yours");
+    assert_eq!(host(&hosts, "gitlab.com")["service"], "gitlab");
+
+    let set = s.ok(&[
+        "ssh",
+        "host",
+        "set",
+        "box",
+        "--host",
+        "192.168.1.9",
+        "--user",
+        "sam",
+        "--port",
+        "22",
+        "--key",
+        &gh_id,
+    ]);
+    assert_eq!(set["created"], true);
+    assert_eq!(set["entry"]["key"]["item_id"], json!(gh_id));
+    assert_eq!(set["entry"]["port"], Value::Null, "22 is the default");
+    let set = s.ok(&["ssh", "host", "set", "box", "--no-key", "--port", "2200"]);
+    assert_eq!(set["created"], false);
+    assert_eq!(set["entry"]["key"], Value::Null);
+    assert_eq!(
+        set["entry"]["host_name"], "192.168.1.9",
+        "other options stay"
+    );
+    assert_eq!(set["entry"]["port"], 2200);
+    assert_eq!(
+        s.cli(&["ssh", "host", "set", "a b"])["error"],
+        "bad-request"
+    );
+    assert_eq!(s.cli(&["ssh", "host", "set", "x*"])["error"], "bad-request");
+    assert_eq!(
+        s.cli(&["ssh", "host", "set", "gitlab.com", "--user", "x"])["error"],
+        "conflict"
+    );
+    assert_eq!(s.ok(&["ssh", "host", "remove", "box"])["removed"], true);
+    assert_eq!(
+        s.cli(&["ssh", "host", "remove", "box"])["error"],
+        "not-found"
+    );
+    assert_eq!(
+        s.cli(&["ssh", "host", "remove", "gitlab.com"])["error"],
+        "conflict"
+    );
+
+    // while locked: the hosts and their keys' titles, from the public-key list
+    s.ok(&["lock"]);
+    let hosts = s.ok(&["ssh", "hosts"])["hosts"].clone();
+    assert_eq!(host(&hosts, "github-work")["key"]["title"], "Work GitHub");
+    assert_eq!(s.cli(&["ssh", "connect", "github"])["error"], "locked");
+}
+
+/// S24: `ssh test` reads each service's answer (a fake `ssh`).
+#[test]
+fn ssh_test_reads_each_service() {
+    let mut s = Sandbox::new("sshtest");
+    let r = s.root.display().to_string();
+    write_exec(
+        &s.bin.join("fake-ssh"),
+        &format!(
+            r#"#!/bin/sh
+echo "$*" >> {r}/out/ssh-args
+case "$*" in
+  *git@github.com*|*" gh-alias") echo "Hi sam! You've successfully authenticated, but GitHub does not provide shell access." >&2; exit 1 ;;
+  *gitlab.com*) echo "Welcome to GitLab, @sam!"; exit 0 ;;
+  *bitbucket.org*) printf 'authenticated via ssh key.\n\nYou can use git to connect to Bitbucket. Shell access is disabled\n'; exit 0 ;;
+  *codeberg.org*) echo "Hi there, sam! You've successfully authenticated with the key named GitHub, but Forgejo does not provide shell access."; exit 0 ;;
+  *ssh.dev.azure.com*) printf "Warning: Permanently added 'ssh.dev.azure.com' (RSA) to the list of known hosts.\nremote: Shell access is not supported.\nshell request failed on channel 0\n" >&2; exit 1 ;;
+  *denied.example*) echo "deploy@denied.example: Permission denied (publickey)." >&2; exit 255 ;;
+  *changed.example*) printf '@@@ WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED! @@@\nHost key verification failed.\n' >&2; exit 255 ;;
+  *) exit 0 ;;
+esac
+"#
+        ),
+    );
+    s.extra.push((
+        "EWE_SAFE_SSH".into(),
+        s.bin.join("fake-ssh").display().to_string(),
+    ));
+    s.start();
+    s.init();
+    let k = s.ok(&["ssh", "new", "--title", "Key"]);
+    let id = k["item_id"].as_str().unwrap().to_string();
+    let args = || read(&s.root.join("out/ssh-args"));
+
+    let t = s.ok(&["ssh", "test", "github"]);
+    assert_eq!(
+        (
+            t["connected"].clone(),
+            t["account"].clone(),
+            t["message"].clone(),
+            t["host_key"].clone()
+        ),
+        (
+            json!(true),
+            json!("sam"),
+            json!("Connected to GitHub as sam."),
+            json!("known")
+        )
+    );
+    let line = args().lines().last().unwrap().to_string();
+    assert!(
+        line.starts_with(&format!(
+            "-T -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new -o IdentityAgent={} ",
+            s.agent().display()
+        )),
+        "{line}"
+    );
+    assert!(
+        line.ends_with(" git@github.com"),
+        "a git service runs no command: {line}"
+    );
+    assert_eq!(s.ok(&["ssh", "test", "gitlab"])["account"], "sam");
+    assert_eq!(s.ok(&["ssh", "test", "bitbucket"])["connected"], true);
+    assert_eq!(
+        s.ok(&["ssh", "test", "codeberg"])["message"],
+        "Connected to Codeberg as sam."
+    );
+    let az = s.ok(&["ssh", "test", "azure-devops"]);
+    assert_eq!(
+        (az["connected"].clone(), az["host_key"].clone()),
+        (json!(true), json!("added"))
+    );
+    // an alias in ewe.conf for GitHub is what `ssh test github` uses
+    s.ok(&[
+        "ssh",
+        "host",
+        "set",
+        "gh-alias",
+        "--host",
+        "github.com",
+        "--user",
+        "git",
+        "--key",
+        &id,
+    ]);
+    assert_eq!(s.ok(&["ssh", "test", "github"])["connected"], true);
+    assert!(args().lines().last().unwrap().ends_with(" gh-alias"));
+    // a server: `true`, with the key asked for
+    let no = s.ok(&["ssh", "test", "deploy@denied.example:2222", "--key", &id]);
+    assert_eq!(no["connected"], false);
+    assert_eq!(
+        no["message"],
+        "denied.example doesn't know this key yet. Copy it to the server, then check again."
+    );
+    assert!(no["detail"].as_str().unwrap().contains("Permission denied"));
+    let line = args().lines().last().unwrap().to_string();
+    assert!(
+        line.contains(" -o IdentitiesOnly=yes -p 2222 deploy@denied.example true"),
+        "{line}"
+    );
+    assert!(
+        line.contains(&format!("-i {}", s.gate_dir().display())),
+        "{line}"
+    );
+    let ch = s.ok(&["ssh", "test", "box@changed.example"]);
+    assert_eq!(
+        (
+            ch["connected"].clone(),
+            ch["host_key"].clone(),
+            ch["message"].clone()
+        ),
+        (
+            json!(false),
+            json!("changed"),
+            json!("The server's key changed. Safe stopped. Check with the server's owner.")
+        )
+    );
+    assert_eq!(
+        s.cli(&["ssh", "test", "-oProxyCommand=x"])["error"],
+        "bad-request"
+    );
+    assert_eq!(
+        s.cli(&["ssh", "test", "gitea"])["error"],
+        "bad-request",
+        "no host for it yet"
+    );
+    s.ok(&["lock"]);
+    assert_eq!(s.cli(&["ssh", "test", "github"])["error"], "locked");
+}
+
+/// S24: one real `sshd` on loopback (non-root), `ssh test` through Safe's
+/// agent: connected, the host key added, no question for the daemon's own
+/// `ssh`. The session's shell gets the sandbox as its HOME (`SetEnv`), and
+/// `PermitUserRC no` keeps sshd off `~/.ssh/rc`: nothing of the real home
+/// is read.
+#[test]
+fn a_real_sshd_lets_safe_in() {
+    let mut s = Sandbox::new("sshd");
+    let d = s.root.join("sshd");
+    std::fs::create_dir_all(&d).unwrap();
+    s.keygen_at(&d.join("hostkey"), &["-t", "ed25519"], "");
+    let port = {
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        l.local_addr().unwrap().port()
+    };
+    std::fs::write(d.join("authorized_keys"), "").unwrap();
+    let cfg = format!(
+        "Port {port}\nListenAddress 127.0.0.1\nHostKey {d}/hostkey\nPidFile {d}/pid\nAuthorizedKeysFile {d}/authorized_keys\nPubkeyAuthentication yes\nPasswordAuthentication no\nKbdInteractiveAuthentication no\nUsePAM no\nStrictModes no\nPermitUserRC no\nPermitUserEnvironment no\nForceCommand /usr/bin/true\nSetEnv HOME={home} BASH_ENV=/dev/null ENV=/dev/null ZDOTDIR={home}\nLogLevel VERBOSE\n",
+        d = d.display(),
+        home = s.home().display()
+    );
+    std::fs::write(d.join("sshd_config"), cfg).unwrap();
+    let log = std::fs::File::create(d.join("sshd.log")).unwrap();
+    let sshd = Command::new("/usr/bin/sshd")
+        .args(["-D", "-e", "-f", d.join("sshd_config").to_str().unwrap()])
+        .env_clear()
+        .env("PATH", "/usr/bin:/bin")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(log)
+        .spawn()
+        .expect("sshd");
+    s.children.push(sshd);
+    wait_until("sshd listens", 10, || {
+        std::net::TcpStream::connect(("127.0.0.1", port)).is_ok()
+    });
+    // ssh with the sandbox's own config and known_hosts (never ~/.ssh)
+    write_exec(
+        &s.bin.join("sandbox-ssh"),
+        "#!/bin/sh\nexec /usr/bin/ssh -F \"$HOME/.ssh/config\" -o UserKnownHostsFile=\"$HOME/.ssh/known_hosts\" \"$@\"\n",
+    );
+    s.extra.push((
+        "EWE_SAFE_SSH".into(),
+        s.bin.join("sandbox-ssh").display().to_string(),
+    ));
+    s.start();
+    s.init();
+    s.ok(&["ssh", "enable"]);
+    let k = s.ok(&["ssh", "new", "--title", "Server key"]);
+    let id = k["item_id"].as_str().unwrap().to_string();
+    let me = String::from_utf8(Command::new("id").arg("-un").output().unwrap().stdout).unwrap();
+    let target = format!("{}@127.0.0.1:{port}", me.trim());
+
+    let no = s.ok(&["ssh", "test", &target, "--key", &id]);
+    assert_eq!(no["connected"], false, "{no}");
+    assert_eq!(no["host_key"], "added");
+    std::fs::write(
+        d.join("authorized_keys"),
+        format!("{}\n", k["ssh"]["public_key"].as_str().unwrap()),
+    )
+    .unwrap();
+    let yes = s.ok(&["ssh", "test", &target, "--key", &id]);
+    assert_eq!(
+        yes["connected"],
+        true,
+        "{yes}\n{}",
+        read(&d.join("sshd.log"))
+    );
+    assert_eq!(yes["host_key"], "known");
+    assert_eq!(yes["message"], "Connected to 127.0.0.1.");
+    assert!(
+        s.approvals().is_empty(),
+        "the daemon's own ssh isn't asked about"
+    );
+    assert!(
+        s.daemon_log()
+            .contains("no question for the daemon's own ssh")
+    );
+    assert!(read(&s.ssh_dir().join("known_hosts")).contains("[127.0.0.1]"));
+    let used = &s.ok(&["ssh", "list"])["items"][0]["ssh"]["last_used"];
+    assert!(
+        used["program"].as_str().unwrap().starts_with("ssh"),
+        "{used}"
+    );
+}

@@ -348,14 +348,6 @@ impl EweHost {
         self.options.retain(|(k, _)| !k.eq_ignore_ascii_case(key));
         self.options.len() != before
     }
-
-    pub fn as_block(&self) -> Block {
-        Block {
-            names: vec![self.host.clone()],
-            options: self.options.clone(),
-            managed: true,
-        }
-    }
 }
 
 /// ewe.conf's hosts: `Err` when ewe-conf didn't answer (never taken as

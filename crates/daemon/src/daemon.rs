@@ -87,6 +87,8 @@ pub struct Fail {
     pub message: String,
     pub hint: Option<String>,
     pub reasons: Option<Vec<String>>,
+    /// `conflict`: the SSH host alias that is taken (docs/GATE.md S24).
+    pub alias: Option<String>,
 }
 
 impl Fail {
@@ -96,7 +98,18 @@ impl Fail {
             message: sentence(message.into()),
             hint: None,
             reasons: None,
+            alias: None,
         }
+    }
+
+    /// An SSH host alias that is taken: in ewe.conf with another key, or in
+    /// the user's own lines (docs/GATE.md S24).
+    pub fn conflict(alias: &str, message: impl Into<String>) -> Fail {
+        let mut f = Fail::new("conflict", "");
+        // a whole sentence already, which may start with a host name
+        f.message = message.into();
+        f.alias = Some(alias.to_string());
+        f
     }
 
     pub fn hint(mut self, h: &str) -> Fail {
@@ -124,6 +137,9 @@ impl Fail {
         }
         if let Some(r) = &self.reasons {
             v["reasons"] = json!(r);
+        }
+        if let Some(a) = &self.alias {
+            v["alias"] = json!(a);
         }
         v
     }

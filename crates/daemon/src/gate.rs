@@ -456,6 +456,34 @@ pub fn remove() -> bool {
     gone
 }
 
+/// Safe's agent on and the gate in place, for a verb that needs them (a
+/// key Safe holds is no use without its agent): `connect`, `sign-commits`.
+/// Whether it had to be turned on.
+pub fn ensure_on(d: &Daemon) -> Result<bool, crate::daemon::Fail> {
+    use crate::daemon::Fail;
+    if d.settings().ssh_agent && is_on() {
+        return Ok(false);
+    }
+    if !d.settings().ssh_agent && !config::conf_store("ssh_agent", "true") {
+        return Err(Fail::new(
+            "internal",
+            "ewe-conf could not store [safe] ssh_agent = true, so Safe's agent stays off",
+        )
+        .hint("Check that ewe-conf works: ewe-conf get safe"));
+    }
+    d.reload_settings();
+    apply(d).map_err(|e| {
+        Fail::new(
+            "internal",
+            format!("Safe can't put the SSH gate in place: {e}"),
+        )
+    })?;
+    if let Some(ag) = crate::agent::get() {
+        ag.write_cache();
+    }
+    Ok(true)
+}
+
 /// The gate is on: the Include line on top, and Safe's config file.
 pub fn is_on() -> bool {
     included() && ours(&config_file(), CONFIG_MARK)
@@ -524,9 +552,8 @@ pub fn overridden(d: &Daemon, file: &SshConfig, ewe: &[hosts::EweHost]) -> Vec<(
 #[derive(Clone, Debug)]
 pub struct KeyFileInfo {
     pub path: PathBuf,
-    /// The public line, from the key (an OpenSSH key's public half is not
-    /// encrypted) or the `.pub` beside it.
-    pub public: Option<String>,
+    /// From the key (an OpenSSH key's public half is not encrypted) or the
+    /// `.pub` beside it.
     pub fingerprint: Option<String>,
     pub encrypted: bool,
 }
@@ -619,7 +646,6 @@ pub fn key_files(ewe: &[hosts::EweHost]) -> Vec<KeyFileInfo> {
             let fingerprint = public.as_deref().and_then(keys::fingerprint_of_line);
             Some(KeyFileInfo {
                 path: p,
-                public,
                 fingerprint,
                 encrypted,
             })
