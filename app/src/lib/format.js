@@ -1,18 +1,20 @@
 // Words and numbers the screens show: place names, times, the sync
-// messages, password strength. The copy is the mockup's
-// (design-mockups/safe.html), plain and short.
+// states (ewe Sync's words), password strength. Plain and short.
 
 export const PLACES = {
-  nextcloud: { label: "Your ewe account", icon: "cloud" },
-  local: { label: "This computer only", icon: "laptop" },
-  webdav: { label: "Your own server (WebDAV)", icon: "server" },
-  folder: { label: "A synced folder", icon: "folder-sync" },
-  sftp: { label: "SSH server", icon: "terminal" },
-  dropbox: { label: "Dropbox", icon: "cloud" },
-  gdrive: { label: "Google Drive", icon: "cloud" }
+  nextcloud: { label: "Your ewe account", name: "your ewe account", icon: "cloud" },
+  local: { label: "This computer only", name: "this computer", icon: "laptop" },
+  webdav: { label: "Your own server (WebDAV)", name: "your own server", icon: "server" },
+  folder: { label: "A synced folder", name: "a synced folder", icon: "folder-sync" },
+  sftp: { label: "SSH server", name: "your SSH server", icon: "terminal" },
+  dropbox: { label: "Dropbox", name: "Dropbox", icon: "cloud" },
+  gdrive: { label: "Google Drive", name: "Google Drive", icon: "cloud" }
 };
 
+/** The place as a label ("Your ewe account"), on its own line. */
 export const placeLabel = (p) => PLACES[p?.kind]?.label ?? "Your safe";
+/** The place inside a sentence ("Open your safe from your ewe account"). */
+export const placeName = (p) => PLACES[p?.kind]?.name ?? "your safe";
 export const placeIcon = (p) => PLACES[p?.kind]?.icon ?? "vault";
 
 /** "cloud.example.org · ewe/safe/passwords.kdbx", or the file alone. */
@@ -42,6 +44,13 @@ const hm = (d) => `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinute
 export function day(iso) {
   const d = toDate(iso);
   return d ? `${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()}` : "";
+}
+
+/** "12 Sep" this year, "12 Sep 2025" before. */
+export function shortDay(iso, now = new Date()) {
+  const d = toDate(iso);
+  if (!d) return "";
+  return d.getFullYear() === now.getFullYear() ? `${d.getDate()} ${MONTHS[d.getMonth()]}` : day(iso);
 }
 
 /** "14 October 2026" — the Emergency Kit */
@@ -74,105 +83,72 @@ export function ago(iso, now = new Date()) {
   return day(iso);
 }
 
-/** The side navigation's last line: {icon, tone, text}. */
+/**
+ * The sync state in ewe Sync's own words, one table for every place that
+ * shows it (the side navigation's foot, Settings, an item's foot): the
+ * word, a Badge/alert tone and an icon. ewe Sync says "Up to date",
+ * "Syncing…", "Waiting to upload", "Offline", "Couldn’t sync"; Safe's two
+ * warnings (the server gave an older copy, a server that can't stop two
+ * saves at once) are "Needs attention".
+ */
+export const SYNC_WORDS = {
+  "in-sync": { word: "Up to date", tone: "success", icon: "cloud-check" },
+  pending: { word: "Waiting to upload", tone: "info", icon: "upload" },
+  offline: { word: "Offline", tone: "warning", icon: "cloud-off" },
+  error: { word: "Couldn’t sync", tone: "warning", icon: "triangle-alert" },
+  local: { word: "On this computer only", tone: "neutral", icon: "laptop" },
+  attention: { word: "Needs attention", tone: "warning", icon: "triangle-alert" }
+};
+
+/** `{key, word, tone, icon}` for a `status.sync`, or null. */
+export function syncState(sync) {
+  if (!sync) return null;
+  const key = sync.warning === "rollback" || sync.warning === "single-writer" ? "attention" : sync.state;
+  return SYNC_WORDS[key] ? { key, ...SYNC_WORDS[key] } : null;
+}
+
+/** The side navigation's last line: "Up to date · 2 min ago", "Offline"… */
 export function syncLine(sync, now = new Date()) {
-  if (!sync) return null;
-  if (sync.warning === "rollback" || sync.warning === "single-writer")
-    return { icon: "triangle-alert", tone: "is-warning", text: "Needs a look" };
-  switch (sync.state) {
-    case "in-sync":
-      return { icon: "cloud", tone: "", text: sync.last ? `In sync · ${ago(sync.last, now)}` : "In sync" };
-    case "pending":
-      return { icon: "upload", tone: "is-info", text: "Not uploaded yet" };
-    case "offline":
-      return { icon: "cloud-off", tone: "is-warning", text: "Offline" };
-    case "local":
-      return { icon: "laptop", tone: "", text: "On this computer" };
-    case "error":
-      return { icon: "triangle-alert", tone: "is-warning", text: "Can't reach your server" };
-    default:
-      return null;
-  }
+  const st = syncState(sync);
+  if (!st) return null;
+  return { ...st, text: st.key === "in-sync" && sync.last ? `${st.word} · ${ago(sync.last, now)}` : st.word };
 }
 
-/** The Settings alert for the sync state (the mockup's five messages). */
-export function syncAlert(sync, place, server = "", now = new Date()) {
-  if (!sync) return null;
+/**
+ * Settings' sync row: the word, and one sentence that says what it means
+ * and what to do (`action: "ewe-sync"`: an Open ewe Sync button);
+ * `server` is the account's host.
+ */
+export function syncDetail(sync, place, server = "", now = new Date()) {
+  const st = syncState(sync);
+  if (!st) return null;
   const host = server ? server.replace(/^https?:\/\//, "").replace(/\/+$/, "") : "Your server";
+  const saved = [sync.by_machine ? `Saved by ${sync.by_machine}` : "Saved", when(sync.last, now)].filter(Boolean).join(" · ");
   if (sync.warning === "rollback")
-    return {
-      tone: "warning",
-      icon: "triangle-alert",
-      title: "Your server gave an older copy",
-      desc: "Safe kept your newer passwords and uploaded them again. If this happens again, check your server's backups."
-    };
+    return { ...st, desc: "Your server gave an older copy. ewe Safe kept your newer passwords and uploaded them again. If this happens again, check your server’s backups." };
   if (sync.warning === "single-writer")
-    return {
-      tone: "warning",
-      icon: "triangle-alert",
-      title: "This server can't stop two saves at once",
-      desc: "Use Safe on one computer at a time with it, or move the safe to your ewe account."
-    };
-  switch (sync.state) {
+    return { ...st, desc: "This server can’t stop two saves at once. Use ewe Safe on one computer at a time with it, or move the safe to your ewe account." };
+  switch (st.key) {
     case "in-sync":
-      return {
-        tone: "success",
-        icon: "circle-check",
-        title: "In sync",
-        desc: sync.last ? `Saved to ${placeLabel(place)} ${ago(sync.last, now)}.` : `Saved to ${placeLabel(place)}.`
-      };
+      return { ...st, desc: sync.last ? saved : `Saved to ${placeName(place)}.` };
     case "pending":
-      return {
-        tone: "info",
-        icon: "upload",
-        title: "Changes not uploaded yet",
-        desc: "They are saved on this computer. Safe uploads them as soon as your server answers."
-      };
+      return { ...st, desc: "Your changes are saved on this computer. ewe Safe uploads them as soon as your server answers." };
     case "offline":
-      return {
-        tone: "warning",
-        icon: "cloud-off",
-        title: "Offline",
-        desc: `${host} can't be reached. You can still read and change your safe; changes upload later.`
-      };
+      return { ...st, desc: `${host} can’t be reached. You can still read and change your safe; changes upload later.` };
     case "error":
-      return {
-        tone: "warning",
-        icon: "triangle-alert",
-        title: "Safe can't reach your server",
-        desc: "Your passwords are still here. Check your account in ewe-sync."
-      };
+      return { ...st, desc: "ewe Safe can’t reach your server. Your passwords are still here. Check your account in ewe Sync.", action: "ewe-sync" };
     case "local":
-      return {
-        tone: "info",
-        icon: "laptop",
-        title: "This computer only",
-        desc: "Nothing is uploaded. Back up the file yourself."
-      };
+      return { ...st, desc: "Nothing is uploaded. Back up the file yourself." };
     default:
-      return null;
+      return { ...st, desc: "" };
   }
 }
 
-/** The Settings badge next to "Last saved". */
-export function syncBadge(sync) {
-  if (!sync) return null;
-  if (sync.warning === "rollback") return { tone: "warning", text: "Older copy" };
-  if (sync.warning === "single-writer") return { tone: "warning", text: "One at a time" };
-  switch (sync.state) {
-    case "in-sync":
-      return { tone: "success", text: "In sync" };
-    case "pending":
-      return { tone: "info", text: "Waiting" };
-    case "offline":
-      return { tone: "warning", text: "Offline" };
-    case "error":
-      return { tone: "warning", text: "Error" };
-    case "local":
-      return { tone: "neutral", text: "This computer" };
-    default:
-      return null;
-  }
+/** An item's foot: "Up to date in your account", "Waiting to upload"… */
+export function syncWhere(sync, place) {
+  const st = syncState(sync);
+  if (!st) return "";
+  return st.key === "in-sync" && place?.kind && place.kind !== "local" ? `${st.word} in ${placeName(place)}` : st.word;
 }
 
 /** "github.com" from "https://github.com/login". */

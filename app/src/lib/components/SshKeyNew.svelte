@@ -1,5 +1,5 @@
 <script>
-  // A new SSH key (TRIO.md S2): make one in Safe, or add a private key file
+  // A new SSH key (TRIO.md S2): make one in ewe Safe, or add a private key file
   // (~/.ssh/id_ed25519). The daemon reads the file itself; a key with a
   // passphrase needs it once, and keeps it in the item's password. The new
   // key's public line is shown to copy (GitHub → Settings → SSH keys). In a
@@ -60,7 +60,7 @@
     if (!r?.ok) {
       // a key with a passphrase: ask for it
       if (/passphrase/i.test(r?.message ?? "")) needsPass = true;
-      error = r?.message ?? "Couldn't add the key.";
+      error = r?.message ?? "Couldn’t add the key.";
       return;
     }
     toasts.show(way === "new" ? "Made a new SSH key." : "Added the SSH key.", { icon: "circle-check" });
@@ -69,12 +69,12 @@
   }
 </script>
 
-<form class="safe-stack" style="gap:var(--space-md)" onsubmit={save}>
+<form class="safe-stack safe-editor" onsubmit={save}>
   <div class="safe-dhead" hidden={inSheet}>
-    <span class="safe-letter safe-letter--lg"><Icon name="terminal" /></span>
+    <span class="ewe-row__lead ewe-row__lead--tile safe-letter safe-letter--lg" aria-hidden="true"><Icon name="terminal" /></span>
     <div class="safe-dhead__titles">
-      <div class="h3">Add an SSH key</div>
-      <div class="caption">ssh and git use it through Safe, the way they did through 1Password.</div>
+      <h2 class="h3 safe-dhead__title">Add an SSH key</h2>
+      <div class="safe-sub">The private key stays in ewe Safe. ssh and git ask ewe Safe for it.</div>
     </div>
   </div>
 
@@ -91,7 +91,7 @@
           <span class="ewe-input"><input class="mono" bind:value={file} placeholder="~/.ssh/id_ed25519" spellcheck="false" aria-label="Private key file" /></span>
           <button type="button" class="ewe-btn ewe-btn--secondary" onclick={pick}><Icon name="folder-open" />Choose…</button>
         </div>
-        <span class="ewe-field__helper">OpenSSH or PEM (PKCS#8). The file stays where it is: delete it once the key is in Safe, if you like.</span>
+        <span class="ewe-field__helper">OpenSSH or PEM (PKCS#8). The file stays where it is: delete it once the key is in ewe Safe, if you like.</span>
       </div>
       {#if needsPass}
         <label class="ewe-field">
@@ -102,26 +102,27 @@
               <Icon name={showPass ? "eye-off" : "eye"} />
             </button>
           </span>
-          <span class="ewe-field__helper">Safe keeps it with the key, so ssh never asks.</span>
+          <span class="ewe-field__helper">ewe Safe keeps it with the key, so ssh never asks.</span>
         </label>
       {/if}
     {/if}
 
     <label class="ewe-field">
-      <span class="ewe-field__label"><span>Title</span>{#if way === "file"}<span class="ewe-field__optional">The key's comment if empty</span>{/if}</span>
-      <span class="ewe-input"><input bind:value={title} autocomplete="off" spellcheck="false" placeholder="GitHub key" /></span>
+      <span class="ewe-field__label"><span>Title</span>{#if way === "file"}<span class="ewe-field__optional">Optional</span>{/if}</span>
+      <span class="ewe-input"><input bind:value={title} autocomplete="off" spellcheck="false" placeholder="For example, GitHub key" /></span>
+      {#if way === "file"}<span class="ewe-field__helper">Left empty, it is the key’s own comment.</span>{/if}
     </label>
 
     {#if way === "new"}
       <div class="ewe-field">
         <div class="ewe-field__label"><span>Type</span></div>
-        <div class="safe-stack" role="radiogroup" aria-label="Type">
+        <div class="safe-stack safe-choices" role="radiogroup" aria-label="Type">
           {#each TYPES as [id, name, desc] (id)}
-            <button type="button" role="radio" aria-checked={keyType === id} class="ewe-check ewe-check--radio" class:is-checked={keyType === id} onclick={() => (keyType = id)}>
-              <span class="ewe-check__box">{#if keyType === id}<span class="ewe-check__dot"></span>{/if}</span>
-              <span class="ewe-check__text">
-                <span class="ewe-check__label">{name}</span>
-                <span class="ewe-check__desc">{desc}</span>
+            <button type="button" role="radio" aria-checked={keyType === id} class="ewe-choice safe-choice--sm" class:is-selected={keyType === id} onclick={() => (keyType = id)}>
+              <span class="ewe-check ewe-check--radio" class:is-checked={keyType === id}><span class="ewe-check__box">{#if keyType === id}<span class="ewe-check__dot"></span>{/if}</span></span>
+              <span class="ewe-choice__text">
+                <span class="ewe-choice__title">{name}</span>
+                <span class="ewe-choice__desc">{desc}</span>
               </span>
             </button>
           {/each}
@@ -134,7 +135,7 @@
     {/if}
   </div>
 
-  <div class="safe-actions safe-actions--end">
+  <div class="safe-actions safe-actions--end" class:safe-formfoot={!inSheet}>
     <button type="button" class="ewe-btn ewe-btn--ghost" onclick={() => (ui.editing = null)}>Cancel</button>
     <button type="submit" class="ewe-btn ewe-btn--primary" disabled={saving}>
       {saving ? (way === "new" ? "Making…" : "Adding…") : way === "new" ? "Make the key" : "Add the key"}

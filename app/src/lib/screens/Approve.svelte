@@ -39,19 +39,19 @@
   <span class="ewe-appicon safe-tile"><Icon name="terminal" /></span>
   <div class="safe-compact__body">
     <div class="safe-head">
-      <div class="h3" id="approve-title">Allow <strong>{app}</strong> to use <strong>{key}</strong>{#if host} for <strong>{host}</strong>{/if}?</div>
+      <div class="h3 safe-ask" id="approve-title">Allow <span class="safe-ask__name">{app}</span> to use <span class="safe-ask__name">{key}</span>{#if host}{" for "}<span class="safe-ask__name">{host}</span>{/if}?</div>
       {#if path}<div class="caption mono safe-key">{path}</div>{/if}
       {#if forwarded}
         <div class="ewe-field__helper ewe-field__helper--error"><Icon name="triangle-alert" /><span>Through a forwarded connection: the key is used from another computer.</span></div>
       {/if}
       {#if !system}
-        <div class="ewe-field__helper ewe-field__helper--error"><Icon name="triangle-alert" /><span>Not a system program. Allow it only if you started it yourself.</span></div>
+        <div class="ewe-field__helper ewe-field__helper--error"><Icon name="triangle-alert" /><span>Not a system app. Allow it only if you started it yourself.</span></div>
       {/if}
       <div class="caption safe-muted">No answer is a Deny, in {left} s.</div>
     </div>
     <div class="safe-compact__row">
-      <button class="ewe-btn ewe-btn--secondary" bind:this={denyBtn} onclick={() => api.quit(1)}>Deny</button>
-      <button class="ewe-btn ewe-btn--primary" onclick={() => api.quit(0)}><Icon name="check" />Allow</button>
+      <button type="button" class="ewe-btn ewe-btn--secondary" bind:this={denyBtn} onclick={() => api.quit(1)}>Deny</button>
+      <button type="button" class="ewe-btn ewe-btn--primary" onclick={() => api.quit(0)}><Icon name="check" />Allow</button>
     </div>
   </div>
 </div>

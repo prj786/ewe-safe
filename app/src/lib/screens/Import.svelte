@@ -7,6 +7,7 @@
   import Icon from "../components/Icon.svelte";
   import { api } from "../api.js";
   import { safe } from "../safe.svelte.js";
+  import { edge } from "../trap.js";
   import { ui } from "../ui.svelte.js";
   import { tick } from "svelte";
 
@@ -65,11 +66,11 @@
 
   function explain(r) {
     if (r?.error === "bad-request" && /no verb/i.test(r?.message ?? ""))
-      return "This version of Safe's service can't import yet. Update Safe and try again.";
+      return "This version of ewe Safe’s service can’t import yet. Update ewe Safe and try again.";
     // source-error: not a 1PUX/CSV export, unreadable, or op's own words
     if (r?.error === "source-error")
-      return format === "op" ? `The 1Password app didn't answer: ${r.message}` : `Safe can't read that file: ${r.message}`;
-    return r?.message ?? "The import didn't work.";
+      return format === "op" ? `The 1Password app didn’t answer: ${r.message}` : `ewe Safe can’t read that file: ${r.message}`;
+    return r?.message ?? "The import didn’t work.";
   }
 
   async function run(dryRun) {
@@ -103,21 +104,19 @@
   async function useSafeForSuperP() {
     superPState = "busy";
     const r = await api.useSafeForPasswords();
-    superPState = r?.ok ? "done" : r?.message || "Couldn't change what Super+P fills from.";
+    superPState = r?.ok ? "done" : r?.message || "Couldn’t change what Super+P fills from.";
   }
 </script>
 
-<div class="ewe-headerbar ewe-headerbar--page" style="padding:var(--space-md) calc(var(--space-md) + var(--space-s)) calc(var(--space-s) + var(--space-xs))">
+<header class="ewe-headerbar ewe-headerbar--page safe-pagehead">
+  <button type="button" class="ewe-iconbtn ewe-iconbtn--ghost safe-back" aria-label="Back to Settings" title="Back to Settings" onclick={() => ui.go("settings")}><Icon name="arrow-left" /></button>
   <div class="ewe-headerbar__titles">
-    <div class="ewe-headerbar__title">Import</div>
+    <h1 class="ewe-headerbar__title">Import</h1>
     <div class="ewe-headerbar__subtitle">Bring your passwords from 1Password. Bitwarden, browsers, KeePass and pass come later.</div>
   </div>
-  <div class="ewe-headerbar__actions">
-    <button class="ewe-btn ewe-btn--ghost ewe-btn--sm" onclick={() => ui.go("settings")}><Icon name="chevron-left" />Settings</button>
-  </div>
-</div>
+</header>
 
-<div class="safe-page">
+<div class="safe-page" use:edge>
   <div class="safe-page__body">
     {#if done}
       <div class="ewe-alert ewe-alert--success" role="status">
@@ -141,30 +140,30 @@
       {#if superP && superPState === "done"}
         <div class="ewe-alert ewe-alert--success" role="status">
           <Icon name="circle-check" />
-          <div class="ewe-alert__body"><div class="ewe-alert__title">Super+P now fills from Safe</div></div>
+          <div class="ewe-alert__body"><div class="ewe-alert__title">Super+P now fills from ewe Safe</div></div>
         </div>
       {:else if superP}
         <div class="ewe-alert ewe-alert--info" role="status">
           <Icon name="key-round" />
           <div class="ewe-alert__body">
             <div class="ewe-alert__title">Super+P still uses {PROVIDERS[superP] ?? superP}</div>
-            <div class="ewe-alert__desc">Fill logins into any window from Safe instead.</div>
+            <div class="ewe-alert__desc">Fill logins into any window from ewe Safe instead.</div>
             {#if superPState && superPState !== "busy"}<div class="ewe-alert__desc">{superPState}</div>{/if}
             <div class="ewe-alert__actions">
-              <button class="ewe-btn ewe-btn--secondary ewe-btn--sm" disabled={superPState === "busy"} onclick={useSafeForSuperP}>Use Safe for Super+P</button>
+              <button type="button" class="ewe-btn ewe-btn--secondary ewe-btn--sm" disabled={superPState === "busy"} onclick={useSafeForSuperP}>Use ewe Safe for Super+P</button>
             </div>
           </div>
         </div>
       {/if}
       <div class="safe-actions">
-        <button class="ewe-btn ewe-btn--primary" onclick={() => ui.pick({})}>Show my items</button>
-        <button class="ewe-btn ewe-btn--ghost" onclick={() => ((file = ""), reset())}>Import more</button>
+        <button type="button" class="ewe-btn ewe-btn--primary" onclick={() => ui.pick({})}>Show my items</button>
+        <button type="button" class="ewe-btn ewe-btn--ghost" onclick={() => ((file = ""), reset())}>Import more</button>
       </div>
     {:else}
-      <div class="ewe-section"><div class="ewe-section__text"><div class="ewe-section__title ewe-section__title--overline">From</div></div></div>
+      <div class="ewe-section safe-section"><div class="ewe-section__text"><h2 class="ewe-section__title ewe-section__title--overline">From</h2></div></div>
       <div class="safe-stack" role="radiogroup" aria-label="Import from">
         {#each SOURCES as s (s.format)}
-          <button
+          <button type="button"
             class="ewe-choice"
             class:is-selected={format === s.format}
             role="radio"
@@ -192,7 +191,7 @@
               <span class="ewe-row__title">{file ? file.split("/").pop() : "No file chosen"}</span>
               <span class="ewe-row__desc">{file || (format === "1pux" ? "A .1pux file from 1Password" : "A .csv file from 1Password")}</span>
             </span>
-            <span class="ewe-row__trail"><button class="ewe-btn ewe-btn--secondary ewe-btn--sm" onclick={choose}><Icon name="folder-open" />Choose file…</button></span>
+            <span class="ewe-row__trail"><button type="button" class="ewe-btn ewe-btn--secondary ewe-btn--sm" onclick={choose}><Icon name="folder-open" />Choose file…</button></span>
           </div>
         </div>
       {:else}
@@ -203,7 +202,7 @@
       {/if}
 
       <div class="caption safe-muted">
-        1Password's export leaves passkeys out. Sign in to each site once with the password, then add a Safe passkey there.
+        1Password’s export leaves passkeys out. Sign in to each site once with the password, then add a ewe Safe passkey there.
       </div>
 
       <label class="ewe-field">
@@ -214,7 +213,7 @@
         <input type="checkbox" hidden bind:checked={skipDuplicates} onchange={reset} />
         <span class="ewe-check__box">{#if skipDuplicates}<Icon name="check" />{/if}</span>
         <span class="ewe-check__text">
-          <span class="ewe-check__label">Skip logins Safe already has</span>
+          <span class="ewe-check__label">Skip logins ewe Safe already has</span>
           <span class="ewe-check__desc">Same website and username as an item in your safe.</span>
         </span>
       </label>
@@ -227,7 +226,7 @@
       {/if}
 
       {#if report}
-        <div class="ewe-section"><div class="ewe-section__text"><div class="ewe-section__title ewe-section__title--overline">What will come in</div></div></div>
+        <div class="ewe-section safe-section"><div class="ewe-section__text"><h2 class="ewe-section__title ewe-section__title--overline">What will come in</h2></div></div>
         <div class="safe-report">
           {@render stat(report.logins, "Logins")}
           {@render stat(report.notes, "Notes")}
@@ -249,18 +248,18 @@
 
       <div class="safe-actions safe-actions--end">
         {#if report}
-          <button class="ewe-btn ewe-btn--ghost" onclick={() => (report = null)}>Back</button>
-          <button bind:this={importBtn} class="ewe-btn ewe-btn--primary" disabled={!ready || safe.busy === "import" || total(report) === 0} onclick={() => run(false)}>
+          <button type="button" class="ewe-btn ewe-btn--ghost" onclick={() => (report = null)}>Back</button>
+          <button type="button" bind:this={importBtn} class="ewe-btn ewe-btn--primary" disabled={!ready || safe.busy === "import" || total(report) === 0} onclick={() => run(false)}>
             {safe.busy === "import" ? "Importing…" : `Import ${total(report)} items`}
           </button>
         {:else}
-          <button class="ewe-btn ewe-btn--primary" disabled={!ready || safe.busy === "import-check"} onclick={() => run(true)}>
+          <button type="button" class="ewe-btn ewe-btn--primary" disabled={!ready || safe.busy === "import-check"} onclick={() => run(true)}>
             {safe.busy === "import-check" ? "Checking…" : "Check first"}
           </button>
         {/if}
       </div>
       {#if format === "op" && safe.busy.startsWith("import")}
-        <div class="caption safe-muted">If 1Password asks, approve Safe there. Reading many items takes a while.</div>
+        <div class="caption safe-muted">If 1Password asks, approve ewe Safe there. Reading many items takes a while.</div>
       {/if}
     {/if}
   </div>

@@ -1,7 +1,8 @@
 <script>
-  // A new login or note, or an edit (the mockup's Edit screen): title,
-  // username, password with the generator, websites, apps for Super+P,
-  // tags, notes. Edits send only what changed (PROTOCOL.md `edit`: websites
+  // A new login or note, or an edit: title, username, password with the
+  // generator (a panel under the field, open by itself for a new login),
+  // websites, apps for Super+P, tags, notes. Save and Cancel stay in view at
+  // the foot of a long form. Edits send only what changed (PROTOCOL.md `edit`: websites
   // are replaced, apps and tags are added and removed). A card: its number
   // in groups as typed with the brand found from it, the expiry as MM/YY,
   // the security code and the PIN; an address: its parts and a country.
@@ -207,7 +208,7 @@
     code = "";
     pin = "";
     if (!r?.ok) {
-      error = r?.message ?? "Couldn't save.";
+      error = r?.message ?? "Couldn’t save.";
       return;
     }
     const named = title.trim() || (isCard ? cardTitle : isAddress ? "Home" : "");
@@ -228,23 +229,24 @@
   }
 </script>
 
-<form class="safe-stack" style="gap:var(--space-md)" onsubmit={save}>
+<form class="safe-stack safe-editor" onsubmit={save}>
   <div class="safe-dhead">
     {#if isLogin}
-      <span class="safe-letter safe-letter--lg">{title ? letter(title) : "?"}</span>
+      <span class="ewe-row__lead ewe-row__lead--tile safe-letter safe-letter--lg" aria-hidden="true">{title ? letter(title) : "?"}</span>
     {:else}
-      <span class="safe-letter safe-letter--lg"><Icon name={kind === "ssh-key" ? "terminal" : isCard ? "credit-card" : isAddress ? "map-pin" : "sticky-note"} /></span>
+      <span class="ewe-row__lead ewe-row__lead--tile safe-letter safe-letter--lg" aria-hidden="true"><Icon name={kind === "ssh-key" ? "terminal" : isCard ? "credit-card" : isAddress ? "map-pin" : "file-text"} /></span>
     {/if}
     <div class="safe-dhead__titles">
-      <div class="h3">{isNew ? `New ${NAMES[kind] ?? "item"}` : `Edit ${NAMES[kind] ?? "item"}`}</div>
-      <div class="caption">Changes are saved and synced when you press Save.</div>
+      <h2 class="h3 safe-dhead__title">{isNew ? `New ${NAMES[kind] ?? "item"}` : `Edit ${NAMES[kind] ?? "item"}`}</h2>
+      <div class="safe-sub">Changes are saved and synced when you press Save.</div>
     </div>
   </div>
 
   <div class="safe-form">
     <label class="ewe-field">
       <span class="ewe-field__label"><span>Title</span></span>
-      <span class="ewe-input"><input bind:value={title} autocomplete="off" spellcheck="false" placeholder={isLogin ? "GitHub" : isCard ? cardTitle : isAddress ? "Home" : "Home Wi-Fi"} /></span>
+      <span class="ewe-input"><input bind:value={title} autocomplete="off" spellcheck="false" placeholder={isLogin ? "For example, GitHub" : isCard ? cardTitle : isAddress ? "Home" : "For example, Home Wi-Fi"} /></span>
+      {#if isCard || isAddress}<span class="ewe-field__helper">Left empty, it is “{isCard ? cardTitle : "Home"}”.</span>{/if}
     </label>
 
     {#if isCard}
@@ -268,7 +270,7 @@
           >
         </span>
         {#if numberWarning}
-          <div class="ewe-field__helper safe-warn"><Icon name="triangle-alert" /><span>{numberWarning} Safe saves it anyway.</span></div>
+          <div class="ewe-field__helper safe-warn"><Icon name="triangle-alert" /><span>{numberWarning} ewe Safe saves it anyway.</span></div>
         {/if}
       </div>
       <div class="safe-pair">
@@ -355,11 +357,11 @@
       </div>
       <div class="safe-pair">
         <label class="ewe-field">
-          <span class="ewe-field__label"><span>Phone</span></span>
+          <span class="ewe-field__label"><span>Phone</span><span class="ewe-field__optional">Optional</span></span>
           <span class="ewe-input"><input type="tel" bind:value={addr.phone} autocomplete="off" spellcheck="false" /></span>
         </label>
         <label class="ewe-field">
-          <span class="ewe-field__label"><span>Email</span></span>
+          <span class="ewe-field__label"><span>Email</span><span class="ewe-field__optional">Optional</span></span>
           <span class="ewe-input"><input type="email" bind:value={addr.email} autocomplete="off" spellcheck="false" /></span>
         </label>
       </div>
@@ -384,20 +386,20 @@
             >
           </span>
         </label>
-        <button type="button" class="ewe-btn ewe-btn--secondary" class:is-pressed={gen} onclick={() => (gen = !gen)}>
+        <button type="button" class="ewe-btn ewe-btn--secondary" class:is-pressed={gen} aria-expanded={gen} onclick={() => (gen = !gen)}>
           <Icon name="dices" />Generate
         </button>
-        {#if gen}
-          <Generator
-            onuse={(v) => {
-              password = v;
-              showPw = true;
-              gen = false;
-            }}
-            onclose={() => (gen = false)}
-          />
-        {/if}
       </div>
+      {#if gen}
+        <Generator
+          onuse={(v) => {
+            password = v;
+            showPw = true;
+            gen = false;
+          }}
+          onclose={() => (gen = false)}
+        />
+      {/if}
 
       <div class="ewe-field">
         <div class="ewe-field__label"><span>Websites</span></div>
@@ -422,7 +424,7 @@
       </div>
 
       <div class="ewe-field safe-rel">
-        <div class="ewe-field__label"><span>Apps</span><span class="ewe-field__optional">Super+P fills this login here</span></div>
+        <div class="ewe-field__label"><span>Apps</span><span class="ewe-field__optional">Optional</span></div>
         <div class="ewe-input ewe-input--chips">
           {#each apps as a (a)}
             <span class="ewe-tag ewe-tag--removable"><Icon name="app-window" />{a}<button
@@ -434,6 +436,7 @@
           {/each}
           <button type="button" class="ewe-link ewe-input__placeholder" onclick={openPicker}>Pick a window…</button>
         </div>
+        <span class="ewe-field__helper">Super+P fills this login into these apps.</span>
         {#if picker}
           <div class="ewe-menu safe-pick" role="menu">
             {#each picker as c (c)}
@@ -481,7 +484,7 @@
     {/if}
   </div>
 
-  <div class="safe-actions safe-actions--end">
+  <div class="safe-actions safe-actions--end safe-formfoot">
     <button type="button" class="ewe-btn ewe-btn--ghost" onclick={cancel}>Cancel</button>
     <button type="submit" class="ewe-btn ewe-btn--primary" disabled={saving}>{saving ? "Saving…" : "Save"}</button>
   </div>

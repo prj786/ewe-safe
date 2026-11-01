@@ -283,7 +283,7 @@ export function install(params) {
   const verbs = {
     daemon_state: () => (s.daemon ? { available: true } : { available: false, ...unavailable(), ok: undefined }),
     ping: () => ({ ok: true, pong: true }),
-    version: () => ({ ok: true, version: "0.1.0-alpha", protocol: 1 }),
+    version: () => ({ ok: true, version: "0.4.0-beta", protocol: 1 }),
     status: () => ({
       ok: true,
       set_up: s.setUp,
@@ -295,7 +295,7 @@ export function install(params) {
       login: { enabled: s.loginEnabled, session_open: s.loginEnabled },
       items: s.locked ? null : s.items.length,
       sync: s.setUp ? sync : null,
-      version: "0.1.0-alpha"
+      version: "0.4.0-beta"
     }),
     summary: () => ({ ok: true, locked: s.locked, items: s.locked ? null : s.items.length, sync_state: sync.state }),
     init: ({ place: p, password }) => {

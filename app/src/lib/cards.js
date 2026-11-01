@@ -61,7 +61,7 @@ export function luhn(d) {
 export function check(d) {
   if (!d) return "";
   if (d.length < 12 || d.length > 19) return "A card number has 12 to 19 digits. Check it for a typo.";
-  if (!luhn(d)) return "The card number doesn't pass the card check. Check it for a typo.";
+  if (!luhn(d)) return "The card number doesn’t pass the card check. Check it for a typo.";
   return "";
 }
 

@@ -21,7 +21,7 @@
   <div class="safe-paper__head">
     <span class="ewe-appicon safe-tile"><Icon name="vault" /></span>
     <div class="safe-head">
-      <div class="h3">Safe — Emergency Kit</div>
+      <div class="h3">ewe Safe — Emergency Kit</div>
       <div class="caption">Made {longDay()}{who ? ` for ${who}` : ""}</div>
     </div>
   </div>
@@ -42,7 +42,7 @@
     <div class="safe-blank"></div>
   </div>
   <div class="safe-stack">
-    <div class="label">If ewe isn't there</div>
+    <div class="label">If ewe isn’t there</div>
     <div class="body">The file is a standard KeePass file (KDBX 4). KeePassXC opens it on any computer. KeePassDX (Android), Strongbox or KeePassium (iPhone) open it on a phone.</div>
   </div>
 </article>

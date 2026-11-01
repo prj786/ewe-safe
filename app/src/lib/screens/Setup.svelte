@@ -9,7 +9,7 @@
   import { api } from "../api.js";
   import { safe } from "../safe.svelte.js";
   import { ui } from "../ui.svelte.js";
-  import { PLACES, placeLabel, strength } from "../format.js";
+  import { PLACES, placeLabel, placeName, strength } from "../format.js";
 
   let step = $state(ui.setupStep ?? "welcome"); // welcome | place | password | open | kit
   let choice = $state("nextcloud");
@@ -79,7 +79,7 @@
     const r = await safe.create({ place: choice }, p);
     if (!r?.ok) {
       ui.setup = false;
-      error = r?.message ?? "Couldn't create the safe.";
+      error = r?.message ?? "Couldn’t create the safe.";
       return;
     }
     step = "kit";
@@ -94,7 +94,7 @@
     const r = await safe.openSafe(openPlace, p);
     if (!r?.ok) {
       if (r?.error === "wrong-key") wrong = true;
-      else error = r?.message ?? "Couldn't open the safe.";
+      else error = r?.message ?? "Couldn’t open the safe.";
     }
   }
 </script>
@@ -130,13 +130,13 @@
   </label>
 {/snippet}
 
-<div class="safe-win">
-  <div class="safe-solo">
+<!-- in the window's pane: the rail stays from the first screen to the items -->
+<div class="safe-stage">
     {#if step === "welcome"}
       <div class="safe-col safe-col--center">
         <span class="ewe-appicon safe-tile safe-tile--lg"><Icon name="vault" /></span>
         <div class="safe-head">
-          <div class="h1">Safe</div>
+          <h1 class="h1">ewe Safe</h1>
           <div class="body-lg">Your passwords in one file that only you can open.</div>
         </div>
         {#if known?.place === "local"}
@@ -153,14 +153,14 @@
             <div class="ewe-choice is-selected">
               <span class="ewe-choice__icon"><Icon name={PLACES[known.place]?.icon ?? "cloud"} /></span>
               <span class="ewe-choice__text">
-                <span class="ewe-choice__title">Open your safe from {placeLabel({ kind: known.place })}</span>
+                <span class="ewe-choice__title">Open your safe from {placeName({ kind: known.place })}</span>
                 <span class="ewe-choice__desc">{[host, known.location].filter(Boolean).join(" · ")}</span>
               </span>
-              <button class="ewe-btn ewe-btn--primary" onclick={openKnown}>Open</button>
+              <button type="button" class="ewe-btn ewe-btn--primary" onclick={openKnown}>Open</button>
             </div>
             <div class="safe-actions">
-              <button class="ewe-btn ewe-btn--ghost" onclick={() => (step = "place")}><Icon name="plus" />Create a new safe</button>
-              <button class="ewe-btn ewe-btn--ghost" onclick={openFile}><Icon name="folder" />Open a safe file…</button>
+              <button type="button" class="ewe-btn ewe-btn--ghost" onclick={() => (step = "place")}><Icon name="plus" />Create a new safe</button>
+              <button type="button" class="ewe-btn ewe-btn--ghost" onclick={openFile}><Icon name="folder" />Open a safe file…</button>
             </div>
           </div>
         {:else}
@@ -170,8 +170,8 @@
             <li><Icon name="key-round" /><span>A standard KeePass file. KeePassXC and phone apps open it too.</span></li>
           </ul>
           <div class="safe-actions">
-            <button class="ewe-btn ewe-btn--primary ewe-btn--lg" onclick={() => (step = "place")}><Icon name="plus" />Create a new safe</button>
-            <button class="ewe-btn ewe-btn--secondary ewe-btn--lg" onclick={openFile}><Icon name="folder" />Open a safe file…</button>
+            <button type="button" class="ewe-btn ewe-btn--primary ewe-btn--lg" onclick={() => (step = "place")}><Icon name="plus" />Create a new safe</button>
+            <button type="button" class="ewe-btn ewe-btn--secondary ewe-btn--lg" onclick={openFile}><Icon name="folder" />Open a safe file…</button>
           </div>
         {/if}
       </div>
@@ -179,41 +179,41 @@
       <div class="safe-col">
         {@render steps("place")}
         <div class="safe-head">
-          <div class="h2">Where should Safe keep the file?</div>
+          <h1 class="h2">Where should ewe Safe keep the file?</h1>
           <div class="body">The file is encrypted on this computer first. Wherever it lives, only your master password opens it.</div>
         </div>
         <div class="safe-stack" role="radiogroup" aria-label="Place">
-          {@render place("nextcloud", signedIn ? `Your Nextcloud, ${host}. Your other computers get it too.` : "Sign in to your Nextcloud in ewe-sync first.", !signedIn, signedIn ? "Recommended" : "")}
+          {@render place("nextcloud", signedIn ? `Your Nextcloud, ${host}. Your other computers get it too.` : "Sign in to your Nextcloud in ewe Sync first.", !signedIn, signedIn ? "Recommended" : "")}
           {@render place("local", "No sync. Back up the file yourself.", false, "")}
           {@render place("webdav", "ownCloud, Seafile, Synology, Apache or any WebDAV server.", true, "Coming soon")}
           {@render place("folder", "Syncthing, or a folder another app keeps in sync.", true, "Coming soon")}
           {@render place("sftp", "A file on your own server, reached with your SSH key.", true, "Coming soon")}
           {#if !more}
-            <button class="ewe-btn ewe-btn--ghost ewe-btn--sm safe-more" aria-expanded="false" onclick={() => (more = true)}>
+            <button type="button" class="ewe-btn ewe-btn--ghost ewe-btn--sm safe-more" aria-expanded="false" onclick={() => (more = true)}>
               <Icon name="chevron-right" />More places: Dropbox, Google Drive
             </button>
           {:else}
             <div class="safe-more label"><Icon name="chevron-down" />More places</div>
-            {@render place("dropbox", "Needs your own Dropbox app key. You add it in ewe-sync.", true, "Coming soon")}
-            {@render place("gdrive", "Needs your own Google client file. You add it in ewe-sync.", true, "Coming soon")}
+            {@render place("dropbox", "Needs your own Dropbox app key. You add it in ewe Sync.", true, "Coming soon")}
+            {@render place("gdrive", "Needs your own Google client file. You add it in ewe Sync.", true, "Coming soon")}
           {/if}
         </div>
         {#if !signedIn}
           <div class="safe-actions">
-            <button class="ewe-btn ewe-btn--secondary ewe-btn--sm" onclick={() => api.openEweSync()}><Icon name="user" />Sign in with ewe-sync</button>
-            <button class="ewe-btn ewe-btn--ghost ewe-btn--sm" onclick={() => api.cloudStatus().then((c) => (cloud = c))}><Icon name="refresh-cw" />Check again</button>
+            <button type="button" class="ewe-btn ewe-btn--secondary ewe-btn--sm" onclick={() => api.openEweSync()}><Icon name="user" />Open ewe Sync</button>
+            <button type="button" class="ewe-btn ewe-btn--ghost ewe-btn--sm" onclick={() => api.cloudStatus().then((c) => (cloud = c))}><Icon name="refresh-cw" />Check again</button>
           </div>
         {/if}
         <div class="safe-actions safe-actions--split">
-          <button class="ewe-btn ewe-btn--ghost" onclick={() => (step = "welcome")}>Back</button>
-          <button class="ewe-btn ewe-btn--primary" onclick={() => (step = "password")}>Continue</button>
+          <button type="button" class="ewe-btn ewe-btn--ghost" onclick={() => (step = "welcome")}>Back</button>
+          <button type="button" class="ewe-btn ewe-btn--primary" onclick={() => (step = "password")}>Continue</button>
         </div>
       </div>
     {:else if step === "password"}
       <form class="safe-col" onsubmit={create}>
         {@render steps("password")}
         <div class="safe-head">
-          <div class="h2">Choose a master password</div>
+          <h1 class="h2">Choose a master password</h1>
           <div class="body">It opens your safe on every computer and phone. Four or more random words work well.</div>
         </div>
         <div class="safe-form">
@@ -231,24 +231,18 @@
           <Icon name="triangle-alert" />
           <div class="ewe-alert__body"><div class="ewe-alert__title">If you forget this password, nobody can open your safe. There is no reset.</div></div>
         </div>
-        <div class="ewe-check is-disabled" aria-disabled="true">
-          <span class="ewe-check__box"></span>
-          <span class="ewe-check__text">
-            <span class="ewe-check__label">Unlock with my login password on this computer</span>
-            <span class="ewe-check__desc">Comes in a later version. Your master password always works.</span>
-          </span>
-        </div>
+        <div class="caption safe-muted">Later, Settings can let your login password unlock ewe Safe on this computer. The master password always works.</div>
         {#if error}<div class="ewe-field__helper ewe-field__helper--error"><Icon name="circle-x" /><span>{error}</span></div>{/if}
         <div class="safe-actions safe-actions--split">
           <button type="button" class="ewe-btn ewe-btn--ghost" onclick={() => (step = "place")}>Back</button>
-          <button class="ewe-btn ewe-btn--primary" disabled={!same || safe.busy === "init"}>{safe.busy === "init" ? "Creating…" : "Create safe"}</button>
+          <button type="submit" class="ewe-btn ewe-btn--primary" disabled={!same || safe.busy === "init"}>{safe.busy === "init" ? "Creating…" : "Create safe"}</button>
         </div>
       </form>
     {:else if step === "open"}
       <form class="safe-col safe-col--narrow safe-col--center safe-center" onsubmit={open}>
         <span class="ewe-appicon safe-tile safe-tile--lg"><Icon name="lock" /></span>
         <div class="safe-head safe-center">
-          <div class="h2">Open your safe</div>
+          <h1 class="h2">Open your safe</h1>
           <div class="caption safe-muted">
             {openPlace?.place === "local" ? openPlace.location : [placeLabel({ kind: openPlace?.place }), openPlace?.location].filter(Boolean).join(" · ")}
           </div>
@@ -259,28 +253,28 @@
         {:else if error}
           <div class="ewe-field__helper ewe-field__helper--error"><Icon name="circle-x" /><span>{error}</span></div>
         {/if}
-        <button class="ewe-btn ewe-btn--primary ewe-btn--lg ewe-btn--block" disabled={!pw || safe.busy === "open"}>{safe.busy === "open" ? "Opening…" : "Open safe"}</button>
+        <button type="submit" class="ewe-btn ewe-btn--primary ewe-btn--lg ewe-btn--block" disabled={!pw || safe.busy === "open"}>{safe.busy === "open" ? "Opening…" : "Open safe"}</button>
         <button type="button" class="ewe-btn ewe-btn--ghost" onclick={() => ((step = "welcome"), (error = ""))}>Back</button>
       </form>
     {:else if step === "kit"}
       <div class="safe-col">
         {@render steps("kit")}
         <div class="safe-head">
-          <div class="h2">Print your Emergency Kit</div>
+          <h1 class="h2">Print your Emergency Kit</h1>
           <div class="body">Write your master password on it and keep it somewhere safe, away from this computer.</div>
         </div>
         <Kit />
         <div class="safe-actions safe-actions--split">
-          <button class="ewe-btn ewe-btn--secondary" onclick={() => api.print()}><Icon name="printer" />Print…</button>
-          <button class="ewe-btn ewe-btn--primary" onclick={() => (ui.setup = false)}>I've kept it safe</button>
+          <button type="button" class="ewe-btn ewe-btn--secondary" onclick={() => api.print()}><Icon name="printer" />Print…</button>
+          <button type="button" class="ewe-btn ewe-btn--primary" onclick={() => (ui.setup = false)}>I’ve kept it safe</button>
         </div>
       </div>
     {/if}
-  </div>
 </div>
 
 {#snippet place(kind, desc, disabled, badge)}
   <button
+    type="button"
     class="ewe-choice"
     class:is-selected={choice === kind && !disabled}
     class:is-disabled={disabled}
