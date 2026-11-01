@@ -5,7 +5,7 @@
   // has (Import from 1Password) — then Move, then what happened. Files are
   // never changed. The passphrases are secrets: kept only until Move sends
   // them, never shown again.
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
   import Icon from "./Icon.svelte";
   import Sheet from "./Sheet.svelte";
   import { safe } from "../safe.svelte.js";
@@ -39,6 +39,9 @@
     }
     plan = r;
     phase = "plan";
+    // keyboard first: the first passphrase field, else Move
+    await tick();
+    (document.querySelector(".safe-sheet input[type=password]") ?? document.querySelector(".safe-sheet .ewe-sheet__foot .ewe-btn--primary:not([disabled])"))?.focus();
   }
 
   async function move() {
