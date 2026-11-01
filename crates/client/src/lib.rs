@@ -43,8 +43,9 @@ pub const SECRET_KEYS: &[&str] = &[
     "login_password",
 ];
 /// The arg keys whose object carries secrets: every string in it is wiped
-/// too (`add`/`edit`'s `card`: number, security code, PIN).
-pub const SECRET_OBJECTS: &[&str] = &["card"];
+/// too (`add`/`edit`'s `card`: number, security code, PIN; `ssh-takeover`'s
+/// `passphrases`: a key file's passphrase by its path).
+pub const SECRET_OBJECTS: &[&str] = &["card", "passphrases"];
 
 /// How long a verb may take: a key derivation or a talk with the place
 /// gets [`SLOW`], an import [`IMPORT`], everything else [`FAST`].
@@ -57,6 +58,10 @@ pub fn wait_for(verb: &str) -> Duration {
         "passkey-create" => SLOW,
         // saves; `ssh-enable` and `ssh-disable` wait for ewe-conf
         "ssh-add" | "ssh-new" | "ssh-adopt" | "ssh-enable" | "ssh-disable" => SLOW,
+        // the gate (docs/GATE.md): saves, ewe-conf, other agents, git, a
+        // connection (ssh's own 10 s connect timeout, a slow server)
+        "ssh-takeover" | "ssh-connect" | "ssh-test" | "ssh-host-set" | "ssh-host-remove"
+        | "ssh-sign" | "ssh-status" => SLOW,
         // a login-password key derivation, and maybe an unlock (docs/SYSTEM.md §2)
         "login-enable" => SLOW,
         // saves, like ssh-adopt

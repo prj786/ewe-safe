@@ -789,3 +789,195 @@ fn a_new_config_and_a_linked_one() {
         "Host x\n    User y\n"
     );
 }
+
+impl Sandbox {
+    /// One request on the daemon's socket, as the window sends it.
+    fn sock(&self, verb: &str, args: Value) -> Value {
+        use std::io::{BufRead, BufReader};
+        let mut sock = std::os::unix::net::UnixStream::connect(self.run.join("ewe-safe.sock"))
+            .expect("connect");
+        writeln!(
+            sock,
+            "{}",
+            json!({"v": 1, "id": 1, "verb": verb, "args": args})
+        )
+        .unwrap();
+        let mut line = String::new();
+        BufReader::new(&sock).read_line(&mut line).unwrap();
+        serde_json::from_str(&line).expect("json")
+    }
+}
+
+fn titles(v: &Value) -> Vec<String> {
+    let mut t: Vec<String> = v
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|x| x["title"].as_str().unwrap().to_string())
+        .collect();
+    t.sort();
+    t
+}
+
+/// S23: "Move SSH to Safe" — key files in (never changed), ewe.conf's hosts
+/// stop naming 1Password, the user's own lines are only overridden, and
+/// what only 1Password holds is named.
+#[test]
+fn takeover_moves_keys_and_hosts_and_names_what_only_1password_has() {
+    let mut s = Sandbox::new("takeover");
+    let ssh = s.ssh_dir();
+    std::fs::create_dir_all(&ssh).unwrap();
+    std::fs::set_permissions(&ssh, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let plain = ssh.join("id_ed25519");
+    s.keygen_at(&plain, &["-C", "sam@emoh"], "");
+    let locked = ssh.join("id_rsa_old");
+    s.keygen_at(
+        &locked,
+        &["-t", "rsa", "-b", "2048", "-C", "old box"],
+        "pp-31",
+    );
+    let elsewhere = s.root.join("keys").join("deploy");
+    s.keygen_at(&elsewhere, &["-t", "ecdsa", "-C", "deploy"], "");
+    let user_cfg = format!(
+        "Host emoh\n    IdentityFile ~/.ssh/id_ed25519\nHost deploy\n    IdentityFile {}\n    IdentityAgent ~/.1password/agent.sock\n",
+        elsewhere.display()
+    );
+    std::fs::write(ssh.join("config"), &user_cfg).unwrap();
+    let files_before: Vec<Vec<u8>> = [&plain, &locked, &elsewhere]
+        .iter()
+        .map(|p| std::fs::read(p).unwrap())
+        .collect();
+    // ewe.conf, as the owner's: two hosts name 1Password
+    s.set_conf(|c| {
+        c["network"] = json!({"ssh": {"hosts": [
+            {"host": "work", "options": [["HostName", "work.example.com"], ["IdentityAgent", "~/.1password/agent.sock"]]},
+            {"host": "work-proxy", "options": [["IdentityAgent", "~/.1password/agent.sock"], ["ProxyJump", "work"]]},
+            {"host": "plain", "options": [["User", "sam"]]},
+        ]}});
+    });
+    // "1Password" holds a key only it has, and one of the files
+    let op_key = s.root.join("keys").join("op_only");
+    s.keygen_at(&op_key, &["-C", "only in 1password"], "");
+    let op_sock = s.home().join(".1password/agent.sock");
+    s.other_agent(&op_sock, &op_key);
+    let (_, err, code) = s.tool(
+        "ssh-add",
+        &[plain.to_str().unwrap()],
+        &[("SSH_AUTH_SOCK", op_sock.to_str().unwrap())],
+        None,
+    );
+    assert_eq!(code, 0, "{err}");
+
+    s.start();
+    s.init();
+    s.ok(&["lock"]);
+    assert_eq!(s.cli(&["ssh", "takeover", "--dry-run"])["error"], "locked");
+    s.cli_in(&["unlock"], &format!("{MASTER}\n"));
+
+    // a dry run changes nothing
+    let conf_before = s.conf();
+    let dry = s.ok(&["ssh", "takeover", "--dry-run"]);
+    assert_eq!(dry["dry_run"], true, "{dry}");
+    assert_eq!(dry["enabled"], false);
+    assert_eq!(titles(&dry["imported"]), ["deploy", "sam@emoh"]);
+    assert!(dry["imported"][0]["item_id"].is_null());
+    assert_eq!(dry["needs_passphrase"], json!([locked]));
+    assert_eq!(dry["hosts_fixed"], json!(["work", "work-proxy"]));
+    assert_eq!(
+        dry["overridden"],
+        json!([{"host": "deploy", "agent": "~/.1password/agent.sock"}])
+    );
+    let missing = dry["missing_from_safe"].as_array().unwrap();
+    assert_eq!(missing.len(), 1, "{dry}");
+    assert_eq!(missing[0]["agent"], "1Password");
+    assert_eq!(missing[0]["comment"], "only in 1password");
+    assert_eq!(missing[0]["key_type"], "ed25519");
+    assert!(dry["hint"].as_str().unwrap().contains("ewe-safe import op"));
+    assert_eq!(s.conf(), conf_before);
+    assert!(!s.gate_dir().exists());
+    assert!(
+        s.ok(&["ssh", "list"])["items"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+
+    // a wrong passphrase: skipped, with the reason
+    let wrong = s.sock(
+        "ssh-takeover",
+        json!({"dry_run": true, "passphrases": {locked.to_str().unwrap(): "nope"}}),
+    );
+    assert_eq!(wrong["skipped"][0]["file"], json!(locked), "{wrong}");
+    assert!(
+        wrong["skipped"][0]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("passphrase")
+    );
+
+    // the move, the passphrase sent as the window sends it
+    let done = s.sock(
+        "ssh-takeover",
+        json!({"passphrases": {locked.to_str().unwrap(): "pp-31"}}),
+    );
+    assert_eq!(done["ok"], true, "{done}");
+    assert_eq!(done["enabled"], true);
+    assert_eq!(done["gate"]["on"], true);
+    assert_eq!(titles(&done["imported"]), ["deploy", "old box", "sam@emoh"]);
+    assert!(
+        done["imported"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|i| i["item_id"].is_string())
+    );
+    assert_eq!(done["needs_passphrase"], json!([]));
+    assert_eq!(done["hosts_fixed"], json!(["work", "work-proxy"]));
+    assert_eq!(done["files_left"].as_array().unwrap().len(), 3);
+    assert!(done["sync"].is_object());
+    // ewe.conf: only the IdentityAgent options went, in one set
+    assert_eq!(
+        s.conf()["network"]["ssh"]["hosts"],
+        json!([
+            {"host": "work", "options": [["HostName", "work.example.com"]]},
+            {"host": "work-proxy", "options": [["ProxyJump", "work"]]},
+            {"host": "plain", "options": [["User", "sam"]]},
+        ])
+    );
+    let sets = std::fs::read_to_string(s.root.join("config/fake-ewe-conf.json.log")).unwrap();
+    assert_eq!(sets.matches("network.ssh.hosts").count(), 1, "{sets}");
+    // the files are never changed; the user's lines neither
+    let files_after: Vec<Vec<u8>> = [&plain, &locked, &elsewhere]
+        .iter()
+        .map(|p| std::fs::read(p).unwrap())
+        .collect();
+    assert_eq!(files_after, files_before);
+    let cfg = std::fs::read_to_string(ssh.join("config")).unwrap();
+    assert!(
+        cfg.starts_with(&format!("{COMMENT}\n{INCLUDE}\n{user_cfg}")),
+        "{cfg}"
+    );
+    // ssh asks Safe for every host now, the user's and ewe.conf's
+    for host in ["work", "deploy", "emoh"] {
+        assert_eq!(
+            get(&s.ssh_g(host), "identityagent"),
+            [s.agent().display().to_string()],
+            "{host}"
+        );
+    }
+    // the keys sign through Safe
+    let listed = s.ok(&["ssh", "list"])["items"].clone();
+    assert_eq!(listed.as_array().unwrap().len(), 3);
+
+    // again: everything is there already
+    let again = s.ok(&["ssh", "takeover"]);
+    assert_eq!(again["imported"], json!([]), "{again}");
+    assert_eq!(titles(&again["already"]), ["deploy", "old box", "sam@emoh"]);
+    assert_eq!(again["hosts_fixed"], json!([]));
+    assert_eq!(again["missing_from_safe"].as_array().unwrap().len(), 1);
+
+    let log = s.daemon_log();
+    for never in ["pp-31", "old box", "sam@emoh", "PRIVATE KEY"] {
+        assert!(!log.contains(never), "{never:?} in the log:\n{log}");
+    }
+}
