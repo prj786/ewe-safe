@@ -264,6 +264,7 @@ fn enable(d: &Arc<Daemon>, a: &Args) -> Result<Value, Fail> {
         Some(c) if CONFIRMS.contains(&c.to_lowercase().as_str()) => Some(c.to_lowercase()),
         Some(_) => return Err(Fail::bad("--confirm is first-use, every-time or never")),
     };
+    let _turning = crate::daemon::lk(&gate::TURNING);
     let mut recorded = config::conf_store("ssh_agent", "true");
     if let Some(c) = &confirm {
         recorded &= config::conf_store("ssh_confirm", c);
@@ -307,7 +308,7 @@ fn enable(d: &Arc<Daemon>, a: &Args) -> Result<Value, Fail> {
 }
 
 fn disable(d: &Arc<Daemon>) -> Result<Value, Fail> {
-    // looked at first: once recorded, the worker's convergence may take it
+    let turning = crate::daemon::lk(&gate::TURNING);
     let file = gate::env_file();
     let had_env = file.exists();
     let recorded = config::conf_store("ssh_agent", "false");
@@ -320,6 +321,7 @@ fn disable(d: &Arc<Daemon>) -> Result<Value, Fail> {
     if let Some(ag) = agent::get() {
         ag.forget_cache();
     }
+    drop(turning);
     Ok(json!({
         "enabled": d.settings().ssh_agent,
         "recorded": recorded,

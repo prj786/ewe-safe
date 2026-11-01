@@ -194,6 +194,7 @@ pub fn turn_on(d: &Daemon, item_id: &str, email: &str) -> Result<Value, Fail> {
         return Err(Fail::bad("Git signs with Ed25519, ECDSA or RSA keys only."));
     }
     gate::ensure_on(d)?;
+    let _turning = lk(&gate::TURNING);
     configure(&key, Some(email))?;
     *lk(&APPLIED) = Some(Some(key.fingerprint.clone()));
     let recorded = config::conf_store("git_sign", &key.fingerprint);
@@ -217,6 +218,7 @@ fn keys_ok(k: &gate::SafeKey) -> bool {
 /// `ssh-sign`: `item_id` and `email`, or `off`.
 pub fn sign(d: &Arc<Daemon>, a: &Args) -> Result<Value, Fail> {
     if a.get("off").and_then(Value::as_bool) == Some(true) {
+        let _turning = lk(&gate::TURNING);
         let gone = unconfigure();
         *lk(&APPLIED) = Some(None);
         let recorded = config::conf_store("git_sign", "");

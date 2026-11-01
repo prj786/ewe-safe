@@ -42,9 +42,8 @@ pub fn spawn(d: Arc<Daemon>) {
             }
             if last_settings.elapsed() >= settings_every {
                 let before = d.offer();
-                d.reload_settings();
                 // the SSH gate and Git signing follow the account (GATE.md)
-                d.converge();
+                d.reload_and_converge();
                 last_settings = Instant::now();
                 // ewe.conf just brought (or took away) the place of a safe
                 // made on another machine: the bar and Quick Access ask

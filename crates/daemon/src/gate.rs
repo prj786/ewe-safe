@@ -47,6 +47,13 @@ const AGENT_WAIT: Duration = Duration::from_secs(5);
 /// One writer of the gate's files at a time (a verb and the worker).
 static WRITING: Mutex<()> = Mutex::new(());
 
+/// Held across "read the settings, then act on them" — by the worker's
+/// re-read and convergence, and by the verbs that change `ssh_agent` or
+/// `git_sign` (enable, disable, takeover, connect, sign-commits). Without
+/// it, a re-read made a moment before a verb recorded its change would
+/// undo the verb's work.
+pub static TURNING: Mutex<()> = Mutex::new(());
+
 pub fn gate_dir() -> PathBuf {
     hosts::ssh_dir().join("ewe-safe")
 }
@@ -481,6 +488,7 @@ pub fn remove() -> bool {
 /// Whether it had to be turned on.
 pub fn ensure_on(d: &Daemon) -> Result<bool, crate::daemon::Fail> {
     use crate::daemon::Fail;
+    let _turning = lk(&TURNING);
     if d.settings().ssh_agent && is_on() {
         return Ok(false);
     }

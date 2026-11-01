@@ -307,6 +307,19 @@ impl Daemon {
     /// (S25). Nothing is written when all is in place, and nothing is
     /// removed when the last read of the settings failed.
     pub fn converge(&self) {
+        let _turning = lk(&crate::gate::TURNING);
+        self.converge_held();
+    }
+
+    /// Read the settings again and converge, as one step: a verb that
+    /// changes them waits, and so does this (`gate::TURNING`).
+    pub fn reload_and_converge(&self) {
+        let _turning = lk(&crate::gate::TURNING);
+        self.reload_settings();
+        self.converge_held();
+    }
+
+    fn converge_held(&self) {
         if !self.fresh.load(std::sync::atomic::Ordering::SeqCst) {
             return;
         }

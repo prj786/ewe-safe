@@ -77,6 +77,7 @@ pub fn takeover(d: &Arc<Daemon>, a: &mut Args) -> Result<Value, Fail> {
     // 1. the gate
     let mut enabled = d.settings().ssh_agent && gate::is_on();
     if !dry && !enabled {
+        let _turning = crate::daemon::lk(&gate::TURNING);
         if !config::conf_store("ssh_agent", "true") {
             return Err(Fail::new(
                 "internal",
