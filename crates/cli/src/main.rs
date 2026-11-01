@@ -665,7 +665,7 @@ fn unlock_ask() -> Value {
                     "--class",
                     "ewe-safe-unlock",
                     "--title",
-                    "Unlock Safe",
+                    "Unlock ewe Safe",
                     "-e",
                     &me,
                     "unlock",

@@ -1081,7 +1081,7 @@ fn ask(paths: &Paths, peer: &Peer, key: &str, dest: &Dest) -> bool {
         let mut c = prompt(
             notify.as_os_str(),
             &[
-                "--app-name=Safe",
+                "--app-name=ewe Safe",
                 "--icon=ewe-safe",
                 "--urgency=critical",
                 &expire,

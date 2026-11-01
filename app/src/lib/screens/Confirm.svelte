@@ -20,7 +20,8 @@
 
   const methods = $derived(safe.status?.unlock_methods ?? ["password"]);
   const loginOn = $derived(methods.includes("login"));
-  const label = $derived(loginOn ? "Your login password" : "Your password");
+  // name the password it wants: either works, the one most people know first
+  const label = $derived(loginOn ? "Your login password" : "Your ewe Safe master password");
 
   $effect(() => {
     input?.focus();
@@ -48,7 +49,7 @@
       wrong = true;
       input?.focus();
     } else {
-      error = r?.message ?? "Couldn't confirm.";
+      error = r?.message ?? "Couldn’t confirm.";
     }
   }
 
@@ -64,7 +65,7 @@
   <div class="safe-compact__body">
     <div class="safe-head">
       <div class="h3">{reason || "Type your password to continue"}</div>
-      <div class="caption safe-muted">Safe asks again before it fills a card. Nothing is saved; this only checks it's you.</div>
+      <div class="caption safe-muted">ewe Safe asks again before it fills a card. Nothing is saved; this only checks it’s you.</div>
     </div>
     <div class="safe-compact__row">
       <span class="ewe-input" class:is-error={wrong}>
@@ -83,7 +84,7 @@
           <Icon name={show ? "eye-off" : "eye"} />
         </button>
       </span>
-      <button class="ewe-btn ewe-btn--primary" disabled={busy}>{busy ? "Checking…" : "Confirm"}</button>
+      <button type="submit" class="ewe-btn ewe-btn--primary" disabled={busy}>{busy ? "Checking…" : "Confirm"}</button>
     </div>
     {#if wrong}
       <div class="ewe-field__helper ewe-field__helper--error"><Icon name="circle-x" /><span>Wrong password. Check Caps Lock and try again.</span></div>

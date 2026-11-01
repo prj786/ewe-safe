@@ -7,6 +7,8 @@
   // password again before a card fill (docs/SYSTEM.md §4).
   import { onMount } from "svelte";
   import Icon from "$lib/components/Icon.svelte";
+  import Sidenav from "$lib/components/Sidenav.svelte";
+  import Toasts from "$lib/components/Toasts.svelte";
   import Setup from "$lib/screens/Setup.svelte";
   import Unlock from "$lib/screens/Unlock.svelte";
   import Main from "$lib/screens/Main.svelte";
@@ -53,6 +55,13 @@
     };
   });
 
+  // the main window's frame (App shell): the rail and the inset pane stay
+  // put from the first paint through setup, the lock and the items — only
+  // the pane's content changes, so unlocking doesn't move the window
+  const rail = $derived(
+    !safe.daemon.available || !safe.status || ui.setup || !safe.setUp ? "bare" : safe.locked ? "locked" : "full"
+  );
+
   // the unlock-only window is done once the safe is open, however it opened
   $effect(() => {
     if (mode === "unlock" && safe.status && safe.status.set_up && !safe.status.locked) api.quit(0);
@@ -67,38 +76,52 @@
   <!-- not set up but offered: the account's safe opens with the master password here -->
   {#if !safe.daemon.available || (safe.status && !safe.status.set_up && !safe.status.offer)}
     <div class="safe-compact">
-      <span class="ewe-appicon safe-tile"><Icon name="lock" /></span>
+      <span class="ewe-appicon safe-tile"><Icon name={safe.daemon.available ? "vault" : "power"} /></span>
       <div class="safe-compact__body">
         <div class="safe-head">
-          <div class="h3">{safe.daemon.available ? "There's no safe on this computer yet" : "Safe's service isn't running"}</div>
-          <div class="caption safe-muted">{safe.daemon.available ? "Open Safe to create one or open one." : (safe.daemon.hint ?? safe.daemon.message ?? "")}</div>
+          <div class="h3">{safe.daemon.available ? "There’s no safe on this computer yet" : "ewe Safe isn’t running"}</div>
+          <div class="caption safe-muted">{safe.daemon.available ? "Open ewe Safe to create one or open one." : "Its background service doesn’t answer. Open ewe Safe to try again."}</div>
         </div>
-        <div class="safe-compact__row"><button class="ewe-btn ewe-btn--secondary" onclick={() => api.quit(1)}>Close</button></div>
+        <div class="safe-compact__row"><button type="button" class="ewe-btn ewe-btn--secondary" onclick={() => api.quit(1)}>Close</button></div>
       </div>
     </div>
   {:else if safe.status}
     <Unlock compact />
   {/if}
-{:else if !safe.daemon.available}
-  <div class="safe-win">
-    <div class="safe-solo">
-      <div class="safe-col safe-col--narrow safe-col--center safe-center">
-        <div class="ewe-empty">
-          <span class="ewe-empty__icon"><Icon name="cloud-off" /></span>
-          <div class="ewe-empty__title">Safe's service isn't running</div>
-          <div class="ewe-empty__desc">{safe.daemon.message ?? "The window can't reach it."}</div>
-          {#if safe.daemon.hint}<div class="caption safe-muted"><code>{safe.daemon.hint}</code></div>{/if}
-          <div class="ewe-empty__actions"><button class="ewe-btn ewe-btn--secondary" onclick={() => safe.refresh()}><Icon name="refresh-cw" />Try again</button></div>
-        </div>
-      </div>
-    </div>
-  </div>
-{:else if !safe.status}
-  <div class="safe-win"></div>
-{:else if ui.setup || !safe.setUp}
-  <Setup />
-{:else if safe.locked}
-  <Unlock />
 {:else}
-  <Main />
+  <div class="ewe-appwin safe-win">
+    <Sidenav mode={rail} />
+    <main class="ewe-appwin__pane safe-pane">
+      {#if !safe.daemon.available}
+        <div class="safe-stage">
+          <div class="ewe-empty safe-col safe-col--narrow safe-col--center">
+            <span class="ewe-empty__icon"><Icon name="power" /></span>
+            <div class="ewe-empty__title">ewe Safe isn’t running</div>
+            <div class="ewe-empty__desc">Its background service doesn’t answer, so the window can’t open your safe. Your passwords are not affected.</div>
+            <div class="ewe-empty__actions"><button type="button" class="ewe-btn ewe-btn--primary" onclick={() => safe.refresh()}><Icon name="refresh-cw" />Try again</button></div>
+            {#if safe.daemon.hint || safe.daemon.message}
+              <details class="safe-details">
+                <summary class="caption">Details</summary>
+                <pre class="safe-detailtext">{[safe.daemon.message, safe.daemon.hint].filter(Boolean).join("\n")}</pre>
+              </details>
+            {/if}
+          </div>
+        </div>
+      {:else if !safe.status}
+        <div class="safe-stage" aria-busy="true">
+          <div class="safe-col safe-col--narrow safe-col--center safe-center">
+            <span class="ewe-spinner ewe-spinner--lg ewe-spinner--neutral" aria-hidden="true"></span>
+            <div class="caption safe-muted" role="status">Opening ewe Safe…</div>
+          </div>
+        </div>
+      {:else if ui.setup || !safe.setUp}
+        <Setup />
+      {:else if safe.locked}
+        <Unlock />
+      {:else}
+        <Main />
+      {/if}
+      <Toasts />
+    </main>
+  </div>
 {/if}

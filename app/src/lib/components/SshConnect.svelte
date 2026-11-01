@@ -20,7 +20,7 @@
   const FIELDS = {
     gitlab: [{ k: "host", label: "GitLab server", optional: true, placeholder: "gitlab.com", help: "Only for your own GitLab. Empty means gitlab.com." }],
     gitea: [{ k: "host", label: "Server", placeholder: "git.example.org", help: "The address of your Gitea or Forgejo." }],
-    "azure-devops": [{ k: "org", label: "Organization", optional: true, placeholder: "my-company", help: "The name in dev.azure.com/my-company. Safe then opens the right page." }]
+    "azure-devops": [{ k: "org", label: "Organization", optional: true, placeholder: "my-company", help: "The name in dev.azure.com/my-company. ewe Safe then opens the right page." }]
   };
   const SIGN_HINT = {
     github: "GitHub shows them as Verified when you add the key there once more, with Key type: Signing Key.",
@@ -117,7 +117,7 @@
         const yours = safe.ssh.hosts.some((h) => h.alias === a && h.source === "yours") || /yourself/i.test(r.message ?? "");
         conflict = { alias: a, yours, title: /uses the key (.+?)\. /.exec(r.message ?? "")?.[1] ?? "" };
         second = `${svcId}-2`;
-      } else err = r?.message ?? "Safe couldn't do that.";
+      } else err = r?.message ?? "ewe Safe couldn’t do that.";
       return false;
     }
     done = r;
@@ -144,7 +144,7 @@
   async function retry(extra) {
     if (extra.alias !== undefined) {
       const a = extra.alias.trim();
-      if (!a || badAlias(a)) return (err = "A name can't be empty, or have a space, *, ? or !.");
+      if (!a || badAlias(a)) return (err = "A name can’t be empty, or have a space, *, ? or !.");
       extra = { alias: a };
     }
     if ((await connect(extra)) && step === 1) step = 2;
@@ -152,7 +152,7 @@
   }
 
   async function openTerminal() {
-    if (!f.host.trim() || !f.user.trim()) return (err = "Type the server's address and your user name on it.");
+    if (!f.host.trim() || !f.user.trim()) return (err = "Type the server’s address and your user name on it.");
     if (f.port.trim() && !(Number(f.port) > 0 && Number(f.port) < 65536)) return (err = "The port is a number from 1 to 65535.");
     if (await connect()) terminal = true;
   }
@@ -161,7 +161,7 @@
     if (!itemId) return;
     const r = await safe.copy(itemId, "public_key", 0);
     copied = !!r?.ok;
-    if (!r?.ok) err = r?.message ?? "Couldn't copy.";
+    if (!r?.ok) err = r?.message ?? "Couldn’t copy.";
   }
 
   async function openPage() {
@@ -169,19 +169,19 @@
     await copyKey();
     const r = await api.openPage(page);
     busy = "";
-    if (!r?.ok) err = r?.message ?? `Couldn't open ${svc.name}.`;
+    if (!r?.ok) err = r?.message ?? `Couldn’t open ${svc.name}.`;
     else toasts.show(`Opened ${svc.name}. Your public key is copied: paste it there.`, { icon: "external-link", ms: 6000 });
   }
 
   async function saveAddress() {
     const a = (f.alias.trim() || f.host.trim());
     if (!f.host.trim()) return (err = "Type the address of your VM.");
-    if (badAlias(a)) return (err = "A name can't have a space, *, ? or !.");
+    if (badAlias(a)) return (err = "A name can’t have a space, *, ? or !.");
     busy = "save";
     err = "";
     const r = await safe.sshHostSet({ alias: a, host: f.host.trim(), user: f.user.trim(), key: itemId });
     busy = "";
-    if (!r?.ok) return (err = r?.message ?? "Couldn't save the address.");
+    if (!r?.ok) return (err = r?.message ?? "Couldn’t save the address.");
     saved = a;
   }
 
@@ -191,14 +191,14 @@
     const r = await safe.sshSign(on ? { itemId } : { off: true });
     if (r?.ok) sign = { on, busy: false, ask: false, email: "", error: "" };
     else if (on && /email/i.test(r?.message ?? "")) sign = { ...sign, busy: false, ask: true };
-    else sign = { ...sign, busy: false, error: r?.message ?? "Couldn't change it." };
+    else sign = { ...sign, busy: false, error: r?.message ?? "Couldn’t change it." };
   }
 
   async function signEmail() {
     if (!sign.email.includes("@")) return (sign = { ...sign, error: "Type the email you use in Git." });
     sign = { ...sign, busy: true, error: "" };
     const r = await safe.sshSign({ itemId, email: sign.email.trim() });
-    sign = r?.ok ? { on: true, busy: false, ask: false, email: "", error: "" } : { ...sign, busy: false, error: r?.message ?? "Couldn't turn it on." };
+    sign = r?.ok ? { on: true, busy: false, ask: false, email: "", error: "" } : { ...sign, busy: false, error: r?.message ?? "Couldn’t turn it on." };
   }
 
   async function check() {
@@ -231,7 +231,7 @@
     {#if safe.ssh.services.length}
       <div class="safe-services">
         {#each safe.ssh.services as s (s.service)}
-          <button class="ewe-card ewe-card--interactive ewe-card--compact safe-service" onclick={() => choose(s)}>
+          <button type="button" class="ewe-card ewe-card--interactive ewe-card--compact safe-service" onclick={() => choose(s)}>
             <span class="safe-service__icon"><Icon name={GROUP_ICON[s.group] ?? "link"} /></span>
             <span class="safe-service__text">
               <span class="safe-service__name">{s.name}</span>
@@ -259,7 +259,7 @@
           <span class="ewe-check ewe-check--radio" class:is-checked={way === "new"}><span class="ewe-check__box">{#if way === "new"}<span class="ewe-check__dot"></span>{/if}</span></span>
           <span class="ewe-choice__text">
             <span class="ewe-choice__title">A new key (recommended)</span>
-            <span class="ewe-choice__desc">{rsaOnly ? `${svc.name} takes only RSA keys, so Safe makes an RSA key.` : `One key just for ${svc.name}. Safe makes it and keeps it.`}</span>
+            <span class="ewe-choice__desc">{rsaOnly ? `${svc.name} takes only RSA keys, so ewe Safe makes an RSA key.` : `One key just for ${svc.name}. ewe Safe makes it and keeps it.`}</span>
           </span>
         </button>
         {#if way === "new"}
@@ -272,7 +272,7 @@
           <span class="ewe-check ewe-check--radio" class:is-checked={way === "mine"}><span class="ewe-check__box">{#if way === "mine"}<span class="ewe-check__dot"></span>{/if}</span></span>
           <span class="ewe-choice__text">
             <span class="ewe-choice__title">A key you have</span>
-            <span class="ewe-choice__desc">{usable.length ? "Use a key that is in Safe already." : rsaOnly ? "You have no RSA key in Safe yet." : "You have no SSH key in Safe yet."}</span>
+            <span class="ewe-choice__desc">{usable.length ? "Use a key that is in ewe Safe already." : rsaOnly ? "You have no RSA key in ewe Safe yet." : "You have no SSH key in ewe Safe yet."}</span>
           </span>
         </button>
         {#if way === "mine" && usable.length}
@@ -294,7 +294,7 @@
       {@render problems()}
     {:else if step === 2}
       {#if isServer}
-        <p class="body safe-secondary" style="margin:0">Safe opens a terminal that puts your public key on the server. You need your password for the server once.</p>
+        <p class="body safe-secondary" style="margin:0">ewe Safe opens a terminal that puts your public key on the server. You need your password for the server once.</p>
         <div class="safe-fields">
           <label class="ewe-field">
             <span class="ewe-field__label"><span>Address</span></span>
@@ -312,7 +312,7 @@
         {#if pubkey}{@render key()}{/if}
         <ol class="safe-steps">{#each steps as s, n (n)}<li>{s}</li>{/each}</ol>
         <div class="safe-actions">
-          <button class="ewe-btn ewe-btn--primary" disabled={busy === "connect"} onclick={openTerminal}><Icon name="square-terminal" />{busy === "connect" ? "Opening…" : terminal ? "Open the terminal again" : "Open a terminal"}</button>
+          <button type="button" class="ewe-btn ewe-btn--primary" disabled={busy === "connect"} onclick={openTerminal}><Icon name="square-terminal" />{busy === "connect" ? "Opening…" : terminal ? "Open the terminal again" : "Open a terminal"}</button>
         </div>
         {#if terminal}
           <div class="safe-note caption" role="status"><Icon name="circle-check" /><span>A terminal opened. Type your password for the server there. When it says the key was added, come back and press Continue.</span></div>
@@ -323,7 +323,7 @@
         <ol class="safe-steps">{#each steps as s, n (n)}<li>{s}</li>{/each}</ol>
         {#if page}
           <div class="safe-actions">
-            <button class="ewe-btn ewe-btn--primary" disabled={busy === "open"} onclick={openPage}><Icon name="external-link" />Open {svc.name}</button>
+            <button type="button" class="ewe-btn ewe-btn--primary" disabled={busy === "open"} onclick={openPage}><Icon name="external-link" />Open {svc.name}</button>
           </div>
         {/if}
         {#if isCloud}
@@ -347,7 +347,7 @@
             {#if saved}
               <div class="safe-note caption" role="status"><Icon name="circle-check" /><span>Saved. Use it with: <span class="mono">ssh {saved}</span></span></div>
             {:else}
-              <div class="safe-actions"><button class="ewe-btn ewe-btn--secondary ewe-btn--sm" disabled={busy === "save" || !f.host.trim()} onclick={saveAddress}>{busy === "save" ? "Saving…" : "Save the address"}</button></div>
+              <div class="safe-actions"><button type="button" class="ewe-btn ewe-btn--secondary ewe-btn--sm" disabled={busy === "save" || !f.host.trim()} onclick={saveAddress}>{busy === "save" ? "Saving…" : "Save the address"}</button></div>
             {/if}
           </div>
         {/if}
@@ -365,7 +365,7 @@
                 <label class="ewe-field__label" for="safe-sign-mail"><span>Your Git email</span></label>
                 <div class="safe-compact__row">
                   <span class="ewe-input"><input id="safe-sign-mail" type="email" bind:value={sign.email} autocomplete="email" spellcheck="false" placeholder="you@example.org" /></span>
-                  <button class="ewe-btn ewe-btn--secondary" disabled={sign.busy} onclick={signEmail}>Save</button>
+                  <button type="button" class="ewe-btn ewe-btn--secondary" disabled={sign.busy} onclick={signEmail}>Save</button>
                 </div>
                 <span class="ewe-field__helper">Git puts this email on your signed commits. Use the one {svc.name} knows.</span>
               </div>
@@ -377,9 +377,9 @@
       {/if}
     {:else}
       {#if target}
-        <p class="body safe-secondary" style="margin:0">Safe connects to <span class="mono">{target}</span> the way ssh does, to see that the key works.</p>
+        <p class="body safe-secondary" style="margin:0">ewe Safe connects to <span class="mono">{target}</span> the way ssh does, to see that the key works.</p>
         <div class="safe-actions">
-          <button class="ewe-btn ewe-btn--primary" disabled={busy === "test"} data-autofocus onclick={check}><Icon name="plug" />{busy === "test" ? "Checking…" : test ? "Check again" : "Check"}</button>
+          <button type="button" class="ewe-btn ewe-btn--primary" disabled={busy === "test"} data-autofocus onclick={check}><Icon name="plug" />{busy === "test" ? "Checking…" : test ? "Check again" : "Check"}</button>
         </div>
         <div aria-live="polite">
           {#if test}
@@ -387,7 +387,7 @@
             <div class="ewe-alert ewe-alert--{tone}">
               <Icon name={tone === "success" ? "circle-check" : tone === "danger" ? "shield-alert" : "circle-alert"} />
               <div class="ewe-alert__body">
-                <div class="ewe-alert__title">{test.message ?? "The check didn't run."}</div>
+                <div class="ewe-alert__title">{test.message ?? "The check didn’t run."}</div>
                 {#if test.ok && !test.connected && test.host_key !== "changed"}
                   <div class="ewe-alert__desc">{isServer ? "Did the terminal say the key was added? Then check again." : `Did you add the key on the ${svc.name} page? Then check again.`}</div>
                 {/if}
@@ -406,7 +406,7 @@
             <div class="label">In git, use addresses like this</div>
             <div class="safe-pubkey">
               <span class="mono">{done.remote_hint}</span>
-              <button class="ewe-iconbtn ewe-iconbtn--ghost ewe-iconbtn--sm" aria-label="Copy the address" onclick={() => copyText(done.remote_hint)}><Icon name="copy" /></button>
+              <button type="button" class="ewe-iconbtn ewe-iconbtn--ghost ewe-iconbtn--sm" aria-label="Copy the address" onclick={() => copyText(done.remote_hint)}><Icon name="copy" /></button>
             </div>
             {#if done.alias && svc.host && done.alias !== svc.host}
               <div class="caption safe-muted">{done.alias} is your second {svc.name} account. Use this name instead of {svc.host}.</div>
@@ -414,24 +414,24 @@
           </div>
         {/if}
       {:else}
-        <div class="safe-gate"><Icon name="info" /><span>Add your VM's address first (step 2). You can also check it later in Hosts.</span></div>
+        <div class="safe-gate"><Icon name="info" /><span>Add your VM’s address first (step 2). You can also check it later in Hosts.</span></div>
       {/if}
     {/if}
   {/if}
 
   {#snippet foot()}
     {#if !svc}
-      <button class="ewe-btn ewe-btn--ghost" onclick={close}>Cancel</button>
+      <button type="button" class="ewe-btn ewe-btn--ghost" onclick={close}>Cancel</button>
     {:else if step === 1}
-      {#if !from.service}<button class="ewe-btn ewe-btn--ghost" onclick={() => (svcId = "")}><Icon name="chevron-left" />Back</button>{/if}
-      <button class="ewe-btn ewe-btn--ghost" onclick={close}>Cancel</button>
-      <button class="ewe-btn ewe-btn--primary" disabled={busy === "connect"} onclick={next}>{busy === "connect" ? (way === "new" && !done ? "Making the key…" : "Saving…") : "Continue"}</button>
+      {#if !from.service}<button type="button" class="ewe-btn ewe-btn--ghost" onclick={() => (svcId = "")}><Icon name="chevron-left" />Back</button>{/if}
+      <button type="button" class="ewe-btn ewe-btn--ghost" onclick={close}>Cancel</button>
+      <button type="button" class="ewe-btn ewe-btn--primary" disabled={busy === "connect"} onclick={next}>{busy === "connect" ? (way === "new" && !done ? "Making the key…" : "Saving…") : "Continue"}</button>
     {:else if step === 2}
-      {#if isServer && !done}<button class="ewe-btn ewe-btn--ghost" onclick={() => (step = 1)}><Icon name="chevron-left" />Back</button>{/if}
-      <button class="ewe-btn ewe-btn--primary" disabled={isServer && !done} onclick={next}>Continue</button>
+      {#if isServer && !done}<button type="button" class="ewe-btn ewe-btn--ghost" onclick={() => (step = 1)}><Icon name="chevron-left" />Back</button>{/if}
+      <button type="button" class="ewe-btn ewe-btn--primary" disabled={isServer && !done} onclick={next}>Continue</button>
     {:else}
-      <button class="ewe-btn ewe-btn--ghost" onclick={() => (step = 2)}><Icon name="chevron-left" />Back</button>
-      <button class="ewe-btn ewe-btn--primary" onclick={close}>Done</button>
+      <button type="button" class="ewe-btn ewe-btn--ghost" onclick={() => (step = 2)}><Icon name="chevron-left" />Back</button>
+      <button type="button" class="ewe-btn ewe-btn--primary" onclick={close}>Done</button>
     {/if}
   {/snippet}
 </Sheet>
@@ -442,9 +442,9 @@
       <div class="label">Your public key{item ? ` · ${item.title}` : ""}</div>
       <div class="safe-pubkey">
         <span class="mono">{pubkey}</span>
-        <button class="ewe-btn ewe-btn--secondary ewe-btn--sm" onclick={copyKey}><Icon name={copied ? "check" : "copy"} />{copied ? "Copied" : "Copy"}</button>
+        <button type="button" class="ewe-btn ewe-btn--secondary ewe-btn--sm" onclick={copyKey}><Icon name={copied ? "check" : "copy"} />{copied ? "Copied" : "Copy"}</button>
       </div>
-      <div class="caption safe-muted">This part is safe to share. The private key stays in Safe.</div>
+      <div class="caption safe-muted">This part is safe to share. The private key stays in ewe Safe.</div>
     </div>
   {/if}
 {/snippet}
@@ -459,16 +459,16 @@
         </div>
         <div class="ewe-alert__desc">
           {conflict.yours
-            ? "It is in your own lines in ~/.ssh/config, and Safe doesn't change them. Give this connection its own name:"
+            ? "It is in your own lines in ~/.ssh/config, and ewe Safe doesn’t change them. Give this connection its own name:"
             : "Use this key for it instead. Or, for a second account, give this one its own name:"}
         </div>
         <div class="safe-compact__row">
           <span class="ewe-input ewe-input--sm"><input class="mono" bind:value={second} aria-label="Name for the second account" spellcheck="false" /></span>
-          <button class="ewe-btn ewe-btn--secondary ewe-btn--sm" disabled={busy === "connect"} onclick={() => retry({ alias: second })}>Use this name</button>
+          <button type="button" class="ewe-btn ewe-btn--secondary ewe-btn--sm" disabled={busy === "connect"} onclick={() => retry({ alias: second })}>Use this name</button>
         </div>
         {#if !conflict.yours}
           <div class="ewe-alert__actions">
-            <button class="ewe-btn ewe-btn--secondary ewe-btn--sm" disabled={busy === "connect"} onclick={() => retry({ replace: true })}>Use this key instead</button>
+            <button type="button" class="ewe-btn ewe-btn--secondary ewe-btn--sm" disabled={busy === "connect"} onclick={() => retry({ replace: true })}>Use this key instead</button>
           </div>
         {/if}
       </div>

@@ -29,7 +29,7 @@
     error = "";
     const a = alias.trim();
     if (!a) return (error = "Give the host a name. You type it after ssh.");
-    if (badAlias(a)) return (error = "A name can't have a space, *, ? or !, and can't start with -.");
+    if (badAlias(a)) return (error = "A name can’t have a space, *, ? or !, and can’t start with -.");
     if (!editing && safe.ssh.hosts.some((h) => h.alias === a)) return (error = `There is a host called ${a} already. Pick another name.`);
     const p = port.trim();
     if (p && !(Number.isInteger(Number(p)) && Number(p) > 0 && Number(p) < 65536)) return (error = "The port is a number from 1 to 65535.");
@@ -43,7 +43,7 @@
       noKey: !key || undefined
     });
     busy = false;
-    if (!r?.ok) return (error = r?.message ?? "Couldn't save the host.");
+    if (!r?.ok) return (error = r?.message ?? "Couldn’t save the host.");
     onclose?.();
   }
 </script>
@@ -72,7 +72,7 @@
     <label class="ewe-field">
       <span class="ewe-field__label"><span>Key</span></span>
       <select class="ewe-input ewe-select" bind:value={key}>
-        <option value="">Any key in Safe</option>
+        <option value="">Any key in ewe Safe</option>
         {#each keys as k (k.id)}<option value={k.id}>{k.title} ({keyTypeName(k.ssh?.key_type)})</option>{/each}
       </select>
       <span class="ewe-field__helper">With one key, ssh tries only that key. The server never sees the others.</span>

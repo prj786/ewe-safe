@@ -3,7 +3,7 @@
 # the SSH agent) and keeps the safe unlocked across shell restarts (PLAN.md
 # §4, docs/PROTOCOL.md). The daemon tells the two apart by their paths.
 [Unit]
-Description=Safe, ewe's password manager (socket)
+Description=ewe Safe, the password manager (socket)
 Documentation=https://github.com/prj786/ewe-safe
 
 [Socket]

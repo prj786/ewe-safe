@@ -10,7 +10,7 @@ function notHere() {
   return {
     ok: false,
     error: "daemon-unavailable",
-    message: "This page talks to Safe only inside the Safe window.",
+    message: "This page talks to ewe Safe only inside the ewe Safe window.",
     hint: "Open it with ?mock=1 for the dev mock"
   };
 }

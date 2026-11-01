@@ -6,14 +6,14 @@
 
 post_install() {
   systemctl --global enable ewe-safe.socket >/dev/null 2>&1 || true
-  echo ":: Safe is installed. Open it from the launcher, or start its service"
+  echo ":: ewe Safe is installed. Open it from the launcher, or start its service"
   echo "   in this session now: systemctl --user start ewe-safe.socket"
 }
 
 post_upgrade() {
   systemctl --global enable ewe-safe.socket >/dev/null 2>&1 || true
   # the socket unit may have gained a socket (the SSH agent's): reload it too
-  echo ":: Restart Safe's service to use the new version (this locks the safe):"
+  echo ":: Restart ewe Safe's service to use the new version (this locks the safe):"
   echo "   systemctl --user daemon-reload && systemctl --user restart ewe-safe.socket"
 }
 

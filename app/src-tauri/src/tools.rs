@@ -151,7 +151,7 @@ pub fn settings_get() -> Value {
 
 pub fn settings_set(key: &str, value: &Value) -> Value {
     if !SETTINGS.contains(&key) {
-        return json!({"ok": false, "error": "bad-request", "message": format!("Safe doesn't change {key}.")});
+        return json!({"ok": false, "error": "bad-request", "message": format!("ewe Safe doesn’t change {key}.")});
     }
     let raw = match value {
         Value::Bool(_) | Value::Number(_) => value.to_string(),
@@ -238,7 +238,7 @@ pub fn window_classes() -> Value {
 pub fn open_url(url: &str) -> Value {
     let lower = url.to_ascii_lowercase();
     if !(lower.starts_with("https://") || lower.starts_with("http://")) {
-        return json!({"ok": false, "error": "bad-request", "message": "Only web addresses open from Safe."});
+        return json!({"ok": false, "error": "bad-request", "message": "Only web addresses open from ewe Safe."});
     }
     spawn(Command::new("xdg-open").arg(url))
 }
@@ -257,7 +257,7 @@ fn which(name: &str) -> Option<PathBuf> {
 pub fn open_page(url: &str) -> Value {
     let lower = url.to_ascii_lowercase();
     if !(lower.starts_with("https://") || lower.starts_with("http://")) {
-        return json!({"ok": false, "error": "bad-request", "message": "Only web addresses open from Safe."});
+        return json!({"ok": false, "error": "bad-request", "message": "Only web addresses open from ewe Safe."});
     }
     match which("ewe-browser") {
         Some(b) => spawn_detached(Command::new(b).args(["open", url])),

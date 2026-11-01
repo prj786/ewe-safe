@@ -1,8 +1,9 @@
 /* The Ewe design system, version 3: the token layer and the component
    classes, both authored in ewe/design/ and copied verbatim
    (design/check-tokens.sh holds the copies to the source). The rules below
-   lay out Safe's screens the way design-mockups/safe.html does — tokens
-   only, no raw colour, size or duration. */
+   lay out ewe Safe's screens in the App shell the other ewe apps share (a
+   rail and an inset pane) — tokens only, no raw colour, size or
+   duration. */
 @import "./tokens.css";
 @import "./components.css";
 
@@ -192,28 +193,112 @@ button.ewe-choice {
   to { transform: scaleX(0); }
 }
 
-/* ── the window: a solo column (setup, unlock) or the app shell ────────── */
+/* ── the frame (App shell card): the rail and the inset pane, the same from
+   the first paint through setup and the lock to the items ─────────────── */
 .safe-win {
-  display: flex;
   height: 100%;
-  background: var(--surface-base);
-}
-.safe-win.ewe-appwin {
   border: 0;
   border-radius: 0;
 }
-.safe-solo {
-  flex: 1;
+.ewe-appwin .ewe-sidenav {
+  flex: none;
+  overflow-y: auto;
+}
+.ewe-sidenav__group {
+  display: flex;
+  flex-direction: column;
+}
+.ewe-sidenav__foot {
+  margin-top: auto;
+}
+.ewe-navitem:disabled {
+  color: var(--text-disabled);
+  cursor: default;
+}
+.safe-pane {
+  position: relative;
+}
+.safe-count {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-xs);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  margin-left: auto;
+}
+/* the rail's last lines: the sync state in ewe Sync's words, the version */
+.safe-state {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--space-xs) + var(--space-xxs));
+  padding: calc(var(--space-xs) + var(--space-xxs)) var(--space-s) 0;
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-xs);
+  color: var(--text-muted);
   min-width: 0;
-  margin: var(--space-s);
-  background: var(--surface-raised);
-  border: var(--border-width-1) solid var(--border-subtle);
-  border-radius: var(--rounded);
+}
+.safe-state .ewe-icon {
+  width: var(--icon-xs);
+  height: var(--icon-xs);
+}
+.safe-state__text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.safe-state__dot {
+  flex: none;
+  width: var(--space-xs);
+  height: var(--space-xs);
+  border-radius: var(--fully-rounded);
+  background: var(--text-muted);
+}
+.safe-state__dot.is-success { background: var(--success); }
+.safe-state__dot.is-info { background: var(--info); }
+.safe-state__dot.is-warning { background: var(--warning); }
+.safe-state__dot.is-danger { background: var(--danger); }
+/* a status tile in a row: the tone of what it says */
+.safe-tone--success { color: var(--success); }
+.safe-tone--info { color: var(--info); }
+.safe-tone--warning { color: var(--warning); }
+.safe-tone--danger { color: var(--danger); }
+
+/* A narrow window: the rail keeps only its icons (Side navigation card).
+   ewe Safe has three columns, so it folds before the other apps do. */
+@media (max-width: 900px) {
+  .ewe-appwin .ewe-sidenav {
+    width: var(--control-2xl);
+    padding-inline: var(--space-xs);
+    scrollbar-width: none;
+  }
+  .ewe-sidenav__name,
+  .ewe-navitem__label,
+  .ewe-sidenav__heading,
+  .ewe-sidenav__version,
+  .safe-count,
+  .safe-state__text {
+    display: none;
+  }
+  .ewe-sidenav__brand,
+  .ewe-navitem,
+  .safe-state {
+    justify-content: center;
+    padding-inline: 0;
+  }
+  .safe-listcol {
+    width: calc(10 * var(--control-sm) + var(--space-md));
+  }
+}
+
+/* ── the stage: one centred column in the pane (the lock, setup, the
+   service down, loading, an empty safe or list) ─────────────────────── */
+.safe-stage {
+  flex: 1;
+  min-height: 0;
   overflow: auto;
   display: flex;
   flex-direction: column;
   align-items: center;
-  position: relative;
 }
 .safe-col {
   width: var(--panel-lg);
@@ -229,6 +314,22 @@ button.ewe-choice {
 }
 .safe-col--narrow {
   width: var(--panel-sm);
+}
+.safe-wide {
+  width: 100%;
+}
+.ewe-empty.safe-col {
+  gap: var(--space-s);
+}
+.safe-details {
+  width: 100%;
+}
+.safe-details > summary {
+  text-align: center;
+}
+.safe-details > .safe-detailtext {
+  margin-top: var(--space-s);
+  text-align: start;
 }
 .safe-tile {
   --app: var(--neutral-900);
@@ -249,6 +350,9 @@ button.ewe-choice {
   flex-direction: column;
   gap: var(--space-xs);
 }
+.safe-head :is(.h1, .h2, .h3) {
+  margin: 0;
+}
 .safe-head .body-lg,
 .safe-head .body {
   color: var(--text-secondary);
@@ -260,6 +364,9 @@ button.ewe-choice {
   margin: 0;
   padding: 0;
   list-style: none;
+}
+.safe-points--tight {
+  gap: var(--space-xs);
 }
 .safe-points li {
   display: flex;
@@ -309,75 +416,33 @@ button.ewe-choice {
   padding: var(--space-xs) 0;
   align-self: flex-start;
 }
-.safe-or {
-  display: flex;
-  align-items: center;
-  gap: var(--space-s);
-  color: var(--text-muted);
-  width: 100%;
-}
-.safe-or::before,
-.safe-or::after {
-  content: "";
-  flex: 1;
-  border-top: var(--border-width-1) solid var(--border-subtle);
-}
 
-/* the app shell: side navigation + a pane */
-.ewe-appwin .ewe-sidenav {
+/* ── the items: one header, the list, the item ─────────────────────────── */
+.safe-appbar {
   flex: none;
-  overflow-y: auto;
+  padding: 0 calc(var(--space-s) + var(--space-xs)) 0 var(--space-md);
+  gap: var(--space-s);
 }
-.ewe-sidenav__group {
-  display: flex;
-  flex-direction: column;
+.safe-appbar .ewe-headerbar__title {
+  margin: 0;
 }
-.ewe-sidenav__foot {
-  margin-top: auto;
-}
-.safe-pane {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  position: relative;
-  overflow: hidden;
-}
-.safe-count {
-  font-family: var(--font-mono);
-  font-size: var(--font-size-xs);
-  line-height: var(--line-height-xs);
-  color: var(--text-muted);
-  font-variant-numeric: tabular-nums;
-  margin-left: auto;
-}
-.safe-sync {
-  display: flex;
-  align-items: center;
-  gap: var(--space-xs);
-  font-family: var(--font-sans);
-}
-.safe-sync .ewe-icon {
-  width: var(--icon-sm);
-  height: var(--icon-sm);
-  color: var(--success);
-}
-.safe-sync.is-warning .ewe-icon {
-  color: var(--warning);
-}
-.safe-sync.is-info .ewe-icon {
-  color: var(--info);
+.safe-appbar .ewe-headerbar__actions {
+  gap: var(--space-s);
 }
 .safe-search {
   width: calc(10 * var(--control-md));
 }
-
-/* items: list + detail */
+.safe-search .ewe-kbd {
+  flex: none;
+}
+.safe-banner {
+  flex: none;
+  margin: var(--space-s) calc(var(--space-s) + var(--space-xs)) 0;
+}
 .safe-split {
   flex: 1;
   min-height: 0;
   display: flex;
-  border-top: var(--border-width-1) solid var(--border-subtle);
 }
 .safe-listcol {
   width: calc(12 * var(--control-sm) + var(--space-md));
@@ -387,18 +452,27 @@ button.ewe-choice {
   border-right: var(--border-width-1) solid var(--border-subtle);
   display: flex;
   flex-direction: column;
-  gap: var(--space-xs);
+  gap: var(--space-xxs);
 }
 .safe-listcol .ewe-list {
   background: transparent;
   border: 0;
   padding: 0;
+  gap: var(--space-xxs);
+}
+.safe-listcol .ewe-row:focus-visible {
+  outline: var(--focus-width) solid var(--focus-ring);
+  outline-offset: calc(-1 * var(--border-width-1));
+}
+.safe-listnote {
+  padding: var(--space-s);
 }
 .safe-detail {
+  container-type: inline-size;
   flex: 1;
   min-width: 0;
   overflow: auto;
-  padding: var(--space-md) calc(var(--space-md) + var(--space-s));
+  padding: calc(var(--space-md) + var(--space-xs)) calc(var(--space-lg) - var(--space-xs));
   display: flex;
   flex-direction: column;
   gap: var(--space-md);
@@ -408,67 +482,157 @@ button.ewe-choice {
   display: flex;
   align-items: center;
   gap: calc(var(--space-s) + var(--space-xs));
+  max-width: calc(var(--panel-lg) + var(--space-xl) + var(--space-md));
 }
 .safe-dhead__titles {
   flex: 1;
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: var(--space-xxs);
 }
-.safe-dhead__titles .caption {
-  color: var(--text-muted);
-}
-.safe-letter {
-  display: inline-grid;
-  place-items: center;
-  width: var(--control-lg);
-  height: var(--control-lg);
-  border-radius: var(--primary);
-  background: var(--surface-hover);
-  color: var(--text-secondary);
-  font-size: var(--font-size-md);
-  font-weight: var(--font-weight-semibold);
-  flex: none;
-}
-.safe-letter--lg {
-  width: var(--control-2xl);
-  height: var(--control-2xl);
-  border-radius: var(--rounded);
-  font-size: var(--font-size-xl);
-}
-.safe-val {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-xs);
-  color: var(--text-primary);
-  min-width: 0;
-}
-.safe-val .mono,
-.safe-val .mono-numeric {
-  color: var(--text-primary);
-}
-.safe-val--secret {
-  max-width: calc(8 * var(--control-lg));
+.safe-dhead__title {
+  margin: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.safe-chips {
-  display: inline-flex;
-  flex-wrap: wrap;
-  gap: var(--space-xs);
-  justify-content: flex-end;
+.safe-sub {
+  font-size: var(--font-size-s);
+  line-height: var(--line-height-s);
+  color: var(--text-secondary);
 }
-.safe-foot {
+/* the letter in sans: Geist Mono's O reads as a zero */
+.safe-letter {
+  font-family: var(--font-sans);
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-primary);
+}
+.ewe-row.is-selected .safe-letter {
+  color: var(--accent-text);
+}
+.safe-letter--lg {
+  width: calc(var(--control-xl) + var(--space-xs));
+  height: calc(var(--control-xl) + var(--space-xs));
+  border-radius: var(--rounded);
+  font-size: var(--font-size-xl);
+}
+.safe-letter--lg .ewe-icon {
+  width: var(--icon-lg);
+  height: var(--icon-lg);
+}
+
+/* the item: a label/value grid, a copy on each line, no empty rows */
+.safe-kv {
+  margin: 0;
+  max-width: calc(var(--panel-lg) + var(--space-xl) + var(--space-md));
+  padding: var(--space-xs) calc(var(--space-s) + var(--space-xs));
+  gap: 0;
+}
+.safe-kv__row {
+  display: grid;
+  grid-template-columns: calc(4 * var(--control-lg) + var(--space-xs)) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: calc(var(--space-s) + var(--space-xs));
+  min-height: var(--control-xl);
+  padding: var(--space-xs) 0;
+  border-bottom: var(--border-width-1) solid var(--border-subtle);
+}
+.safe-kv__row:last-child {
+  border-bottom: 0;
+}
+.safe-kv__row--top {
+  align-items: start;
+}
+.safe-kv__row--top > .safe-kv__label {
+  padding-top: var(--space-xxs);
+}
+.safe-kv__label,
+.safe-kv__value,
+.safe-kv__actions {
+  margin: 0;
+  min-width: 0;
+}
+.safe-kv__label {
+  font-size: var(--font-size-s);
+  line-height: var(--line-height-s);
+  color: var(--text-secondary);
+}
+.safe-kv__value {
   display: flex;
-  gap: var(--space-md);
+  align-items: center;
+  gap: var(--space-s);
+  flex-wrap: wrap;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+.safe-kv__value--stack {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-xxs);
+}
+.safe-kv__actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-xxs);
+}
+/* a narrow item column: the label goes above its value */
+@container (max-width: 440px) {
+  .safe-kv__row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    row-gap: 0;
+  }
+  .safe-kv__label {
+    grid-column: 1 / -1;
+  }
+  .safe-kv__row--top > .safe-kv__label {
+    padding-top: 0;
+  }
+}
+.safe-kv__row--empty > .safe-kv__label {
+  grid-column: 1 / 3;
+  font-size: var(--font-size-md);
+  line-height: var(--line-height-md);
   color: var(--text-muted);
+}
+.safe-kv__row--empty > .safe-kv__value {
+  display: none;
+}
+.safe-secret {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.safe-secret.is-hidden {
+  letter-spacing: var(--tracking-wide);
+  user-select: none;
 }
 .safe-otp {
   font-size: var(--font-size-lg);
   line-height: var(--line-height-lg);
   letter-spacing: var(--tracking-wide);
+}
+.safe-tabular {
+  font-variant-numeric: tabular-nums;
+}
+.safe-url {
+  color: var(--accent-text);
+  text-align: start;
+  overflow-wrap: anywhere;
+}
+.safe-url:hover {
+  text-decoration: underline;
+}
+.safe-chips {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+}
+.safe-foot {
+  max-width: calc(var(--panel-lg) + var(--space-xl) + var(--space-md));
 }
 .safe-notes {
   white-space: pre-wrap;
@@ -479,11 +643,13 @@ button.ewe-choice {
   word-break: break-all;
   user-select: text;
 }
+
+/* toasts, menus */
 .safe-toasts {
   position: absolute;
   right: calc(var(--space-md) + var(--space-s));
   bottom: var(--space-md);
-  z-index: 30;
+  z-index: 50;
   display: flex;
   flex-direction: column;
   gap: var(--space-s);
@@ -503,11 +669,20 @@ button.ewe-choice {
   top: calc(100% + var(--space-xs));
   animation: safe-in-down var(--dur-base) var(--ease-out);
 }
+.safe-menu:focus {
+  outline: none;
+}
 .safe-rel {
   position: relative;
 }
 
-/* edit + generator */
+/* ── the editor: fields, the generator under the password, Save and Cancel
+   in view at the foot ──────────────────────────────────────────────── */
+.safe-editor {
+  gap: var(--space-md);
+  max-width: calc(var(--panel-lg) + var(--space-xl) + var(--space-md));
+  min-height: 100%;
+}
 .safe-form {
   display: flex;
   flex-direction: column;
@@ -516,11 +691,19 @@ button.ewe-choice {
 .safe-form .ewe-field {
   width: 100%;
 }
+.safe-formfoot {
+  position: sticky;
+  bottom: calc(-1 * (var(--space-md) + var(--space-xs)));
+  z-index: 3;
+  margin: auto 0 calc(-1 * (var(--space-md) + var(--space-xs)));
+  padding: calc(var(--space-s) + var(--space-xs)) 0 calc(var(--space-md) + var(--space-xs));
+  background: var(--surface-raised);
+  border-top: var(--border-width-1) solid var(--border-subtle);
+}
 .safe-pwrow {
   display: flex;
   gap: var(--space-s);
   align-items: flex-start;
-  position: relative;
 }
 .safe-pwrow .ewe-field {
   flex: 1;
@@ -529,12 +712,10 @@ button.ewe-choice {
   margin-top: calc(var(--line-height-s) + var(--space-xs));
 }
 .safe-gen {
-  position: absolute;
-  z-index: 2;
-  right: 0;
-  top: calc(var(--control-lg) * 2 + var(--space-s));
-  width: var(--panel-sm);
-  box-shadow: var(--shadow-float);
+  width: 100%;
+  max-width: none;
+  box-shadow: none;
+  background: var(--surface-overlay);
   animation: safe-in-down var(--dur-base) var(--ease-out);
 }
 .safe-gen__preview {
@@ -572,6 +753,14 @@ button.ewe-choice {
   text-align: right;
   color: var(--text-primary);
 }
+.safe-gen__switches {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-md);
+}
+.safe-gen__foot {
+  justify-content: space-between;
+}
 /* a native range over the drawn slider: the drawing is the design system's,
    the dragging and the keys are the browser's */
 .safe-range {
@@ -599,20 +788,76 @@ button.ewe-choice {
   overflow: auto;
   animation: safe-in-down var(--dur-base) var(--ease-out);
 }
+.safe-pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: calc(var(--space-s) + var(--space-xs));
+}
+.safe-choices .ewe-choice,
+.safe-choice--sm {
+  padding: var(--space-s) calc(var(--space-s) + var(--space-xs));
+}
+.safe-choice--sm .ewe-choice__title {
+  font-size: var(--font-size-md);
+  line-height: var(--line-height-md);
+}
+.safe-choice--sm .ewe-choice__desc {
+  font-size: var(--font-size-s);
+  line-height: var(--line-height-s);
+}
+.safe-note {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-xs);
+  color: var(--text-muted);
+}
+.safe-note .ewe-icon {
+  width: var(--icon-sm);
+  height: var(--icon-sm);
+  color: var(--success);
+  flex: none;
+}
+.safe-warn {
+  color: var(--warning);
+}
 
-/* settings, import, trash: a page in the pane */
+/* ── a page in the pane (Settings, Import, SSH): the page title, then one
+   left-aligned column of at most 720px (App shell card) ─────────────── */
+.safe-pagehead {
+  flex: none;
+  padding: var(--space-md) calc(var(--space-lg) - var(--space-s)) calc(var(--space-s) + var(--space-xs));
+  gap: var(--space-s);
+  align-items: center;
+}
+.safe-pagehead .ewe-headerbar__title {
+  margin: 0;
+}
+/* the page scrolls under its title: a line shows where (Header bar card) */
+.safe-pagehead {
+  border-bottom: var(--border-width-1) solid transparent;
+  transition: border-color var(--dur-fast) var(--ease-out);
+}
+.safe-pagehead.is-scrolled {
+  border-bottom-color: var(--border-subtle);
+}
+.safe-pagehead .ewe-headerbar__actions {
+  align-self: flex-end;
+}
+.safe-back {
+  align-self: flex-start;
+  margin-left: calc(-1 * var(--space-xs));
+}
 .safe-page {
   flex: 1;
   min-height: 0;
   overflow: auto;
-  padding: 0 calc(var(--space-md) + var(--space-s)) var(--space-lg);
+  padding: 0 calc(var(--space-lg) - var(--space-s)) var(--space-lg);
 }
 .safe-page__body {
   display: flex;
   flex-direction: column;
   gap: var(--space-s);
-  width: var(--panel-lg);
-  max-width: 100%;
+  max-width: calc(var(--panel-lg) + 5 * var(--space-lg));
 }
 .safe-page__body .ewe-section {
   width: 100%;
@@ -620,6 +865,35 @@ button.ewe-choice {
 .safe-page__body .ewe-row__desc,
 .safe-page__body .ewe-row__title {
   white-space: normal;
+}
+.safe-section {
+  margin-top: var(--space-md);
+}
+.safe-section:first-child {
+  margin-top: 0;
+}
+.safe-section .ewe-section__title {
+  margin: 0;
+}
+.safe-section__actions {
+  display: flex;
+  gap: var(--space-s);
+  flex: none;
+}
+.safe-row--top {
+  align-items: flex-start;
+  padding-block: var(--space-s);
+}
+.safe-seg-start {
+  align-self: flex-start;
+}
+.safe-gatecard .ewe-card__title {
+  margin: 0;
+}
+.safe-online {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
 }
 .safe-danger {
   color: var(--danger);
@@ -683,25 +957,36 @@ button.ewe-choice {
   color: var(--text-secondary);
 }
 
-/* dialogs */
+/* ── dialogs and sheets: the scrim covers the whole window, the rail too
+   (Dialog card) ────────────────────────────────────────────────────── */
 .safe-scrim {
-  position: absolute;
+  position: fixed;
   inset: 0;
   z-index: 40;
   background: var(--scrim);
   display: grid;
   place-items: center;
-  border-radius: inherit;
+  padding: var(--space-md);
   animation: safe-fade var(--dur-base) var(--ease-out);
 }
-.safe-dialog-field {
-  padding: 0 var(--space-md) var(--space-s);
+.safe-dialog {
+  max-width: 100%;
+  max-height: calc(100vh - 2 * var(--space-md));
+  overflow: auto;
   display: flex;
   flex-direction: column;
-  gap: var(--space-s);
+  gap: var(--space-md);
+  animation: safe-in-up var(--dur-base) var(--ease-out);
+}
+.safe-dialog:focus,
+.safe-sheet:focus {
+  outline: none;
+}
+.safe-dialog .ewe-dialog__title {
+  margin: 0;
 }
 
-/* the compact unlock window (`--unlock`, 560×200) */
+/* the compact windows (`--unlock`, `--approve`, `--confirm`: 560×200) */
 .safe-compact {
   height: 100%;
   display: flex;
@@ -718,6 +1003,9 @@ button.ewe-choice {
   flex-direction: column;
   gap: var(--space-s);
 }
+.safe-compact__body .safe-head :is(.h3) {
+  margin: 0;
+}
 .safe-compact__row {
   display: flex;
   gap: var(--space-s);
@@ -726,114 +1014,29 @@ button.ewe-choice {
 .safe-compact__row .ewe-input {
   flex: 1;
 }
-
-/* cards and addresses: a card's face (the ID-1 card's proportions), an
-   address as it goes on an envelope, the number field's brand */
-.safe-cardface {
-  width: var(--panel-sm);
-  max-width: 100%;
-  aspect-ratio: 1.586;
-  flex: none;
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-  padding: var(--space-md);
-  background: var(--gradient-ember);
-  border: var(--border-width-1) solid var(--border-subtle);
-  border-radius: var(--rounded);
-  box-shadow: var(--shadow-float);
-  color: var(--text-primary);
+.safe-compact .safe-switcher {
+  align-self: flex-start;
+  margin-left: calc(-1 * var(--space-s));
 }
-.safe-cardface__top {
-  display: flex;
-  align-items: center;
-  gap: var(--space-s);
-}
-.safe-cardface__top > .ewe-icon {
-  margin-left: auto;
-  color: var(--accent-text);
-}
-.safe-cardface__brand {
-  font-size: var(--font-size-lg);
-  line-height: var(--line-height-lg);
-  font-weight: var(--font-weight-semibold);
-}
-.safe-cardface__number {
-  font-family: var(--font-mono);
-  font-size: var(--font-size-xl);
-  line-height: var(--line-height-xl);
-  letter-spacing: var(--tracking-wide);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-.safe-cardface__foot {
-  display: flex;
-  justify-content: space-between;
-  gap: var(--space-md);
-}
-.safe-cardface__part {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-xxs);
-  min-width: 0;
-}
-.safe-cardface__part .overline {
-  color: var(--text-muted);
-}
-.safe-cardface__part--end {
-  text-align: right;
-}
-.safe-cardface__value {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+/* the approve question: the sentence in medium weight, the names in
+   semibold, so they stand out without a bold inside a bold */
+.safe-ask {
   font-weight: var(--font-weight-medium);
 }
-.safe-address {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-xxs);
-  padding: calc(var(--space-s) + var(--space-xs)) var(--space-md);
-  background: var(--surface-sunken);
-  border: var(--border-width-1) solid var(--border-subtle);
-  border-radius: var(--primary);
-  color: var(--text-secondary);
-  user-select: text;
-}
-.safe-address .body-strong {
-  color: var(--text-primary);
-}
-.safe-pair {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: calc(var(--space-s) + var(--space-xs));
-}
-.safe-note {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-xs);
-  color: var(--text-muted);
-}
-.safe-warn {
-  color: var(--warning);
-}
-.safe-note .ewe-icon {
-  width: var(--icon-sm);
-  height: var(--icon-sm);
-  color: var(--success);
-  flex: none;
+.safe-ask__name {
+  font-weight: var(--font-weight-semibold);
 }
 
 /* SSH (docs/GATE.md S28): the gate card, the services, keys and hosts,
    the sheets (connect, move, a host, a new key) */
 .safe-sheet {
   width: var(--panel-lg);
-  max-width: calc(100% - 2 * var(--space-md));
-  max-height: calc(100% - 2 * var(--space-md));
+  max-width: 100%;
+  max-height: calc(100vh - 2 * var(--space-md));
   animation: safe-in-up var(--dur-base) var(--ease-out);
 }
-.safe-sheet:focus {
-  outline: none;
+.safe-sheet .ewe-sheet__title {
+  margin: 0;
 }
 .safe-sheet .ewe-sheet__body {
   overflow: auto;
@@ -1045,10 +1248,6 @@ button.ewe-check:focus-visible {
 button.ewe-check:focus-visible .ewe-check__box {
   outline: var(--focus-width) solid var(--focus-ring);
   outline-offset: var(--border-width-1);
-}
-/* toasts stay above a sheet ("Copied the public key.") */
-.safe-toasts {
-  z-index: 50;
 }
 
 @media print {

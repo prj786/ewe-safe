@@ -80,4 +80,11 @@ export const ICONS = {
   "wifi": 0xE1AE,
   "wifi-off": 0xE1AF,
   "circle-help": 0xE082,
+  "arrow-left": 0xE048,
+  "layout-grid": 0xE0FF,
+  "file-text": 0xE0CC,
+  "search-x": 0xE4AD,
+  "cloud-check": 0xE66E,
+  "inbox": 0xE0F7,
+  "power": 0xE140,
 };

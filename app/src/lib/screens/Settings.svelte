@@ -1,17 +1,19 @@
 <script>
-  // Settings (the mockup's Settings screen): where the safe lives and how it
-  // syncs — shown, never a button (house rule 6: Safe syncs by itself,
-  // ewe-sync shows the same state) — how it locks, the master password, the
-  // Emergency Kit, cards and addresses, import and export. Switches go
-  // through ewe-conf.
+  // Settings: where the safe lives and how it syncs — shown in ewe Sync's
+  // words, never a button (house rule 6: ewe Safe syncs by itself, ewe Sync
+  // shows the same state) — how it locks, the master password, the
+  // Emergency Kit, cards and addresses, the keyring, import and export,
+  // About. Switches go through ewe-conf.
   import Icon from "../components/Icon.svelte";
   import Switch from "../components/Switch.svelte";
   import Kit from "../components/Kit.svelte";
+  import Dialog from "../components/Dialog.svelte";
   import { api } from "../api.js";
   import { safe } from "../safe.svelte.js";
+  import { edge } from "../trap.js";
   import { ui } from "../ui.svelte.js";
   import { toasts } from "../toast.svelte.js";
-  import { day, placeIcon, placeLabel, placeLine, strength, syncAlert, syncBadge, when } from "../format.js";
+  import { day, placeIcon, placeLabel, placeLine, strength, syncDetail } from "../format.js";
   import { ENCRYPTED_NOTE } from "../cards.js";
 
   let server = $state("");
@@ -30,8 +32,7 @@
 
   const place = $derived(safe.status?.place);
   const sync = $derived(safe.status?.sync);
-  const alert = $derived(syncAlert(sync, place, place?.kind === "nextcloud" ? server : "", now));
-  const badge = $derived(syncBadge(sync));
+  const state = $derived(syncDetail(sync, place, place?.kind === "nextcloud" ? server : "", now));
   const s = $derived(safe.settings);
   const flag = (k) => s[k] !== false;
   const loginOn = $derived((safe.status?.unlock_methods ?? []).includes("login"));
@@ -54,9 +55,9 @@
     const r = await safe.loginEnable(login.login, needMaster ? login.master : undefined);
     if (r?.ok) {
       login = null;
-      toasts.show("Login unlock is on. Your login password opens Safe on this computer.", { icon: "circle-check", ms: 6000 });
+      toasts.show("Login unlock is on. Your login password opens ewe Safe on this computer.", { icon: "circle-check", ms: 6000 });
     } else {
-      login = { ...login, login: "", master: "", busy: false, error: r?.message ?? "Couldn't turn it on." };
+      login = { ...login, login: "", master: "", busy: false, error: r?.message ?? "Couldn’t turn it on." };
     }
   }
   const lockAfter = $derived(Number(s.lock_after_minutes ?? 30));
@@ -77,7 +78,7 @@
   $effect(() => {
     loadKeyring();
   });
-  const KEEPERS = { "gnome-keyring": "GNOME Keyring", "ewe-safe": "Safe", kwallet: "KWallet", other: "another app" };
+  const KEEPERS = { "gnome-keyring": "GNOME Keyring", "ewe-safe": "ewe Safe", kwallet: "KWallet", other: "another app" };
   const keeper = $derived(KEEPERS[kr?.owner] ? `Kept by ${KEEPERS[kr.owner]}` : "No keyring runs now");
   const keeperLine = $derived(
     kr?.owner === "none"
@@ -85,15 +86,15 @@
       : kr?.needs_repair
         ? "Your apps save into a second keyring with its own password."
         : kr?.owner === "ewe-safe"
-          ? "Safe keeps them, on this computer only."
-          : "It opens with your login password when you log in."
+          ? "ewe Safe keeps them, on this computer only."
+          : "It opens with your login password when you sign in."
   );
   async function repairKeyring() {
     krBusy = true;
     const r = await api.keyringRepair();
     krBusy = false;
     if (!r?.ok) {
-      toasts.show(r?.message ?? "Couldn't fix the keyring.", { icon: "circle-alert", ms: 8000 });
+      toasts.show(r?.message ?? "Couldn’t fix the keyring.", { icon: "circle-alert", ms: 8000 });
     } else if (r.fixed) {
       const n = r.moved + r.replaced;
       toasts.show(
@@ -108,7 +109,7 @@
 
   async function set(key, value) {
     const r = await safe.setSetting(key, value);
-    if (!r?.ok) toasts.show(r?.message ?? "Couldn't change the setting.", { icon: "circle-alert" });
+    if (!r?.ok) toasts.show(r?.message ?? "Couldn’t change the setting.", { icon: "circle-alert" });
   }
 
   // cards and addresses: the notes an earlier 1Password import made from
@@ -119,7 +120,7 @@
     const r = await api.convert(true);
     if (!r?.ok) {
       conv = null;
-      toasts.show(r?.message ?? "Couldn't check.", { icon: "circle-alert" });
+      toasts.show(r?.message ?? "Couldn’t check.", { icon: "circle-alert" });
       return;
     }
     conv = { converted: r.converted ?? [], skipped: r.skipped ?? [], busy: false };
@@ -132,7 +133,7 @@
     if (r?.ok) {
       await safe.loadItems();
       toasts.show(n === 1 ? "1 note is now a card or an address." : `${n} notes are now cards and addresses.`, { icon: "circle-check" });
-    } else toasts.show(r?.message ?? "Couldn't change them.", { icon: "circle-alert" });
+    } else toasts.show(r?.message ?? "Couldn’t change them.", { icon: "circle-alert" });
   }
 
   const meter = $derived(strength(pw?.a ?? ""));
@@ -148,26 +149,20 @@
     if (r?.ok) {
       pw = null;
       toasts.show("The master password is changed. Your other computers will ask for it once.", { icon: "circle-check", ms: 6000 });
-    } else pw = { a: "", b: "", error: r?.message ?? "Couldn't change it." };
+    } else pw = { a: "", b: "", error: r?.message ?? "Couldn’t change it." };
   }
 </script>
 
-<div class="ewe-headerbar ewe-headerbar--page" style="padding:var(--space-md) calc(var(--space-md) + var(--space-s)) calc(var(--space-s) + var(--space-xs))">
+<header class="ewe-headerbar ewe-headerbar--page safe-pagehead">
   <div class="ewe-headerbar__titles">
-    <div class="ewe-headerbar__title">Settings</div>
+    <h1 class="ewe-headerbar__title">Settings</h1>
     <div class="ewe-headerbar__subtitle">Where your safe lives, how it locks, and import and export.</div>
   </div>
-</div>
+</header>
 
-<div class="safe-page">
+<div class="safe-page" use:edge>
   <div class="safe-page__body">
-    <div class="ewe-section"><div class="ewe-section__text"><div class="ewe-section__title ewe-section__title--overline">Place</div></div></div>
-    {#if alert}
-      <div class="ewe-alert ewe-alert--{alert.tone}" role="status">
-        <Icon name={alert.icon} />
-        <div class="ewe-alert__body"><div class="ewe-alert__title">{alert.title}</div><div class="ewe-alert__desc">{alert.desc}</div></div>
-      </div>
-    {/if}
+    {@render section("Place")}
     <div class="ewe-list">
       <div class="ewe-row">
         <span class="ewe-row__lead ewe-row__lead--tile"><Icon name={placeIcon(place)} /></span>
@@ -175,27 +170,24 @@
           <span class="ewe-row__title">{placeLabel(place)}</span>
           <span class="ewe-row__desc">{placeLine(place, place?.kind === "nextcloud" ? server : "")}</span>
         </span>
-        <span class="ewe-row__trail">
-          <button class="ewe-btn ewe-btn--secondary ewe-btn--sm" disabled title="Moving a safe comes in a later version"><Icon name="arrow-left-right" />Move safe…</button>
-        </span>
       </div>
-      {#if sync?.last || sync?.by_machine}
+      {#if state}
         <div class="ewe-list__divider"></div>
         <div class="ewe-row">
-          <span class="ewe-row__lead ewe-row__lead--tile"><Icon name="laptop" /></span>
+          <span class="ewe-row__lead ewe-row__lead--tile safe-tone--{state.tone}"><Icon name={state.icon} /></span>
           <span class="ewe-row__text">
-            <span class="ewe-row__title">Last saved</span>
-            <span class="ewe-row__desc">{[sync.by_machine ? `By ${sync.by_machine}` : "", when(sync.last, now)].filter(Boolean).join(" · ")}</span>
+            <span class="ewe-row__title">{state.word}</span>
+            {#if state.desc}<span class="ewe-row__desc">{state.desc}</span>{/if}
           </span>
-          {#if badge}
-            <span class="ewe-row__trail"><span class="ewe-badge ewe-badge--{badge.tone}"><span class="ewe-badge__label">{badge.text}</span></span></span>
+          {#if state.action === "ewe-sync"}
+            <span class="ewe-row__trail"><button type="button" class="ewe-btn ewe-btn--secondary ewe-btn--sm" onclick={() => api.openEweSync()}>Open ewe Sync</button></span>
           {/if}
         </div>
       {/if}
     </div>
-    <div class="caption safe-muted">Safe saves and syncs by itself. ewe-sync shows the same status.</div>
+    <div class="caption safe-muted">ewe Safe saves and syncs by itself. ewe Sync shows the same state. Moving a safe to another place comes in a later version.</div>
 
-    <div class="ewe-section"><div class="ewe-section__text"><div class="ewe-section__title ewe-section__title--overline">Security</div></div></div>
+    {@render section("Security")}
     <div class="ewe-list">
       <div class="ewe-switch-row ewe-row">
         <span class="ewe-check__text"><span class="ewe-check__label">Lock when the screen locks</span></span>
@@ -208,7 +200,7 @@
       </div>
       <div class="ewe-list__divider"></div>
       <div class="ewe-row">
-        <span class="ewe-row__text"><span class="ewe-row__title">Lock after</span><span class="ewe-row__desc">Time without using Safe</span></span>
+        <span class="ewe-row__text"><span class="ewe-row__title">Lock after</span><span class="ewe-row__desc">Time without using ewe Safe</span></span>
         <span class="ewe-row__trail">
           <select class="ewe-input ewe-input--sm ewe-select" aria-label="Lock after" value={lockAfter} onchange={(e) => set("lock_after_minutes", Number(e.currentTarget.value))}>
             {#each [5, 15, 30, 60, 240, 0] as m (m)}
@@ -221,9 +213,9 @@
       <div class="ewe-row">
         <span class="ewe-row__text"><span class="ewe-row__title">Clear copied passwords after</span></span>
         <span class="ewe-row__trail">
-          <div class="ewe-seg ewe-seg--sm" role="radiogroup" aria-label="Clear after">
+          <div class="ewe-seg ewe-seg--sm" role="radiogroup" aria-label="Clear copied passwords after">
             {#each [10, 30, 90] as sec (sec)}
-              <button class="ewe-seg__item" class:is-selected={clearAfter === sec} role="radio" aria-checked={clearAfter === sec} onclick={() => set("clipboard_clear_seconds", sec)}>{sec} s</button>
+              <button type="button" class="ewe-seg__item" class:is-selected={clearAfter === sec} role="radio" aria-checked={clearAfter === sec} onclick={() => set("clipboard_clear_seconds", sec)}>{sec} s</button>
             {/each}
           </div>
         </span>
@@ -232,7 +224,7 @@
       <div class="ewe-switch-row ewe-row">
         <span class="ewe-check__text">
           <span class="ewe-check__label">Unlock with my login password</span>
-          <span class="ewe-check__desc">With this on, Safe on this computer is as strong as your login password. Your copy in Nextcloud still needs your master password.</span>
+          <span class="ewe-check__desc">With this on, ewe Safe on this computer is as strong as your login password. Your copy in Nextcloud still needs your master password.</span>
         </span>
         <Switch on={loginOn} disabled={safe.busy === "login-enable" || safe.busy === "login-disable"} label="Unlock with my login password" toggled={onLoginToggle} />
       </div>
@@ -240,63 +232,53 @@
         <div class="ewe-list__divider"></div>
         <div class="ewe-switch-row ewe-row">
           <span class="ewe-check__text">
-            <span class="ewe-check__label">Unlock Safe when I log in</span>
-            <span class="ewe-check__desc">Open your safe as the computer starts, with no extra step. Off, Safe waits for your login or master password.</span>
+            <span class="ewe-check__label">Unlock ewe Safe when I sign in</span>
+            <span class="ewe-check__desc">Open your safe as the computer starts, with no extra step. Off, ewe Safe waits for your login or master password.</span>
           </span>
-          <Switch on={flag("unlock_at_login")} label="Unlock Safe when I log in" toggled={(v) => set("unlock_at_login", v)} />
+          <Switch on={flag("unlock_at_login")} label="Unlock ewe Safe when I sign in" toggled={(v) => set("unlock_at_login", v)} />
         </div>
       {/if}
       <div class="ewe-list__divider"></div>
       <div class="ewe-row">
         <span class="ewe-row__text"><span class="ewe-row__title">Master password</span><span class="ewe-row__desc">Your other computers and phones will ask for the new one once.</span></span>
-        <span class="ewe-row__trail"><button class="ewe-btn ewe-btn--secondary ewe-btn--sm" disabled={safe.readOnly} onclick={() => (pw = { a: "", b: "", error: "" })}>Change…</button></span>
+        <span class="ewe-row__trail"><button type="button" class="ewe-btn ewe-btn--secondary ewe-btn--sm" disabled={safe.readOnly} onclick={() => (pw = { a: "", b: "", error: "" })}>Change…</button></span>
       </div>
       <div class="ewe-list__divider"></div>
       <div class="ewe-row">
         <span class="ewe-row__text"><span class="ewe-row__title">Emergency Kit</span><span class="ewe-row__desc">Where your safe lives, on one printed page.</span></span>
-        <span class="ewe-row__trail"><button class="ewe-btn ewe-btn--secondary ewe-btn--sm" onclick={() => (ui.kit = true)}><Icon name="printer" />Print…</button></span>
+        <span class="ewe-row__trail"><button type="button" class="ewe-btn ewe-btn--secondary ewe-btn--sm" onclick={() => (ui.kit = true)}><Icon name="printer" />Print…</button></span>
       </div>
     </div>
 
-    <div class="ewe-section"><div class="ewe-section__text"><div class="ewe-section__title ewe-section__title--overline">Cards and addresses</div></div></div>
+    {@render section("Cards and addresses")}
     <div class="ewe-list">
-      <div class="ewe-row">
-        <span class="ewe-row__lead ewe-row__lead--tile"><Icon name="shield-check" /></span>
-        <span class="ewe-row__text"><span class="ewe-row__title">Kept like your passwords</span><span class="ewe-row__desc">{ENCRYPTED_NOTE}</span></span>
-      </div>
-      <div class="ewe-list__divider"></div>
       <div class="ewe-switch-row ewe-row">
         <span class="ewe-check__text">
           <span class="ewe-check__label">Ask for my password before filling a card</span>
-          <span class="ewe-check__desc">The browser fills a card only after you type your password. Once is enough for 5 minutes.</span>
+          <span class="ewe-check__desc">ewe Browser fills a card only after you type your password. Once is enough for 5 minutes.</span>
         </span>
         <Switch on={flag("confirm_cards")} label="Ask for my password before filling a card" toggled={(v) => set("confirm_cards", v)} />
       </div>
       <div class="ewe-list__divider"></div>
       <div class="ewe-row">
-        <span class="ewe-row__lead ewe-row__lead--tile"><Icon name="credit-card" /></span>
         <span class="ewe-row__text">
           <span class="ewe-row__title">Cards from an earlier import</span>
-          <span class="ewe-row__desc">1Password's cards and identities that came in as notes. Safe can turn them into cards and addresses.</span>
+          <span class="ewe-row__desc">1Password’s cards and identities that came in as notes. ewe Safe can turn them into cards and addresses.</span>
         </span>
-        <span class="ewe-row__trail"><button class="ewe-btn ewe-btn--secondary ewe-btn--sm" disabled={safe.readOnly || conv?.busy} onclick={checkConvert}>Check…</button></span>
+        <span class="ewe-row__trail"><button type="button" class="ewe-btn ewe-btn--secondary ewe-btn--sm" disabled={safe.readOnly || conv?.busy} onclick={checkConvert}>Check…</button></span>
       </div>
     </div>
+    <div class="caption safe-muted safe-note"><Icon name="shield-check" /><span>Kept like your passwords. {ENCRYPTED_NOTE}</span></div>
     {#if kr}
-      <div class="ewe-section">
-        <div class="ewe-section__text">
-          <div class="ewe-section__title ewe-section__title--overline">Keyring</div>
-          <div class="ewe-section__desc">Apps keep their passwords here, like ewe-sync's account. They stay on this computer.</div>
-        </div>
-      </div>
+      {@render section("Keyring", "Apps keep their passwords here, like ewe Sync’s account. They stay on this computer.")}
       {#if kr.needs_repair}
         <div class="ewe-alert ewe-alert--warning" role="status">
           <Icon name="triangle-alert" />
           <div class="ewe-alert__body">
             <div class="ewe-alert__title">The keyring asks for a password at every start</div>
-            <div class="ewe-alert__desc">The fix moves everything into your login keyring, which opens when you log in. The keyring may ask for the old password one last time. The old keyring stays as a backup.</div>
+            <div class="ewe-alert__desc">The fix moves everything into your login keyring, which opens when you sign in. The keyring may ask for the old password one last time. The old keyring stays as a backup.</div>
             <div class="ewe-alert__actions">
-              <button class="ewe-btn ewe-btn--primary ewe-btn--sm" disabled={krBusy} onclick={repairKeyring}><Icon name="key-round" />{krBusy ? "Fixing…" : "Fix the keyring password prompt"}</button>
+              <button type="button" class="ewe-btn ewe-btn--primary ewe-btn--sm" disabled={krBusy} onclick={repairKeyring}><Icon name="key-round" />{krBusy ? "Fixing…" : "Fix the keyring password prompt"}</button>
             </div>
           </div>
         </div>
@@ -310,7 +292,7 @@
           </span>
           {#if kr.owner !== "none"}
             <span class="ewe-row__trail">
-              <span class="ewe-badge ewe-badge--{kr.needs_repair ? 'warning' : 'success'}"><span class="ewe-badge__label">{kr.needs_repair ? "Asks at start" : "Opens at login"}</span></span>
+              <span class="ewe-badge ewe-badge--{kr.needs_repair ? 'warning' : 'success'}"><span class="ewe-badge__label">{kr.needs_repair ? "Asks at start" : "Opens at sign-in"}</span></span>
             </span>
           {/if}
         </div>
@@ -336,140 +318,138 @@
         {/each}
         {#if krList && !krList.items.length && !krList.locked.length && kr.owner !== "none"}
           <div class="ewe-list__divider"></div>
-          <div class="ewe-row"><span class="ewe-row__text"><span class="ewe-row__desc">No app passwords yet.</span></span></div>
+          <div class="ewe-row"><span class="ewe-row__text"><span class="ewe-row__desc">No app passwords yet. Apps add one here when they first need it.</span></span></div>
         {/if}
       </div>
-      <div class="caption safe-muted">Safe shows only names and dates here, never the passwords.</div>
+      <div class="caption safe-muted">ewe Safe shows only names and dates here, never the passwords.</div>
     {/if}
 
-    <div class="ewe-section"><div class="ewe-section__text"><div class="ewe-section__title ewe-section__title--overline">Import and export</div></div></div>
+    {@render section("Import and export")}
     <div class="ewe-list">
       <div class="ewe-row">
         <span class="ewe-row__lead ewe-row__lead--tile"><Icon name="file-down" /></span>
         <span class="ewe-row__text"><span class="ewe-row__title">Import</span><span class="ewe-row__desc">From 1Password: its export file, its CSV, or straight from the 1Password app.</span></span>
-        <span class="ewe-row__trail"><button class="ewe-btn ewe-btn--secondary ewe-btn--sm" disabled={safe.readOnly} onclick={() => ui.go("import")}>Import…</button></span>
+        <span class="ewe-row__trail"><button type="button" class="ewe-btn ewe-btn--secondary ewe-btn--sm" disabled={safe.readOnly} onclick={() => ui.go("import")}>Import…</button></span>
       </div>
       <div class="ewe-list__divider"></div>
       <div class="ewe-row">
         <span class="ewe-row__lead ewe-row__lead--tile"><Icon name="file-key" /></span>
         <span class="ewe-row__text"><span class="ewe-row__title">Export a KeePass copy</span><span class="ewe-row__desc">A .kdbx file. You can give it a different password. Comes in a later version.</span></span>
-        <span class="ewe-row__trail"><button class="ewe-btn ewe-btn--secondary ewe-btn--sm" disabled>Export…</button></span>
+        <span class="ewe-row__trail"><button type="button" class="ewe-btn ewe-btn--secondary ewe-btn--sm" disabled>Export…</button></span>
       </div>
       <div class="ewe-list__divider"></div>
       <div class="ewe-row">
         <span class="ewe-row__lead ewe-row__lead--tile"><Icon name="file-up" /></span>
-        <span class="ewe-row__text"><span class="ewe-row__title">Export as CSV</span><span class="ewe-row__desc safe-danger">Anyone who gets this file can read every password.</span></span>
-        <span class="ewe-row__trail"><button class="ewe-btn ewe-btn--secondary ewe-btn--sm" disabled>Export CSV…</button></span>
+        <span class="ewe-row__text"><span class="ewe-row__title">Export as CSV</span><span class="ewe-row__desc">Comes in a later version. <span class="safe-danger">Anyone who gets this file can read every password.</span></span></span>
+        <span class="ewe-row__trail"><button type="button" class="ewe-btn ewe-btn--secondary ewe-btn--sm" disabled>Export CSV…</button></span>
+      </div>
+    </div>
+
+    {@render section("About")}
+    <div class="ewe-list">
+      <div class="ewe-row">
+        <span class="ewe-row__lead ewe-row__lead--tile"><Icon name="vault" /></span>
+        <span class="ewe-row__text">
+          <span class="ewe-row__title">ewe Safe{safe.status?.version ? ` ${safe.status.version}` : ""}</span>
+          <span class="ewe-row__desc">Passwords, passkeys and SSH keys, in a standard KeePass file. Part of ewe.</span>
+        </span>
       </div>
     </div>
   </div>
 </div>
 
-{#if pw}
-  <div class="safe-scrim">
-    <div role="dialog" aria-modal="true" aria-label="Change the master password"><form class="ewe-dialog" onsubmit={changePassword}>
-      <div class="ewe-dialog__head">
-        <span class="ewe-dialog__icon"><Icon name="key-round" /></span>
-        <div class="ewe-dialog__titles">
-          <h3 class="ewe-dialog__title">Change the master password</h3>
-          <p class="ewe-dialog__desc">Your other computers and phones will ask for the new one once. If you forget it, nobody can open your safe.</p>
-        </div>
-      </div>
-      <div class="safe-dialog-field">
-        <label class="ewe-field">
-          <span class="ewe-field__label"><span>New master password</span></span>
-          <span class="ewe-input"><input class="mono" type="password" bind:value={pw.a} autocomplete="new-password" /></span>
-        </label>
-        {#if pw.a}
-          <div class="ewe-meter ewe-meter--{meter.tone}">
-            <div class="ewe-meter__head"><Icon name="shield-check" /><span>Strength</span><span class="ewe-meter__value">{meter.label}</span></div>
-            <div class="ewe-meter__track"><div class="ewe-meter__fill" style="--value:{meter.pct}%"></div></div>
-          </div>
-        {/if}
-        <label class="ewe-field">
-          <span class="ewe-field__label"><span>Type it again</span></span>
-          <span class="ewe-input" class:is-error={!!pw.error}><input class="mono" type="password" bind:value={pw.b} autocomplete="new-password" /></span>
-        </label>
-        {#if pw.error}<div class="ewe-field__helper ewe-field__helper--error"><Icon name="circle-x" /><span>{pw.error}</span></div>{/if}
-      </div>
-      <div class="ewe-dialog__foot">
-        <button type="button" class="ewe-btn ewe-btn--ghost" onclick={() => (pw = null)}>Cancel</button>
-        <button type="submit" class="ewe-btn ewe-btn--primary" disabled={pw.busy}>{pw.busy ? "Changing…" : "Change password"}</button>
-      </div>
-    </form></div>
+{#snippet section(title, desc = "")}
+  <div class="ewe-section safe-section">
+    <div class="ewe-section__text">
+      <h2 class="ewe-section__title ewe-section__title--overline">{title}</h2>
+      {#if desc}<div class="ewe-section__desc">{desc}</div>{/if}
+    </div>
   </div>
+{/snippet}
+
+{#if pw}
+  <Dialog
+    title="Change the master password"
+    desc="Your other computers and phones will ask for the new one once. If you forget it, nobody can open your safe."
+    icon="key-round"
+    onsubmit={changePassword}
+    onclose={() => (pw = null)}
+  >
+    <label class="ewe-field">
+      <span class="ewe-field__label"><span>New master password</span></span>
+      <span class="ewe-input"><input class="mono" type="password" bind:value={pw.a} autocomplete="new-password" /></span>
+    </label>
+    {#if pw.a}
+      <div class="ewe-meter ewe-meter--{meter.tone}">
+        <div class="ewe-meter__head"><Icon name="shield-check" /><span>Strength</span><span class="ewe-meter__value">{meter.label}</span></div>
+        <div class="ewe-meter__track"><div class="ewe-meter__fill" style="--value:{meter.pct}%"></div></div>
+      </div>
+    {/if}
+    <label class="ewe-field">
+      <span class="ewe-field__label"><span>Type it again</span></span>
+      <span class="ewe-input" class:is-error={!!pw.error}><input class="mono" type="password" bind:value={pw.b} autocomplete="new-password" /></span>
+    </label>
+    {#if pw.error}<div class="ewe-field__helper ewe-field__helper--error"><Icon name="circle-x" /><span>{pw.error}</span></div>{/if}
+    {#snippet foot()}
+      <button type="button" class="ewe-btn ewe-btn--ghost" onclick={() => (pw = null)}>Cancel</button>
+      <button type="submit" class="ewe-btn ewe-btn--primary" disabled={pw.busy}>{pw.busy ? "Changing…" : "Change password"}</button>
+    {/snippet}
+  </Dialog>
 {/if}
 
 {#if login}
-  <div class="safe-scrim">
-    <div role="dialog" aria-modal="true" aria-label="Unlock with my login password"><form class="ewe-dialog" onsubmit={enableLogin}>
-      <div class="ewe-dialog__head">
-        <span class="ewe-dialog__icon"><Icon name="fingerprint" /></span>
-        <div class="ewe-dialog__titles">
-          <h3 class="ewe-dialog__title">Unlock with my login password</h3>
-          <p class="ewe-dialog__desc">With this on, Safe on this computer is as strong as your login password. Your copy in Nextcloud still needs your master password.</p>
-        </div>
-      </div>
-      <div class="safe-dialog-field">
-        <label class="ewe-field">
-          <span class="ewe-field__label"><span>Your login password</span></span>
-          <span class="ewe-input" class:is-error={!!login.error}><input type="password" bind:value={login.login} autocomplete="current-password" spellcheck="false" /></span>
-        </label>
-        {#if safe.locked}
-          <label class="ewe-field">
-            <span class="ewe-field__label"><span>Master password for Safe</span></span>
-            <span class="ewe-input"><input class="mono" type="password" bind:value={login.master} autocomplete="current-password" spellcheck="false" /></span>
-          </label>
-        {/if}
-        {#if login.error}<div class="ewe-field__helper ewe-field__helper--error"><Icon name="circle-x" /><span>{login.error}</span></div>{/if}
-      </div>
-      <div class="ewe-dialog__foot">
-        <button type="button" class="ewe-btn ewe-btn--ghost" onclick={() => (login = null)}>Cancel</button>
-        <button type="submit" class="ewe-btn ewe-btn--primary" disabled={login.busy}>{login.busy ? "Turning on…" : "Turn on"}</button>
-      </div>
-    </form></div>
-  </div>
+  <Dialog
+    title="Unlock with my login password"
+    desc="With this on, ewe Safe on this computer is as strong as your login password. Your copy in Nextcloud still needs your master password."
+    icon="fingerprint"
+    onsubmit={enableLogin}
+    onclose={() => (login = null)}
+  >
+    <label class="ewe-field">
+      <span class="ewe-field__label"><span>Your login password</span></span>
+      <span class="ewe-input" class:is-error={!!login.error}><input type="password" bind:value={login.login} autocomplete="current-password" spellcheck="false" /></span>
+    </label>
+    {#if safe.locked}
+      <label class="ewe-field">
+        <span class="ewe-field__label"><span>Master password for ewe Safe</span></span>
+        <span class="ewe-input"><input class="mono" type="password" bind:value={login.master} autocomplete="current-password" spellcheck="false" /></span>
+      </label>
+    {/if}
+    {#if login.error}<div class="ewe-field__helper ewe-field__helper--error"><Icon name="circle-x" /><span>{login.error}</span></div>{/if}
+    {#snippet foot()}
+      <button type="button" class="ewe-btn ewe-btn--ghost" onclick={() => (login = null)}>Cancel</button>
+      <button type="submit" class="ewe-btn ewe-btn--primary" disabled={login.busy}>{login.busy ? "Turning on…" : "Turn on"}</button>
+    {/snippet}
+  </Dialog>
 {/if}
 
 {#if conv && !conv.busy}
-  <div class="safe-scrim">
-    <div class="ewe-dialog" role="dialog" aria-modal="true" aria-label="Cards from an earlier import">
-      <div class="ewe-dialog__head">
-        <span class="ewe-dialog__icon"><Icon name="credit-card" /></span>
-        <div class="ewe-dialog__titles">
-          {#if conv.converted.length}
-            <h3 class="ewe-dialog__title">Turn {conv.converted.length === 1 ? "1 note" : `${conv.converted.length} notes`} into cards and addresses?</h3>
-            <p class="ewe-dialog__desc">
-              {conv.converted.map((c) => `${c.title} (${c.kind === "card" ? "card" : "address"})`).join(", ")}. Each one keeps its name, tags and
-              folder. The note as it was stays in the item's history.
-            </p>
-          {:else}
-            <h3 class="ewe-dialog__title">Nothing to turn into cards</h3>
-            <p class="ewe-dialog__desc">Safe found no note an earlier 1Password import made from a card or an identity.</p>
-          {/if}
-          {#if conv.skipped.length}
-            <p class="ewe-dialog__desc">Left as notes: {conv.skipped.map((x) => `${x.title} (${x.reason})`).join("; ")}.</p>
-          {/if}
-        </div>
-      </div>
-      <div class="ewe-dialog__foot">
-        <button class="ewe-btn ewe-btn--ghost" onclick={() => (conv = null)}>{conv.converted.length ? "Cancel" : "Close"}</button>
-        {#if conv.converted.length}
-          <button class="ewe-btn ewe-btn--primary" onclick={runConvert}>Turn them into cards</button>
-        {/if}
-      </div>
-    </div>
-  </div>
+  <Dialog
+    title={conv.converted.length ? `Turn ${conv.converted.length === 1 ? "1 note" : `${conv.converted.length} notes`} into cards and addresses?` : "Nothing to turn into cards"}
+    desc={conv.converted.length
+      ? `${conv.converted.map((c) => `${c.title} (${c.kind === "card" ? "card" : "address"})`).join(", ")}. Each one keeps its name, tags and folder. The note as it was stays in the item’s history.`
+      : "ewe Safe found no note an earlier 1Password import made from a card or an identity."}
+    icon="credit-card"
+    onclose={() => (conv = null)}
+  >
+    {#if conv.skipped.length}
+      <p class="ewe-dialog__desc">Left as notes: {conv.skipped.map((x) => `${x.title} (${x.reason})`).join("; ")}.</p>
+    {/if}
+    {#snippet foot()}
+      <button type="button" class="ewe-btn ewe-btn--ghost" onclick={() => (conv = null)}>{conv.converted.length ? "Cancel" : "Close"}</button>
+      {#if conv.converted.length}
+        <button type="button" class="ewe-btn ewe-btn--primary" onclick={runConvert}>Turn them into cards</button>
+      {/if}
+    {/snippet}
+  </Dialog>
 {/if}
 
 {#if ui.kit}
-  <div class="safe-scrim">
-    <div class="ewe-dialog ewe-dialog--lg" role="dialog" aria-label="Emergency Kit" style="padding:var(--space-md);gap:var(--space-md);display:flex;flex-direction:column">
-      <Kit />
-      <div class="safe-actions safe-actions--split">
-        <button class="ewe-btn ewe-btn--ghost" onclick={() => (ui.kit = false)}>Close</button>
-        <button class="ewe-btn ewe-btn--secondary" onclick={() => api.print()}><Icon name="printer" />Print…</button>
-      </div>
-    </div>
-  </div>
+  <Dialog label="Emergency Kit" size="lg" onclose={() => (ui.kit = false)}>
+    <Kit />
+    {#snippet foot()}
+      <button type="button" class="ewe-btn ewe-btn--ghost" onclick={() => (ui.kit = false)}>Close</button>
+      <button type="button" class="ewe-btn ewe-btn--primary" data-autofocus onclick={() => api.print()}><Icon name="printer" />Print…</button>
+    {/snippet}
+  </Dialog>
 {/if}

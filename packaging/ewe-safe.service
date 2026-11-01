@@ -1,7 +1,7 @@
 # Safe, ewe's password manager: the daemon that holds the unlocked safe.
 # Started by ewe-safe.socket; stopping it (logout) locks the safe.
 [Unit]
-Description=Safe, ewe's password manager
+Description=ewe Safe, the password manager
 Documentation=https://github.com/prj786/ewe-safe
 Requires=ewe-safe.socket
 After=ewe-safe.socket

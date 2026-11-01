@@ -1,13 +1,13 @@
 [Desktop Entry]
 Type=Application
-Name=Safe
-GenericName=Password manager
+Name=ewe Safe
+GenericName=Passwords, passkeys and SSH keys
 Comment=Your passwords in one file that only you can open
 Exec=ewe-safe-app
 Icon=ewe-safe
 Terminal=false
 Categories=Utility;Security;
-Keywords=password;passwords;keepass;kdbx;1password;login;vault;ewe;
+Keywords=password;passwords;password manager;passkey;passkeys;ssh;keepass;kdbx;1password;login;vault;safe;ewe;
 StartupWMClass=ewe-safe
 Actions=new-login;import;
 
