@@ -824,6 +824,233 @@ button.ewe-choice {
   flex: none;
 }
 
+/* SSH (docs/GATE.md S28): the gate card, the services, keys and hosts,
+   the sheets (connect, move, a host, a new key) */
+.safe-sheet {
+  width: var(--panel-lg);
+  max-width: calc(100% - 2 * var(--space-md));
+  max-height: calc(100% - 2 * var(--space-md));
+  animation: safe-in-up var(--dur-base) var(--ease-out);
+}
+.safe-sheet:focus {
+  outline: none;
+}
+.safe-sheet .ewe-sheet__body {
+  overflow: auto;
+  padding: var(--space-md);
+  gap: var(--space-md);
+}
+.safe-sheet__icon {
+  display: inline-grid;
+  place-items: center;
+  width: var(--control-md);
+  height: var(--control-md);
+  border-radius: var(--primary);
+  background: var(--accent-subtle);
+  color: var(--accent-text);
+  flex: none;
+}
+.safe-sheet__icon .ewe-icon {
+  width: var(--icon-sm);
+  height: var(--icon-sm);
+}
+.safe-sheet .ewe-steps {
+  flex-wrap: wrap;
+}
+.safe-services {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-s);
+}
+button.safe-service {
+  flex-direction: row;
+  align-items: center;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+}
+.safe-service__icon {
+  display: inline-grid;
+  place-items: center;
+  width: var(--control-lg);
+  height: var(--control-lg);
+  border-radius: var(--primary);
+  background: var(--surface-hover);
+  color: var(--text-secondary);
+  flex: none;
+}
+.safe-service__text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xxs);
+}
+.safe-service__name {
+  font-size: var(--font-size-md);
+  line-height: var(--line-height-md);
+  font-weight: var(--font-weight-medium);
+}
+.safe-service__group {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-xs);
+  color: var(--text-muted);
+}
+.safe-service__group .ewe-icon {
+  width: var(--icon-xs);
+  height: var(--icon-xs);
+  color: var(--success);
+}
+.safe-pubkey {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-s);
+  padding: calc(var(--space-s) + var(--space-xs));
+  background: var(--surface-sunken);
+  border: var(--border-width-1) solid var(--border-subtle);
+  border-radius: var(--primary);
+}
+.safe-pubkey .mono {
+  flex: 1;
+  min-width: 0;
+  max-height: calc(3 * var(--line-height-s));
+  overflow: auto;
+  font-size: var(--font-size-s);
+  line-height: var(--line-height-s);
+  color: var(--text-primary);
+  word-break: break-all;
+  user-select: text;
+}
+.safe-steps {
+  margin: 0;
+  padding-left: var(--space-md);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  color: var(--text-secondary);
+}
+.safe-steps li::marker {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+}
+.safe-dot {
+  display: inline-block;
+  flex: none;
+  width: var(--space-s);
+  height: var(--space-s);
+  border-radius: var(--fully-rounded);
+  background: var(--success);
+}
+.safe-dot--off {
+  background: var(--text-muted);
+}
+.safe-chips--start {
+  justify-content: flex-start;
+  align-items: center;
+}
+.safe-chips--start .caption {
+  color: var(--text-muted);
+}
+.safe-result {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-xs);
+  font-size: var(--font-size-s);
+  line-height: var(--line-height-s);
+}
+.safe-result .ewe-icon {
+  width: var(--icon-sm);
+  height: var(--icon-sm);
+  flex: none;
+  margin-top: var(--space-xxs);
+}
+.safe-result.is-ok {
+  color: var(--success);
+}
+.safe-result.is-bad {
+  color: var(--warning);
+}
+.safe-result.is-danger {
+  color: var(--danger);
+}
+.safe-detailtext {
+  margin: 0;
+  padding: var(--space-s);
+  background: var(--surface-sunken);
+  border-radius: var(--primary);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-xs);
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
+  user-select: text;
+}
+details > summary {
+  cursor: pointer;
+  color: var(--text-secondary);
+}
+.safe-rowtext {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xxs);
+}
+.safe-rowtitle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-s);
+  min-width: 0;
+}
+.safe-gate {
+  display: flex;
+  align-items: center;
+  gap: var(--space-s);
+  color: var(--text-secondary);
+}
+.safe-gate > .ewe-icon {
+  color: var(--success);
+  flex: none;
+}
+.safe-gate .ewe-icon {
+  width: var(--icon-md);
+  height: var(--icon-md);
+}
+.safe-fields {
+  display: grid;
+  grid-template-columns: 2fr 1fr 1fr;
+  gap: calc(var(--space-s) + var(--space-xs));
+}
+.safe-fields--two {
+  grid-template-columns: 1fr 1fr;
+}
+/* a check box that is a button: its box shows keyboard focus */
+button.ewe-check {
+  background: none;
+  border: 0;
+  padding: 0;
+  text-align: left;
+  color: inherit;
+  font: inherit;
+}
+button.ewe-check:focus-visible {
+  outline: none;
+}
+button.ewe-check:focus-visible .ewe-check__box {
+  outline: var(--focus-width) solid var(--focus-ring);
+  outline-offset: var(--border-width-1);
+}
+/* toasts stay above a sheet ("Copied the public key.") */
+.safe-toasts {
+  z-index: 50;
+}
+
 @media print {
   body,
   html {

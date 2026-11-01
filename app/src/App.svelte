@@ -32,6 +32,8 @@
       ui.editing = { mode: "new", kind: "login" };
     }
     if (a.import) ui.go("import");
+    // `--ssh`: the SSH page (docs/GATE.md S28)
+    if (a.ssh && ui.view !== "ssh") ui.go("ssh");
   }
 
   onMount(() => {
