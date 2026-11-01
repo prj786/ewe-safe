@@ -40,10 +40,16 @@ use crate::daemon::{Daemon, Fail, lk, rd};
 use crate::log;
 
 const FAILURE: u8 = 5;
+const SUCCESS: u8 = 6;
 const REQUEST_IDENTITIES: u8 = 11;
 const IDENTITIES_ANSWER: u8 = 12;
 const SIGN_REQUEST: u8 = 13;
 const SIGN_RESPONSE: u8 = 14;
+/// `SSH_AGENTC_EXTENSION`: only `session-bind@openssh.com` is answered.
+const EXTENSION: u8 = 27;
+const SESSION_BIND: &[u8] = b"session-bind@openssh.com";
+/// Bindings one connection may hold (OpenSSH's own agent keeps 16).
+const MAX_BINDS: usize = 16;
 /// Requests that would put keys in or take them out (SSH2 and the old
 /// SSH1 ones, smartcards, constrained adds, lock/unlock): all refused.
 const KEY_CHANGES: [u8; 14] = [1, 7, 8, 9, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26];
@@ -173,6 +179,23 @@ impl Drop for Counted {
     fn drop(&mut self) {
         self.0.connections.fetch_sub(1, Ordering::SeqCst);
     }
+}
+
+/// A server this agent connection was bound to (`session-bind@openssh.com`,
+/// docs/GATE.md S27): its host key, and whether the binding was for a
+/// forwarded agent.
+#[derive(Clone, Debug, PartialEq)]
+struct Bind {
+    host_key: Vec<u8>,
+    forwarding: bool,
+}
+
+/// Where a signature goes, as far as Safe knows: the last server bound
+/// (named when its key is known), and whether any binding was forwarded.
+#[derive(Clone, Debug, Default, PartialEq)]
+struct Dest {
+    host: Option<String>,
+    forwarded: bool,
 }
 
 /// One key the agent offers.
@@ -454,6 +477,7 @@ impl Agent {
             return;
         }
         let peer = Peer::of(pid);
+        let mut binds: Vec<Bind> = Vec::new();
         loop {
             let mut len = [0u8; 4];
             if s.set_read_timeout(Some(IDLE)).is_err() || s.read_exact(&mut len).is_err() {
@@ -467,17 +491,37 @@ impl Agent {
             if s.set_read_timeout(Some(MESSAGE)).is_err() || s.read_exact(&mut body).is_err() {
                 return;
             }
-            let reply = self.answer(&peer, &body);
+            let (reply, close) = self.answer(&peer, &body, &mut binds);
             let mut out = Vec::with_capacity(reply.len() + 4);
             out.extend_from_slice(&(reply.len() as u32).to_be_bytes());
             out.extend_from_slice(&reply);
-            if s.write_all(&out).and_then(|()| s.flush()).is_err() {
+            if s.write_all(&out).and_then(|()| s.flush()).is_err() || close {
                 return;
             }
         }
     }
 
-    fn answer(&self, peer: &Peer, body: &[u8]) -> Vec<u8> {
+    /// The reply, and whether to close the connection after it (a
+    /// session-bind whose signature doesn't check out).
+    fn answer(&self, peer: &Peer, body: &[u8], binds: &mut Vec<Bind>) -> (Vec<u8>, bool) {
+        if body[0] == EXTENSION {
+            return match extension(&body[1..]) {
+                Ext::Bound(b) if binds.len() < MAX_BINDS => {
+                    binds.push(b);
+                    (vec![SUCCESS], false)
+                }
+                Ext::Bound(_) => (vec![FAILURE], false),
+                Ext::BadBind => {
+                    log("ssh agent: a session-bind with a bad signature: connection closed");
+                    (vec![FAILURE], true)
+                }
+                Ext::Other => (vec![FAILURE], false),
+            };
+        }
+        (self.answer_one(peer, body, binds), false)
+    }
+
+    fn answer_one(&self, peer: &Peer, body: &[u8], binds: &[Bind]) -> Vec<u8> {
         match body[0] {
             REQUEST_IDENTITIES => {
                 let ids = self.identities();
@@ -497,7 +541,10 @@ impl Agent {
                     let flags = take_u32(&mut rest)?;
                     Some((blob, data, flags))
                 })();
-                match parsed.and_then(|(blob, data, flags)| self.sign(peer, blob, data, flags)) {
+                let dest = destination(binds);
+                match parsed
+                    .and_then(|(blob, data, flags)| self.sign(peer, blob, data, flags, &dest))
+                {
                     Some(sig) => {
                         let mut out = vec![SIGN_RESPONSE];
                         put_string(&mut out, &sig);
@@ -510,12 +557,19 @@ impl Agent {
                 log("ssh agent: refused to add or remove keys (they come from Safe)");
                 vec![FAILURE]
             }
-            // extensions (session-bind@openssh.com, query) and the rest
+            // the rest (extensions are answered above)
             _ => vec![FAILURE],
         }
     }
 
-    fn sign(&self, peer: &Peer, blob: &[u8], data: &[u8], flags: u32) -> Option<Vec<u8>> {
+    fn sign(
+        &self,
+        peer: &Peer,
+        blob: &[u8],
+        data: &[u8],
+        flags: u32,
+        dest: &Dest,
+    ) -> Option<Vec<u8>> {
         if !self.d.settings().ssh_agent || !self.identities().iter().any(|i| i.blob == blob) {
             return None;
         }
@@ -529,7 +583,7 @@ impl Agent {
             .find(|(_, _, line)| keys::public_blob(line).as_deref() == Some(blob))?;
         let key = keys::public_line(blob).unwrap_or_default();
         let asked = self.d.settings().ssh_confirm != "never";
-        if !self.approved(peer, &key, &title) {
+        if !self.approved(peer, &key, &title, dest) {
             log(&format!(
                 "ssh agent: {} was not allowed ({})",
                 peer.label, peer.detail
@@ -549,7 +603,12 @@ impl Agent {
         match keys::sign(&text, &pass, data, flags) {
             Ok(sig) => {
                 self.record_use(blob, &peer.label);
-                if asked {
+                if dest.forwarded {
+                    log(&format!(
+                        "ssh agent: signed for {} through a forwarded connection",
+                        peer.label
+                    ));
+                } else if asked {
                     log(&format!("ssh agent: signed for {}", peer.label));
                 } else {
                     log(&format!(
@@ -654,8 +713,10 @@ impl Agent {
     }
 
     /// `[safe] ssh_confirm`: `never` asks nothing, `every-time` asks every
-    /// time, `first-use` once per app and key until the safe locks.
-    fn approved(&self, peer: &Peer, key: &str, title: &str) -> bool {
+    /// time, `first-use` once per app and key until the safe locks — but a
+    /// signature for a forwarded connection is asked about every time and
+    /// never remembered (docs/GATE.md S27).
+    fn approved(&self, peer: &Peer, key: &str, title: &str, dest: &Dest) -> bool {
         let mode = self.d.settings().ssh_confirm;
         if mode == "never" {
             return true;
@@ -668,7 +729,7 @@ impl Agent {
         }
         // a program whose file can't be seen is asked every time
         let pair = peer.identity.clone().map(|id| (id, key.to_string()));
-        let first_use = mode == config::CONFIRM_FIRST_USE;
+        let first_use = mode == config::CONFIRM_FIRST_USE && !dest.forwarded;
         let known = |p: &Option<(String, String)>| {
             first_use && p.as_ref().is_some_and(|p| lk(&self.allowed).contains(p))
         };
@@ -680,7 +741,7 @@ impl Agent {
         if known(&pair) {
             return true;
         }
-        let yes = ask(&self.d.paths, peer, title);
+        let yes = ask(&self.d.paths, peer, title, dest);
         if yes
             && first_use
             && let Some(p) = pair
@@ -971,12 +1032,21 @@ fn finish(mut child: Child, wait: Duration) -> Option<std::process::ExitStatus> 
 /// the key's name travel in `EWE_SAFE_APPROVE_APP`, `EWE_SAFE_APPROVE_PATH`,
 /// `EWE_SAFE_APPROVE_SYSTEM` and `EWE_SAFE_APPROVE_KEY`, never on a
 /// command line (the notification's text excepted).
-fn ask(paths: &Paths, peer: &Peer, key: &str) -> bool {
+fn ask(paths: &Paths, peer: &Peer, key: &str, dest: &Dest) -> bool {
     let wait = prompt_wait();
     let app = peer.label.as_str();
     let mut env = display_env(paths);
     env.push(("EWE_SAFE_APPROVE_APP".into(), app.to_string()));
     env.push(("EWE_SAFE_APPROVE_KEY".into(), key.to_string()));
+    // S27: where the signature goes, when Safe knows ("" when it doesn't)
+    env.push((
+        "EWE_SAFE_APPROVE_HOST".into(),
+        dest.host.clone().unwrap_or_default(),
+    ));
+    env.push((
+        "EWE_SAFE_APPROVE_FORWARDED".into(),
+        if dest.forwarded { "1" } else { "0" }.to_string(),
+    ));
     env.push(("EWE_SAFE_APPROVE_PATH".into(), peer.detail.clone()));
     env.push((
         "EWE_SAFE_APPROVE_SYSTEM".into(),
@@ -1000,7 +1070,7 @@ fn ask(paths: &Paths, peer: &Peer, key: &str) -> bool {
     }
     if let Some(notify) = on_path("notify-send") {
         let expire = format!("--expire-time={}", wait.as_millis());
-        let summary = format!("Allow {app} to use {key}?");
+        let summary = question(app, key, dest);
         let body = format!("{}. Click to allow. Close it to deny.", peer.detail);
         let mut c = prompt(
             notify.as_os_str(),
@@ -1037,9 +1107,188 @@ fn ask(paths: &Paths, peer: &Peer, key: &str) -> bool {
     false
 }
 
+/// "Allow ssh (from git) to use GitHub key for github.com?"
+fn question(app: &str, key: &str, dest: &Dest) -> String {
+    let to = dest
+        .host
+        .as_deref()
+        .map(|h| format!(" for {h}"))
+        .unwrap_or_default();
+    let fwd = if dest.forwarded {
+        " through a forwarded connection"
+    } else {
+        ""
+    };
+    format!("Allow {app} to use {key}{to}{fwd}?")
+}
+
+// ── session-bind (docs/GATE.md S27) ─────────────────────────────────────
+
+enum Ext {
+    Bound(Bind),
+    /// A session-bind whose signature doesn't check out.
+    BadBind,
+    Other,
+}
+
+/// `SSH_AGENTC_EXTENSION`'s body: `session-bind@openssh.com` is the
+/// server's host key, the session id, the server's signature over it and
+/// `is_forwarding` (OpenSSH's PROTOCOL.agent).
+fn extension(mut rest: &[u8]) -> Ext {
+    let Some(name) = take_string(&mut rest) else {
+        return Ext::Other;
+    };
+    if name != SESSION_BIND {
+        return Ext::Other;
+    }
+    let parsed = (|| {
+        let key = take_string(&mut rest)?;
+        let sid = take_string(&mut rest)?;
+        let sig = take_string(&mut rest)?;
+        let (fwd, tail) = rest.split_first()?;
+        Some((key, sid, sig, *fwd != 0, tail.is_empty()))
+    })();
+    match parsed {
+        Some((key, sid, sig, forwarding, true)) if keys::verify_session(key, sid, sig) => {
+            Ext::Bound(Bind {
+                host_key: key.to_vec(),
+                forwarding,
+            })
+        }
+        _ => Ext::BadBind,
+    }
+}
+
+/// The name a host key goes by: the services' shipped `known_hosts` first,
+/// then the plain (unhashed) lines of `~/.ssh/known_hosts`; the first name
+/// on the line (`[host]:port` read as `host:port`).
+fn host_name(host_key: &[u8]) -> Option<String> {
+    let mine =
+        std::fs::read_to_string(crate::hosts::ssh_dir().join("known_hosts")).unwrap_or_default();
+    [crate::gate::KNOWN_HOSTS, mine.as_str()]
+        .iter()
+        .flat_map(|t| t.lines())
+        .find_map(|l| {
+            let l = l.trim();
+            if l.is_empty() || l.starts_with('#') || l.starts_with('@') || l.starts_with('|') {
+                return None;
+            }
+            let mut f = l.split_whitespace();
+            let names = f.next()?;
+            let line = format!("{} {}", f.next()?, f.next()?);
+            (keys::public_blob(&line)? == host_key).then(|| {
+                let first = names.split(',').next().unwrap_or(names);
+                match first.strip_prefix('[').and_then(|x| x.split_once("]:")) {
+                    Some((h, p)) => format!("{h}:{p}"),
+                    None => first.to_string(),
+                }
+            })
+        })
+}
+
+/// Where a signature goes: the last server bound, and any forwarding.
+fn destination(binds: &[Bind]) -> Dest {
+    Dest {
+        host: binds.last().and_then(|b| host_name(&b.host_key)),
+        forwarded: binds.iter().any(|b| b.forwarding),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A session-bind built the way OpenSSH builds it, signed by a host key.
+    fn bind_msg(host: &keys::KeyFile, sid: &[u8], forwarding: bool, tamper: bool) -> Vec<u8> {
+        let blob = keys::public_blob(&host.public_key).unwrap();
+        let mut sig = keys::sign(&host.openssh, "", sid, keys::RSA_SHA2_512).unwrap();
+        if tamper {
+            let n = sig.len() - 1;
+            sig[n] ^= 1;
+        }
+        let mut m = Vec::new();
+        put_string(&mut m, SESSION_BIND);
+        put_string(&mut m, &blob);
+        put_string(&mut m, sid);
+        put_string(&mut m, &sig);
+        m.push(u8::from(forwarding));
+        m
+    }
+
+    #[test]
+    fn a_session_bind_is_checked_and_remembered() {
+        let sid = [7u8; 32];
+        for kind in ["ed25519", "ecdsa", "rsa"] {
+            let host = keys::generate(kind, None, "host").unwrap();
+            let blob = keys::public_blob(&host.public_key).unwrap();
+            match extension(&bind_msg(&host, &sid, false, false)) {
+                Ext::Bound(b) => assert_eq!(
+                    b,
+                    Bind {
+                        host_key: blob.clone(),
+                        forwarding: false
+                    },
+                    "{kind}"
+                ),
+                _ => panic!("{kind}: a good signature binds"),
+            }
+            assert!(
+                matches!(extension(&bind_msg(&host, &sid, true, true)), Ext::BadBind),
+                "{kind}: a bad signature is refused"
+            );
+        }
+        // another server's signature over this session id: refused
+        let a = keys::generate("ed25519", None, "a").unwrap();
+        let b = keys::generate("ed25519", None, "b").unwrap();
+        let mut m = bind_msg(&a, &sid, false, false);
+        let (ka, kb) = (
+            keys::public_blob(&a.public_key).unwrap(),
+            keys::public_blob(&b.public_key).unwrap(),
+        );
+        let at = m.windows(ka.len()).position(|w| w == ka).unwrap();
+        m[at..at + ka.len()].copy_from_slice(&kb);
+        assert!(matches!(extension(&m), Ext::BadBind));
+        // other extensions keep their answer (FAILURE)
+        let mut q = Vec::new();
+        put_string(&mut q, b"query");
+        assert!(matches!(extension(&q), Ext::Other));
+        assert!(matches!(extension(&[0, 0]), Ext::Other));
+    }
+
+    #[test]
+    fn the_question_names_the_host_and_a_forwarded_connection() {
+        let github = crate::gate::KNOWN_HOSTS
+            .lines()
+            .find(|l| l.starts_with("github.com ssh-ed25519 "))
+            .unwrap();
+        let blob = keys::public_blob(&github["github.com ".len()..]).unwrap();
+        assert_eq!(host_name(&blob).as_deref(), Some("github.com"));
+        let d = destination(&[
+            Bind {
+                host_key: vec![1, 2, 3],
+                forwarding: true,
+            },
+            Bind {
+                host_key: blob,
+                forwarding: false,
+            },
+        ]);
+        assert_eq!(
+            d,
+            Dest {
+                host: Some("github.com".into()),
+                forwarded: true
+            }
+        );
+        assert_eq!(
+            question("ssh (from git)", "GitHub key", &d),
+            "Allow ssh (from git) to use GitHub key for github.com through a forwarded connection?"
+        );
+        assert_eq!(
+            question("ssh", "GitHub key", &Dest::default()),
+            "Allow ssh to use GitHub key?"
+        );
+    }
 
     #[test]
     fn strings_and_numbers_read_off_the_wire() {

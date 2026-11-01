@@ -1462,6 +1462,61 @@ fn a_real_sshd_lets_safe_in() {
         used["program"].as_str().unwrap().starts_with("ssh"),
         "{used}"
     );
+
+    // S27: a real ssh of the user's (not the daemon's) binds its session to
+    // the server; the question names the host, from known_hosts
+    let fp = k["ssh"]["fingerprint"].as_str().unwrap();
+    let key_file = s.gate_dir().join(format!("key-{}.pub", tag(fp)));
+    let cfg = s.ssh_dir().join("config");
+    let known = s.ssh_dir().join("known_hosts");
+    let p = port.to_string();
+    let (_, err, code) = s.tool(
+        "ssh",
+        &[
+            "-F",
+            cfg.to_str().unwrap(),
+            "-o",
+            &format!("UserKnownHostsFile={}", known.display()),
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "IdentitiesOnly=yes",
+            "-i",
+            key_file.to_str().unwrap(),
+            "-p",
+            &p,
+            &format!("{}@127.0.0.1", me.trim()),
+            "true",
+        ],
+        &[],
+        None,
+    );
+    assert_eq!(code, 0, "{err}");
+    let asked = s.approvals();
+    assert_eq!(asked.len(), 1, "{asked:?}");
+    let q: Vec<&str> = asked[0].split('|').collect();
+    assert!(q[0].starts_with("ssh"), "{q:?}");
+    assert_eq!(
+        (q[1], q[2], q[3]),
+        ("Server key", format!("127.0.0.1:{port}").as_str(), "0")
+    );
+    // a session-bind with a bad signature closes the connection
+    {
+        use std::io::Read;
+        let mut c = std::os::unix::net::UnixStream::connect(s.agent()).unwrap();
+        let mut msg = vec![27u8];
+        for part in [&b"session-bind@openssh.com"[..], b"key", b"sid", b"sig"] {
+            msg.extend_from_slice(&(part.len() as u32).to_be_bytes());
+            msg.extend_from_slice(part);
+        }
+        msg.push(0);
+        c.write_all(&(msg.len() as u32).to_be_bytes()).unwrap();
+        c.write_all(&msg).unwrap();
+        let mut reply = Vec::new();
+        c.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        c.read_to_end(&mut reply).unwrap();
+        assert_eq!(reply, [0, 0, 0, 1, 5], "FAILURE, then closed");
+    }
 }
 
 impl Sandbox {

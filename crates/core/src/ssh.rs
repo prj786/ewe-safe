@@ -601,6 +601,20 @@ pub fn public_line(blob: &[u8]) -> Option<String> {
     k.to_openssh().ok().map(|l| l.trim_end().to_string())
 }
 
+/// A server's signature over a session id, as OpenSSH's
+/// `session-bind@openssh.com` agent extension carries it: the host key and
+/// the signature in SSH's wire form. True only when it checks out.
+pub fn verify_session(host_key: &[u8], session_id: &[u8], signature: &[u8]) -> bool {
+    let Ok(k) = PublicKey::from_bytes(host_key) else {
+        return false;
+    };
+    let Ok(sig) = ssh_key::Signature::try_from(signature) else {
+        return false;
+    };
+    // the trait, not PublicKey's own `verify` (that one checks an SSHSIG)
+    signature::Verifier::verify(k.key_data(), session_id, &sig).is_ok()
+}
+
 /// `SHA256:…` of an OpenSSH public line, as `ssh-keygen -l` prints it.
 pub fn fingerprint_of_line(line: &str) -> Option<String> {
     let k = PublicKey::from_openssh(line.trim()).ok()?;
