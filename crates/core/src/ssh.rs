@@ -601,6 +601,52 @@ pub fn public_line(blob: &[u8]) -> Option<String> {
     k.to_openssh().ok().map(|l| l.trim_end().to_string())
 }
 
+/// A server's signature over a session id, as OpenSSH's
+/// `session-bind@openssh.com` agent extension carries it: the host key and
+/// the signature in SSH's wire form. True only when it checks out.
+pub fn verify_session(host_key: &[u8], session_id: &[u8], signature: &[u8]) -> bool {
+    let Ok(k) = PublicKey::from_bytes(host_key) else {
+        return false;
+    };
+    let Ok(sig) = ssh_key::Signature::try_from(signature) else {
+        return false;
+    };
+    // the trait, not PublicKey's own `verify` (that one checks an SSHSIG)
+    signature::Verifier::verify(k.key_data(), session_id, &sig).is_ok()
+}
+
+/// `SHA256:…` of an OpenSSH public line, as `ssh-keygen -l` prints it.
+pub fn fingerprint_of_line(line: &str) -> Option<String> {
+    let k = PublicKey::from_openssh(line.trim()).ok()?;
+    Some(k.fingerprint(HashAlg::Sha256).to_string())
+}
+
+/// `SHA256:…` of a public key's wire form.
+pub fn fingerprint_of_blob(blob: &[u8]) -> Option<String> {
+    let k = PublicKey::from_bytes(blob).ok()?;
+    Some(k.fingerprint(HashAlg::Sha256).to_string())
+}
+
+/// `ed25519`, `ecdsa`, `rsa`, … of an OpenSSH public line.
+pub fn key_type_of_line(line: &str) -> Option<String> {
+    let k = PublicKey::from_openssh(line.trim()).ok()?;
+    Some(key_type(&k.algorithm()))
+}
+
+/// The public line (with the key's comment when it can be read) of a
+/// private key file, without its passphrase: an OpenSSH key keeps its
+/// public half outside the encryption; an unencrypted PEM key is read.
+/// None for an encrypted PEM file or anything that isn't a key.
+pub fn public_of_private(bytes: &[u8]) -> Option<String> {
+    let text = std::str::from_utf8(bytes).ok()?;
+    let key = parse(text).ok()?;
+    let mut public: PublicKey = key.public_key().clone();
+    if key.is_encrypted() {
+        public.set_comment("");
+    }
+    public.to_openssh().ok().map(|l| l.trim_end().to_string())
+}
+
 /// Sign `data` with a stored key (draft-miller-ssh-agent, SIGN_REQUEST):
 /// the signature in SSH's wire form (algorithm name, then the signature).
 /// RSA signs with SHA-512 or SHA-256 as `flags` ask; plain `ssh-rsa`

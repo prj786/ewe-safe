@@ -11,8 +11,8 @@ pkgname=ewe-safe
 # -alpha/-beta, an Arch pkgver may not hold a hyphen; 0.1.0alpha sorts below
 # 0.1.0 under vercmp). The archive is addressed by the TAG, so the source URL
 # and the directory follow _tag, never pkgver.
-_tag=v0.3.1-beta
-pkgver=0.3.1beta
+_tag=v0.4.0-beta
+pkgver=0.4.0beta
 pkgrel=1
 pkgdesc="Safe — ewe's password manager: one KeePass file in a place you choose, filled with Super+P"
 arch=('x86_64' 'aarch64')
@@ -28,7 +28,8 @@ depends=(
 optdepends=(
   'ewe: the desktop — ewe-conf ([safe] settings), ewe-cloud (your Nextcloud), the Super+P picker (plugin ewe.passwords)'
   '1password-cli: import straight from the 1Password app (op)'
-  'openssh: use the SSH keys in Safe with ssh and git (ewe-safe ssh enable)'
+  'openssh: use the SSH keys in Safe with ssh and git (ewe-safe ssh enable), sign Git commits with them'
+  'git: sign Git commits with a key in Safe (ewe-safe ssh sign-commits)'
   'kitty: the unlock prompt when the window is not installed'
 )
 makedepends=('rust' 'cargo' 'nodejs' 'npm')
@@ -67,6 +68,8 @@ package() {
   install -Dm755 target/release/ewe-safed "$pkgdir/usr/bin/ewe-safed"
   install -Dm755 target/release/ewe-safe "$pkgdir/usr/bin/ewe-safe"
   install -Dm755 app/src-tauri/target/release/ewe-safe-app "$pkgdir/usr/bin/ewe-safe-app"
+  # Git's gpg.ssh.program when Safe signs commits (docs/GATE.md S25)
+  install -Dm755 packaging/ewe-safe-ssh-sign "$pkgdir/usr/bin/ewe-safe-ssh-sign"
 
   install -Dm644 packaging/ewe-safe.socket "$pkgdir/usr/lib/systemd/user/ewe-safe.socket"
   install -Dm644 packaging/ewe-safe.service "$pkgdir/usr/lib/systemd/user/ewe-safe.service"

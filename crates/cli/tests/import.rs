@@ -74,7 +74,7 @@ impl Sandbox {
         write_exec(
             &bin.join("ewe-conf"),
             r#"#!/usr/bin/env python3
-import json, os, sys
+import json, os, sys, tempfile
 p = os.path.join(os.environ["XDG_CONFIG_HOME"], "fake-ewe-conf.json")
 try:
     d = json.load(open(p))
@@ -89,7 +89,11 @@ if a[:2] == ["get", "safe"]:
         sys.exit(1)
 elif a and a[0] == "set":
     d.setdefault("safe", {})[a[1].split(".", 1)[1]] = a[2]
-    json.dump(d, open(p, "w"))
+    # atomically, like the real ewe-conf (the daemon re-reads on its own)
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(p), prefix=".fake-ewe-conf.")
+    with os.fdopen(fd, "w") as f:
+        json.dump(d, f)
+    os.replace(tmp, p)
 "#,
         );
         Sandbox {

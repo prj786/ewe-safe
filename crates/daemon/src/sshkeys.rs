@@ -3,7 +3,7 @@
 //! `safe_core::ssh`; the agent is agent.rs.
 
 use std::io::Read;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
 use safe_core::Kind;
@@ -14,13 +14,11 @@ use zeroize::Zeroizing;
 use crate::agent;
 use crate::config::{self, CONFIRMS};
 use crate::daemon::{Daemon, Fail, item_json, rd};
+use crate::gate;
 use crate::log;
 
 type Args = Map<String, Value>;
 
-/// The environment.d file `enable` writes (and `disable` removes).
-const ENV_FILE: &str = "90-ewe-safe-ssh.conf";
-const ENV_MARK: &str = "# Written by `ewe-safe ssh enable`";
 /// What `enable` and `status` say when `ssh_confirm = never`.
 const NEVER_WARNING: &str = "ssh_confirm is never: any program running as you can use your SSH keys while Safe is unlocked, without a question.";
 
@@ -51,17 +49,29 @@ pub fn dispatch(d: &Arc<Daemon>, verb: &str, a: &mut Args) -> Result<Value, Fail
         "ssh-enable" => enable(d, a),
         "ssh-disable" => disable(d),
         "ssh-status" => Ok(status(d, a)),
+        // the gate (docs/GATE.md S23–S25)
+        "ssh-takeover" => crate::takeover::takeover(d, a),
+        "ssh-services" => Ok(crate::connect::services_json()),
+        "ssh-connect" => crate::connect::connect(d, a),
+        "ssh-test" => crate::connect::test(d, a),
+        "ssh-hosts" | "ssh-host-set" | "ssh-host-remove" => crate::hosts::dispatch(d, verb, a),
+        "ssh-sign" => crate::signing::sign(d, a),
         other => Err(Fail::bad(format!("There is no verb {other:?}."))),
     }
 }
 
-/// The `ssh` object of an item (PROTOCOL.md).
+/// The `ssh` object of an item (PROTOCOL.md): plus, for a key the agent
+/// offers, `file` (its public file, S22) and `last_used` (`{at, program}`
+/// or null: the agent's last signature with it on this computer).
 pub fn ssh_json(info: &keys::Info) -> Value {
+    let offered = info.agent && keys::supported_line(&info.public_key);
     json!({
         "public_key": info.public_key,
         "fingerprint": info.fingerprint,
         "key_type": info.key_type,
         "agent": info.agent,
+        "file": offered.then(|| gate::key_file_tilde(&info.fingerprint)).flatten(),
+        "last_used": agent::get().and_then(|ag| ag.last_used(&info.fingerprint)),
     })
 }
 
@@ -238,46 +248,14 @@ fn report_json(r: &keys::AdoptReport) -> Value {
 
 // ── on and off ──────────────────────────────────────────────────────────
 
-fn config_home() -> PathBuf {
-    std::env::var_os("XDG_CONFIG_HOME")
-        .filter(|v| !v.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            std::env::var_os("HOME")
-                .map(PathBuf::from)
-                .unwrap_or_default()
-                .join(".config")
-        })
-}
-
-fn env_file() -> PathBuf {
-    config_home().join("environment.d").join(ENV_FILE)
-}
-
 fn identity_agent(d: &Daemon) -> String {
     format!("IdentityAgent {}", d.paths.ssh_socket().display())
 }
 
-/// `IdentityAgent` lines in `~/.ssh/config` (read only, never written):
-/// one names another agent for every host, and `SSH_AUTH_SOCK` is not
-/// asked.
+/// `IdentityAgent` lines in `~/.ssh/config` (read only): with the gate
+/// on, Safe's include comes first and wins over them.
 fn ssh_config_agents() -> Vec<String> {
-    let Some(home) = std::env::var_os("HOME").map(PathBuf::from) else {
-        return Vec::new();
-    };
-    let Ok(text) = std::fs::read_to_string(home.join(".ssh/config")) else {
-        return Vec::new();
-    };
-    text.lines()
-        .map(str::trim)
-        .filter_map(|l| {
-            let (k, v) = l.split_once(|c: char| c.is_whitespace() || c == '=')?;
-            k.eq_ignore_ascii_case("identityagent")
-                .then(|| v.trim_start_matches(|c: char| c.is_whitespace() || c == '='))
-                .map(|v| v.trim().trim_matches('"').to_string())
-        })
-        .filter(|v| !v.is_empty())
-        .collect()
+    crate::hosts::read_config().identity_agents
 }
 
 fn enable(d: &Arc<Daemon>, a: &Args) -> Result<Value, Fail> {
@@ -286,38 +264,37 @@ fn enable(d: &Arc<Daemon>, a: &Args) -> Result<Value, Fail> {
         Some(c) if CONFIRMS.contains(&c.to_lowercase().as_str()) => Some(c.to_lowercase()),
         Some(_) => return Err(Fail::bad("--confirm is first-use, every-time or never")),
     };
+    let _turning = crate::daemon::lk(&gate::TURNING);
     let mut recorded = config::conf_store("ssh_agent", "true");
     if let Some(c) = &confirm {
         recorded &= config::conf_store("ssh_confirm", c);
     }
     d.reload_settings();
-    let file = env_file();
-    let body = format!(
-        "{ENV_MARK}: ssh and git use the keys in Safe.\n# `ewe-safe ssh disable` removes this file.\nSSH_AUTH_SOCK=${{XDG_RUNTIME_DIR}}/{}\n",
-        config::SSH_SOCKET
-    );
-    // no SSH_AUTH_SOCK pointing at an agent that stays off
-    let written = if recorded {
-        file.parent()
-            .map_or(Ok(()), std::fs::create_dir_all)
-            .and_then(|()| safe_core::atomic::write(&file, body.as_bytes()))
+    // the gate (docs/GATE.md S21): only once the setting is recorded — no
+    // SSH_AUTH_SOCK or Include pointing at an agent that stays off
+    let applied = if recorded && d.settings().ssh_agent {
+        let r = gate::apply(d);
+        if let Err(e) = &r {
+            log(&format!("can't put the SSH gate in place: {e}"));
+        }
+        r.is_ok()
     } else {
-        Err(std::io::Error::other("the setting was not recorded"))
+        false
     };
-    if recorded && let Err(e) = &written {
-        log(&format!("can't write {}: {e}", file.display()));
-    }
     if let Some(ag) = agent::get() {
+        // the public-key list and the key files (S22)
         ag.write_cache();
     }
+    let file = gate::env_file();
     let line = identity_agent(d);
     let mut v = json!({
         "enabled": d.settings().ssh_agent,
         "recorded": recorded,
         "socket": d.paths.ssh_socket(),
-        "env_file": written.is_ok().then_some(&file),
+        "env_file": (applied && file.exists()).then_some(&file),
         "identity_agent": line,
-        "hint": format!("New sessions get SSH_AUTH_SOCK. For ssh now, and when ~/.ssh/config names another agent, put this line under Host * in ~/.ssh/config: {line}"),
+        "hint": "Every ssh and git on this computer asks Safe now: ~/.ssh/config includes ~/.ssh/ewe-safe/config, which names Safe's agent. New sessions also get SSH_AUTH_SOCK.",
+        "gate": gate::status_json(d, None),
     });
     if !recorded {
         v["hint"] = json!(
@@ -331,18 +308,26 @@ fn enable(d: &Arc<Daemon>, a: &Args) -> Result<Value, Fail> {
 }
 
 fn disable(d: &Arc<Daemon>) -> Result<Value, Fail> {
+    let turning = crate::daemon::lk(&gate::TURNING);
+    let file = gate::env_file();
+    let had_env = file.exists();
     let recorded = config::conf_store("ssh_agent", "false");
     d.reload_settings();
-    let file = env_file();
-    let ours = std::fs::read_to_string(&file).is_ok_and(|t| t.starts_with(ENV_MARK));
-    let removed = ours && std::fs::remove_file(&file).is_ok();
+    // signing needs the agent: commits would fail without it (GATE.md S25)
+    let signing_off = crate::signing::off_for_disable(d);
+    // the gate's lines and files, only what Safe wrote (S21)
+    gate::remove();
+    let removed = had_env && !file.exists();
     if let Some(ag) = agent::get() {
         ag.forget_cache();
     }
+    drop(turning);
     Ok(json!({
         "enabled": d.settings().ssh_agent,
         "recorded": recorded,
         "env_file_removed": removed,
+        "signing_off": signing_off,
+        "gate": gate::status_json(d, None),
     }))
 }
 
@@ -355,7 +340,7 @@ fn status(d: &Daemon, a: &Args) -> Value {
         p == socket
             || std::fs::canonicalize(p).ok() == std::fs::canonicalize(&socket).ok() && p.exists()
     });
-    let file = env_file();
+    let file = gate::env_file();
     let mut v = json!({
         "enabled": st.ssh_agent,
         "confirm": st.ssh_confirm,
@@ -368,6 +353,8 @@ fn status(d: &Daemon, a: &Args) -> Value {
         "env_file": file.exists().then_some(&file),
         "identity_agent": identity_agent(d),
         "ssh_config_agents": ssh_config_agents(),
+        "gate": gate::status_json(d, caller.as_deref()),
+        "signing": crate::signing::status_json(d),
     });
     if st.ssh_confirm == "never" {
         v["warning"] = json!(NEVER_WARNING);

@@ -3,7 +3,7 @@
 // it; nothing here is ever a secret.
 
 class Ui {
-  // "items" | "settings" | "import"
+  // "items" | "settings" | "import" | "ssh" (the SSH page, docs/GATE.md S28)
   view = $state("items");
   // the side navigation: kind "login"/"note"/"ssh-key"/"card"/"address", a
   // tag, a folder, or the trash
@@ -11,8 +11,12 @@ class Ui {
   selected = $state(null);
   query = $state("");
   // null, or {mode: "new" | "edit", id?, kind}; a new "ssh-key" is
-  // SshKeyNew (make one, or add a file)
+  // SshKeyNew (make one, or add a file: `way: "file"`)
   editing = $state(null);
+  // the SSH page's sheets: connecting to a service ({service?, key?}: no
+  // service = pick one first), moving SSH to Safe
+  connect = $state(null);
+  takeover = $state(false);
   // the Emergency Kit over the window (from Settings)
   kit = $state(false);
   // a safe is being created: stay on the setup screens until the Emergency
@@ -26,6 +30,8 @@ class Ui {
   go(view) {
     this.view = view;
     this.editing = null;
+    this.connect = null;
+    this.takeover = false;
   }
 
   pick(filter) {
@@ -33,6 +39,8 @@ class Ui {
     this.view = "items";
     this.editing = null;
     this.selected = null;
+    this.connect = null;
+    this.takeover = false;
   }
 
   isFilter(f) {

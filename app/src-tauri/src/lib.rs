@@ -23,6 +23,8 @@
 //! - `--confirm --reason TEXT` is a card fill's fresh check (docs/SYSTEM.md
 //!   §4): the same compact process, "Type your password to fill …". It exits
 //!   0 once the daemon's `confirm` succeeds, 1 if the window is closed.
+//! - `--ssh` opens the window on the SSH page (docs/GATE.md S28), for the
+//!   SSH plugin and the shell.
 //! - `--approve` is the SSH agent's question, the same kind of compact
 //!   process (and app_id, so it floats the same): "Allow ssh (from git) to
 //!   use GitHub key?". The daemon names the app and the key in
@@ -72,7 +74,13 @@ const PLACE_KEYS: &[&str] = &["place", "location", "url", "user"];
 struct Daemon(Mutex<Value>);
 
 async fn call(verb: &'static str, args: Map<String, Value>) -> Value {
-    let wait = safe_client::wait_for(verb);
+    call_wait(verb, args, safe_client::wait_for(verb)).await
+}
+
+/// `call` with at least `wait`: for verbs safe-client may not know yet (the
+/// SSH gate's), so the window never gives up before the daemon does.
+async fn call_wait(verb: &'static str, args: Map<String, Value>, wait: Duration) -> Value {
+    let wait = wait.max(safe_client::wait_for(verb));
     tauri::async_runtime::spawn_blocking(move || safe_client::call(verb, Value::Object(args), wait))
         .await
         .unwrap_or_else(|_| {
@@ -397,6 +405,11 @@ struct Approve {
     key: String,
     path: String,
     system: bool,
+    /// The server the key goes to, when ssh told the agent (GATE.md S27);
+    /// empty when unknown.
+    host: String,
+    /// The request came through a forwarded agent connection.
+    forwarded: bool,
 }
 
 /// What this process was started with (see the module notes).
@@ -410,6 +423,8 @@ struct Launch {
     show: Option<String>,
     new: bool,
     import: bool,
+    /// The SSH page (GATE.md S28).
+    ssh: bool,
 }
 
 impl Launch {
@@ -428,12 +443,15 @@ impl Launch {
                         key: env("EWE_SAFE_APPROVE_KEY"),
                         path: env("EWE_SAFE_APPROVE_PATH"),
                         system: env("EWE_SAFE_APPROVE_SYSTEM") == "1",
+                        host: env("EWE_SAFE_APPROVE_HOST"),
+                        forwarded: env("EWE_SAFE_APPROVE_FORWARDED") == "1",
                     });
                 }
                 "--confirm" => confirm = true,
                 "--reason" => reason = it.next().filter(|r| r.len() <= 200),
                 "--new" => l.new = true,
                 "--import" => l.import = true,
+                "--ssh" => l.ssh = true,
                 "--show" => l.show = it.next().filter(|id| id.len() <= 64),
                 _ => {}
             }
@@ -461,11 +479,12 @@ impl Launch {
         };
         json!({
             "mode": mode,
-            "approve": self.approve.as_ref().map(|a| json!({"app": a.app, "key": a.key, "path": a.path, "system": a.system})),
+            "approve": self.approve.as_ref().map(|a| json!({"app": a.app, "key": a.key, "path": a.path, "system": a.system, "host": a.host, "forwarded": a.forwarded})),
             "reason": self.confirm,
             "show": self.show,
             "new": self.new,
             "import": self.import,
+            "ssh": self.ssh,
         })
     }
 }
@@ -523,6 +542,30 @@ async fn open_url(url: String) -> Value {
 #[tauri::command]
 async fn open_ewe_sync() -> Value {
     blocking(tools::open_ewe_sync).await
+}
+
+/// A service's page (GATE.md S24) in ewe browser, else the default browser.
+#[tauri::command]
+async fn open_page(url: String) -> Value {
+    blocking(move || tools::open_page(&url)).await
+}
+
+/// Your ewe computers (RFC-009): `ewe-remote status --offline`.
+#[tauri::command]
+async fn remote_status() -> Value {
+    blocking(tools::remote_status).await
+}
+
+/// A terminal on one of your ewe computers: `ewe-remote terminal <id>`.
+#[tauri::command]
+async fn remote_terminal(id: String) -> Value {
+    blocking(move || tools::remote_terminal(&id)).await
+}
+
+/// A terminal that runs `ssh <alias>` (kitty, on its own).
+#[tauri::command]
+async fn ssh_terminal(alias: String) -> Value {
+    blocking(move || tools::ssh_terminal(&alias)).await
 }
 
 /// A file picker (the desktop portal): a 1Password export, a CSV, a .kdbx.
@@ -722,6 +765,10 @@ pub fn run() {
             window_classes,
             open_url,
             open_ewe_sync,
+            open_page,
+            remote_status,
+            remote_terminal,
+            ssh_terminal,
             pick_file,
             print_page,
             quit_app,
@@ -760,6 +807,14 @@ pub fn run() {
             ssh::ssh_enable,
             ssh::ssh_disable,
             ssh::ssh_status,
+            ssh::ssh_takeover,
+            ssh::ssh_services,
+            ssh::ssh_connect,
+            ssh::ssh_test,
+            ssh::ssh_hosts,
+            ssh::ssh_host_set,
+            ssh::ssh_host_remove,
+            ssh::ssh_sign,
             convert,
             keyring::keyring_status,
             keyring::keyring_repair,
@@ -810,6 +865,9 @@ mod tests {
         );
         assert!(p(&["ewe-safe-app", "--new"]).new);
         assert!(p(&["ewe-safe-app", "--import"]).import);
+        let s = p(&["ewe-safe-app", "--ssh"]);
+        assert!(s.ssh && !s.compact());
+        assert_eq!(s.json()["ssh"], true);
         // an over-long id is not an id
         assert_eq!(p(&["ewe-safe-app", "--show", &"x".repeat(65)]).show, None);
         assert_eq!(p(&["ewe-safe-app", "--unlock"]).json()["mode"], "unlock");

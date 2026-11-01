@@ -62,6 +62,7 @@ Every reply has `"ok"`. A failure is:
 | `needs-login-module` | `keyring adopt`: Safe's login module (`/usr/lib/security/pam_ewe_safe.so`) isn't installed; until it is, `keyring repair` is the fix |
 | `pam-missing` | `keyring adopt`: the login screen's PAM file (`/etc/pam.d/greetd`) doesn't use Safe's login module yet (the hint is the exact command) |
 | `not-adopted` | `keyring unlock`: this computer has no login key yet (`keyring adopt` makes it) |
+| `conflict` | `ssh connect`, `ssh host set`, `ssh host remove`: the SSH host name is taken — in ewe.conf with another key (`--replace` or another `--alias`), or in your own lines of `~/.ssh/config` (Safe never edits those). The reply also has `alias` (docs/GATE.md S24) |
 
 ### Shapes
 
@@ -95,9 +96,14 @@ protected custom field are.
   caller that knows only logins and notes skips other kinds.
 - `ssh`: an SSH key's public part, `null` for the other kinds:
   `{"public_key": "ssh-ed25519 AAAA… comment", "fingerprint": "SHA256:…",
-  "key_type": "ed25519", "agent": true}` — `key_type` is `ed25519`,
-  `ecdsa`, `rsa`, `dsa` or the algorithm's own name; `agent` = an SSH agent
-  may use it (its `KeeAgent.settings`). Never the private key.
+  "key_type": "ed25519", "agent": true, "file": "~/.ssh/ewe-safe/key-p2QAMXNIC1TJYWeI.pub",
+  "last_used": {"at": "2026-11-01T09:12:00Z", "program": "ssh (from git)"}}` —
+  `key_type` is `ed25519`, `ecdsa`, `rsa`, `dsa` or the algorithm's own
+  name; `agent` = an SSH agent may use it (its `KeeAgent.settings`);
+  `file` = the key's public file for an `IdentityFile` line (docs/GATE.md
+  S22; written while Safe's agent is on; `null` for a key the agent
+  doesn't offer); `last_used` = the agent's last signature with this key
+  on this computer, or `null`. Never the private key.
 - `apps`: window classes, from the entry's `app:<class>` tags; `tags` are the
   other tags (`app:*` excluded).
 - `folder`: the group path below the root, `""` at the root.
@@ -264,13 +270,29 @@ a secret like `"password"` (from the terminal or a stdin line, never argv).
 | `ssh add <file> [--title T] [--folder F] [--passphrase-stdin]` | `ssh-add`: `private_key` (the file's text, a secret; the CLI and the window read the file, and refuse one over 1 MB unread) and `file_name` (for the title), or `file` (a full path the daemon reads itself); `title`, `folder`, `passphrase` | `item_id`, `ssh`, `sync`. OpenSSH or PEM (PKCS#8, PKCS#1, SEC1) keys; stored as OpenSSH. Ed25519, ECDSA P-256/P-384 and RSA only: DSA, P-521 and security-key (`sk-`) keys are `bad-request`, with the reason. A key with a passphrase keeps it (the CLI asks on a terminal); the title defaults to the key's comment, else the file name. A key Safe already has is `bad-request` |
 | `ssh new --title T [--type ed25519\|ecdsa\|rsa] [--bits N] [--folder F]` | `ssh-new`: `title`, `type`, `bits`, `folder` | `item_id`, `ssh`, `sync`. Ed25519 by default; ECDSA 256 or 384 bits; RSA 2048, 3072 (default) or 4096. The comment is the title |
 | `ssh adopt [--dry-run]` | `ssh-adopt`: `dry_run` | `adopted: [{item_id, title}]`, `skipped: [{title, reason}]`, `dry_run: true` or `sync`. Turns the notes an earlier 1Password import made from SSH keys into SSH key items, in place (same id, the note text and every field kept, the note as it was in history) |
-| `ssh enable [--confirm first-use\|every-time\|never]` | `ssh-enable`: `confirm` | `enabled`, `recorded` (ewe-conf stored `[safe] ssh_agent = true`), `socket`, `env_file`, `identity_agent`, `hint`, and `warning` when `ssh_confirm` is `never`. Only once it is recorded, writes `$XDG_CONFIG_HOME/environment.d/90-ewe-safe-ssh.conf` (`SSH_AUTH_SOCK` for new sessions; `env_file` is null otherwise); prints the one `IdentityAgent` line for `~/.ssh/config` and never edits that file |
-| `ssh disable` | `ssh-disable` | `enabled`, `recorded`, `env_file_removed` (only a file `enable` wrote). The public-key list goes too |
-| `ssh status` | `ssh-status`: `ssh_auth_sock` (the caller's) | `enabled`, `confirm`, `socket`, `listening`, `keys` (how many the agent offers now; from the public-key list while locked), `locked`, `ssh_auth_sock`, `points_here` (it is our socket), `env_file` (or null), `identity_agent`, `ssh_config_agents` (`IdentityAgent` values `~/.ssh/config` names: one there wins over `SSH_AUTH_SOCK`), `warning` when `ssh_confirm` is `never` |
+| `ssh enable [--confirm first-use\|every-time\|never]` | `ssh-enable`: `confirm` | `enabled`, `recorded` (ewe-conf stored `[safe] ssh_agent = true`), `socket`, `env_file`, `identity_agent`, `hint`, `gate` (below), and `warning` when `ssh_confirm` is `never`. Only once it is recorded: writes `$XDG_CONFIG_HOME/environment.d/90-ewe-safe-ssh.conf` (`SSH_AUTH_SOCK` for new sessions; `env_file` is null otherwise) and puts **the gate** in place (docs/GATE.md S21): `~/.ssh/ewe-safe/config` (`Host *`, Safe's `IdentityAgent`, the services' `known_hosts`) and two lines on top of `~/.ssh/config` — `# Safe (ewe): every ssh asks Safe for keys. …` and `Include ~/.ssh/ewe-safe/config` — so every `ssh` asks Safe even where a host names another agent (`ssh` takes the first value). The file is copied once to `~/.ssh/config.before-safe`, written atomically with its mode kept (a link stays a link); nothing is written when the lines are on top already, and lines of Safe's found lower down move to the top. Safe changes no other line |
+| `ssh disable` | `ssh-disable` | `enabled`, `recorded`, `env_file_removed` (only a file `enable` wrote), `signing_off` (commit signing was on: it goes too, docs/GATE.md S25), `gate`. Removes only what Safe wrote: its two lines (those exact lines), `~/.ssh/ewe-safe/` (`config`, `key-*.pub`, `known_hosts`, `allowed_signers`) and the environment.d file; never `config.before-safe`. The public-key list goes too |
+| `ssh status` | `ssh-status`: `ssh_auth_sock` (the caller's) | `enabled`, `confirm`, `socket`, `listening`, `keys` (how many the agent offers now; from the public-key list while locked), `locked`, `ssh_auth_sock`, `points_here` (it is our socket), `env_file` (or null), `identity_agent`, `ssh_config_agents` (`IdentityAgent` values `~/.ssh/config` names), `gate`, `signing`, `warning` when `ssh_confirm` is `never`. **`gate`**: `{on, include, problem, config_file, overridden: [{host, agent}], key_files: [{path, fingerprint, in_safe}], other_agents: [{socket, name, keys, missing_from_safe}]}` — `on`: the Include line is the first line `~/.ssh/config` says and Safe's config file is there (not through a link); `problem`: `null`, or a sentence when Safe won't work (a `~/.ssh/ewe-safe` that is a link is never written or deleted through); `include`: the Include line is on top; `overridden`: hosts (`*` for a top-level line, the `Host` patterns otherwise) whose own `IdentityAgent` names another agent, the user's lines first, then ewe.conf's (with the gate on, Safe answers anyway); `key_files`: the private key files `takeover` looks at, `fingerprint` (from the key or its `.pub`; `null` when neither tells) and whether Safe has the key; `other_agents`: agent sockets named in `~/.ssh/config` (and what it includes) or ewe.conf, `~/.1password/agent.sock` (`name` `1Password`, else the socket's file name) and the caller's `SSH_AUTH_SOCK`, that exist and answer `ssh-add -L` within 5 s: how many keys and how many of them Safe doesn't have. **`signing`**: `null`, or the account's signing key `{item_id, title, fingerprint, active, reason}` (`item_id`/`title` `null` when that key isn't in this safe; `active` = Git here signs with Safe; `reason`: why not, a sentence, else `null` — e.g. Git here signs with its own setup, which Safe leaves alone) |
+| `ssh takeover [--dry-run]` | `ssh-takeover`: `dry_run`, `passphrases` (`{"<file>": "<passphrase>"}`, a secret), `ssh_auth_sock` | "Move SSH to Safe" (docs/GATE.md S23). Needs the safe unlocked, a dry run too. `enabled`, `gate`, `imported: [{item_id, title, file}]`, `already: [{item_id, title, file}]`, `needs_passphrase: [file]`, `skipped: [{file, reason}]`, `hosts_fixed: [alias]`, `overridden: [{host, agent}]`, `missing_from_safe: [{agent, comment, fingerprint, key_type}]`, `files_left: [file]`, `hint` (or null), then `dry_run: true` or `sync`. Turns the gate on; takes in every private key file of `~/.ssh` (not its folders) and every `IdentityFile` of `~/.ssh/config`, what it includes and ewe.conf that is one (title: the key's comment, else the file name; one save for all; a key with a passphrase keeps it in the item); **never changes or deletes a file**; removes every `IdentityAgent` that isn't Safe's from ewe.conf's hosts (`ewe-conf set network.ssh.hosts`, once), never the user's own lines (`overridden`); names the keys only another agent holds (Safe can't take a private key out of an agent: import from 1Password, then `ssh adopt`). With a terminal, the CLI runs a dry run first and asks for each key file's passphrase (empty: leave it out) |
+| `ssh services` | `ssh-services` | `services: [{service, name, group, host, user, key_type, key_bits, page, needs, optional, signing, steps, signing_steps}]` — the catalogue (docs/GATE.md S24): `github`, `gitlab`, `azure-devops`, `bitbucket`, `codeberg`, `gitea`, `azure-vm`, `aws`, `gcloud`, `digitalocean`, `hetzner`, `server`. `group` is `git`, `cloud` or `server`; `host`/`user` `null` when they come from the user; `key_bits` only for Azure DevOps (RSA 3072); `page` the page where the key goes (`null` when it needs `host`); `needs` what `connect` must get (`host`, `user`), `optional` what it may take (`host`, `org`, `user`); `steps` two or three plain sentences; `signing_steps` what to do on the page for commit signing (GitHub, GitLab). The field is `service`, never `id` |
+| `ssh connect <service> [--key ID \| --title T] [--host H] [--user U] [--port N] [--alias A] [--org O] [--replace] [--sign [--email E]] [--no-open]` | `ssh-connect`: `service`, `key` (an item id), `title`, `host`, `user`, `port`, `alias`, `org`, `replace`, `sign`, `email`, `no_open`, `wayland_display` | `item_id`, `ssh`, `service`, `alias` (`null` for a cloud service without `--host`), `page`, `copied`, `opened`, `steps` (with `signing_steps` when `--sign`), `remote_hint` (git services: `git@<alias>:<owner>/<repo>.git`; Azure DevOps `git@<alias>:v3/<org>/<project>/<repo>`), `enabled` (the gate had to be turned on), `sync`, and `signing` with `--sign` (as `ssh sign-commits`). Needs the safe unlocked. The key: `--key`, else a new one of the service's type titled `--title` (default the service's name), saved first. Writes its public file; for git services (and any given `--host`) the host goes into ewe.conf `[[network.ssh.hosts]]` through `ewe-conf`: alias `--alias`, else the host; `HostName` (only when the alias isn't the host), `User`, `Port` (only when given and not 22), `IdentityFile ~/.ssh/ewe-safe/key-<tag>.pub`, `IdentitiesOnly yes`; other options it had stay. An alias ewe.conf has with another `IdentityFile` is `conflict` unless `--replace`; one in the user's own lines is always `conflict`. Copies the public key (`wl-copy`, no clear timer; Google Cloud: the key with the user name last) and opens the page in ewe browser (`ewe-browser open`, else `xdg-open`) unless `--no-open`; `server` opens a kitty terminal running `ssh-copy-id -f -i <public file> -o PreferredAuthentications=keyboard-interactive,password,publickey [-p N] <user>@<host>` (the password first: a full agent would use up the server's tries). The gate goes on when it is off. `EWE_SAFE_OPEN` (tests) is called with the page's (or the terminal's) argv instead |
+| `ssh test <alias\|service\|user@host[:port]> [--key ID]` | `ssh-test`: `target`, `key` | `connected`, `account` (or `null`), `host_key` (`known` \| `added` \| `changed`), `message` (one plain sentence), `detail` (ssh's last lines, at most 400 characters), `service` (or `null`). Needs the safe unlocked. Runs `ssh -T -a -o ForwardAgent=no -o ClearAllForwardings=yes -o ControlMaster=no -o ControlPath=none -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new -o IdentityAgent=<Safe's socket> [-i <public file> -o IdentitiesOnly=yes] [-p N] -- <target>` (+ `true` when not a git service) and reads the answer the service gives (GitHub `Hi <name>!`, GitLab `Welcome to GitLab, @<name>!`, Bitbucket `authenticated via ssh key`, Codeberg/Gitea/Forgejo `Hi there, <name>!`, Azure DevOps `Shell access is not supported`, others exit 0). A service name tests ewe.conf's host for it, else `git@<its host>`. `changed` is never `connected`. The agent asks no question for this `ssh` when it is the daemon's own child, the system's `/usr/bin/ssh` (or `EWE_SAFE_SSH`, which replaces `ssh` in tests) and not forwarded |
+| `ssh hosts` | `ssh-hosts` | `hosts: [{alias, host_name, user, port, source, key, file, service, agent}]`: every single-name host of the user's own lines (`source: "yours"`; wildcards and `Match` left out) and of ewe.conf (`source: "ewe"`). `key`: `{item_id, title, fingerprint}` when the `IdentityFile` is a Safe key (its `key-<tag>.pub` name or its `.pub` content), else `null`; `file`: the `IdentityFile` or `null`; `service`: the catalogue's, by `HostName` (or the alias); `agent`: `safe` while the gate is on, else the host's `IdentityAgent` or `null`; `readable`: `false` for an ewe.conf entry Safe can't read (no string `host`, options that aren't `[name, value]` pairs: listed with nulls, kept as it is, never changed — its alias is `conflict` for `connect`/`host set`/`host remove`). Works while locked |
+| `ssh host set <alias> [--host H] [--user U] [--port N] [--key ID \| --no-key]` | `ssh-host-set`: `alias`, `host`, `user`, `port`, `key`, `no_key` | `alias`, `created`, `entry` (as in `ssh hosts`). Adds or changes an ewe.conf host; other options stay, and an entry Safe doesn't change is written back as ewe.conf had it (`--port 22` removes `Port`; `--host` equal to the alias removes `HostName`). One in the user's own lines is `conflict`. **Names** (an alias, `--host`, `--user`, `connect`'s `--org`, `test`'s target): letters, digits and `. _ @ : -` only, not starting with `-`, at most 253 characters; anything else is `bad-request`. A `network.ssh.hosts` that isn't a list: every write fails rather than replace it |
+| `ssh host remove <alias>` | `ssh-host-remove`: `alias` | `alias`, `removed: true`. From ewe.conf only: the user's own lines are `conflict`, an unknown alias `not-found` |
+| `ssh sign-commits <id> [--email E]`, `ssh sign-commits --off` | `ssh-sign`: `item_id`, `email`, `off` | On: `signing: {item_id, title, fingerprint, email, file, allowed_signers, recorded}`; off: `signing: null`, `unset` (the git keys it unset), `recorded`. Sign Git commits and tags with a key in Safe (docs/GATE.md S25): `git config --global` gets `gpg.format ssh`, `user.signingkey ~/.ssh/ewe-safe/key-<tag>.pub`, `gpg.ssh.program ewe-safe-ssh-sign` (`ssh-keygen` with `SSH_AUTH_SOCK` set to Safe's socket), `commit.gpgsign true`, `tag.gpgsign true`, `gpg.ssh.allowedSignersFile ~/.ssh/ewe-safe/allowed_signers`; Safe writes `allowed_signers` (`<email> namespaces="git" <key>`; the email is `--email`, else Git's global `user.email`, else `bad-request` "Tell Safe your Git email: --email") and records `[safe] git_sign`. The gate goes on when it is off. Off puts each of those keys back as it was before Safe (or unsets it when it had no value), only while it still holds Safe's value; `unset` lists the keys put back. Safe notes what it set and the old values in `$XDG_STATE_HOME/ewe/safe/git-signing.json` first: **without that note Safe changes nothing in Git**. The email must hold no spaces, control characters or `, * ! # "` |
 
-`[safe]` settings: `ssh_agent` (`false` until `enable`; off, the agent
-lists no key and signs nothing) and `ssh_confirm` (`first-use`, the
-default; `every-time`; `never`).
+`[safe]` settings (a settings read counts only when ewe-conf answers with a `[safe]` table; anything else changes nothing on disk): `ssh_agent` (`false` until `enable`; off, the agent
+lists no key and signs nothing), `ssh_confirm` (`first-use`, the
+default; `every-time`; `never`) and `git_sign` (the fingerprint of the key
+that signs Git commits; `""` = off). Both `ssh_agent` and `git_sign` are
+shared in ewe.conf, so **every computer of the account follows them**:
+when `ewe-safed` starts and whenever it re-reads its settings (every
+minute), it puts the gate in place or takes Safe's lines and files away,
+and sets Git's signing keys (only with a key Safe has, and never over a
+Git that signs with its own setup) or puts them back as they were (only
+what Safe noted it set; never on a settings read ewe-conf didn't answer). Nothing is written when all is
+in place.
 
 **`ssh_confirm` cuts down on surprises; it is not a security boundary.**
 The master password is: while the safe is unlocked, any program running
@@ -306,7 +328,8 @@ Newline-delimited JSON, one object per line, UTF-8.
 `"password_value"` (for `add`/`edit`), `"notes"`, `"passphrase"` and
 `"private_key"` (for `ssh-add`), and `"login_password"` (for `unlock`,
 `login-enable`, `confirm`; docs/SYSTEM.md §2); every string in `add`/`edit`'s
-`"card"` object is wiped like them. Booleans are JSON booleans.
+`"card"` object and in `ssh-takeover`'s `"passphrases"` object is wiped
+like them. Booleans are JSON booleans.
 
 **Reply:** the CLI's JSON object plus `"v": 1` and the request's `"id"`. So no reply field is ever called `id`: the envelope's would overwrite it (an item's id is `item_id` or sits inside `item`).
 `reveal` over the socket always answers `{"ok": true, "value": "…"}`;
@@ -340,10 +363,15 @@ binds both). The protocol is OpenSSH's (draft-miller-ssh-agent):
   allows agent use and whose kind Safe signs with (Ed25519, ECDSA
   P-256/P-384, RSA; never DSA, P-521 or `sk-` keys), by title, the title as
   the comment. While the safe is locked the answer comes from
-  `$XDG_STATE_HOME/ewe/safe/ssh-public.json` (public keys and their titles
-  only, `0600`), written whenever the unlocked safe changes, and only while
-  the agent is on (`disable` removes it; a daemon that starts with the
-  agent off, or with no safe, removes a list left over). The list can't be
+  `$XDG_STATE_HOME/ewe/safe/ssh-public.json` (public keys, their titles,
+  item ids and fingerprints only, `0600`), written whenever the unlocked
+  safe changes, and only while the agent is on (`disable` removes it; a
+  daemon that starts with the agent off, or with no safe, removes a list
+  left over). With the list, Safe writes `~/.ssh/ewe-safe/key-<tag>.pub`
+  (`0644`, the public line and the title) for every key it offers and
+  removes the `key-*.pub` of keys that are gone: `<tag>` is the first 16
+  characters of the SHA256 fingerprint's base64, `+` → `-`, `/` → `_`
+  (the same on every computer; docs/GATE.md S22). The list can't be
   checked while locked (the safe is encrypted): a key removed on another
   computer stays listed until the next unlock here, and signing with it
   fails then (a signature always checks the unlocked safe).
@@ -370,10 +398,36 @@ binds both). The protocol is OpenSSH's (draft-miller-ssh-agent):
   `EWE_SAFE_APPROVE_KEY`, `EWE_SAFE_APPROVE_PATH` and
   `EWE_SAFE_APPROVE_SYSTEM` (`1` when both programs are system ones).
   Under systemd a prompt runs as its own transient user unit
-  (`systemd-run --user --wait`), outside the service's sandbox.
+  (`systemd-run --user --wait`), outside the service's sandbox. Since
+  0.4 the prompt also gets `EWE_SAFE_APPROVE_HOST` (the server the
+  signature is for, `""` when Safe doesn't know it) and
+  `EWE_SAFE_APPROVE_FORWARDED` (`1` for a forwarded connection), and the
+  notification asks "Allow *ssh* to use *GitHub key* for *github.com*?".
+  The daemon's own `ssh` (`ssh test`) is not asked about.
+- `SSH_AGENTC_EXTENSION` (27) `session-bind@openssh.com` (OpenSSH 8.9+;
+  docs/GATE.md S27), with OpenSSH's own ssh-agent rules: the server's
+  signature over the session id is checked (bad → `FAILURE` and the
+  connection is closed); good → `SUCCESS`, the host key is remembered for
+  that connection (up to 16). A binding after a non-forwarding one is
+  `FAILURE`; the same session id again is `SUCCESS` with the same key and
+  `FAILURE` with another. Once a binding had `is_forwarding`, the
+  connection is forwarded for good. On a connection whose last binding is
+  non-forwarding, a userauth sign request (`string session_id, byte 50,
+  …`) for another session is refused; an SSHSIG (`ssh-keygen -Y sign`) is
+  unaffected. The question names the last bound server when its key is in
+  Safe's shipped `known_hosts` (asked first) or in a plain (unhashed) line
+  of `~/.ssh/known_hosts` — a hint, since a program running as you can
+  write that file — and only a name of host-name characters (letters,
+  digits, `.`, `-`, `:`, `[`, `]`, at most 253). Forwarded: the question
+  says "…through a forwarded connection", is asked every time and never
+  remembered. `first-use` remembers an answer for the program, the key and
+  the destination (the bound server's host key, or "unbound"). Forwarding
+  is seen only when the local `ssh` is OpenSSH 8.9 or later.
+- Every signature is noted in `$XDG_STATE_HOME/ewe/safe/ssh-used.json`
+  (fingerprint → `{at, program}`; no titles): the summary's `last_used`.
 - Everything else is refused (`FAILURE`): adding and removing keys
   (`ssh-add`, `ssh-add -d/-D`, constrained and SSH1 adds), locking the
-  agent, smartcards, extensions. The keys come from Safe.
+  agent, smartcards, every other extension. The keys come from Safe.
 - Limits: 32 connections at once (more are closed at once); a connection
   waits at most 60 s for its next request, and a request must arrive
   whole within 10 s.

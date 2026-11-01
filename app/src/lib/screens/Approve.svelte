@@ -6,11 +6,14 @@
   // Deny (the daemon closes the prompt then too). Deny has the focus: an
   // Enter meant for the terminal never allows. Any program running as you
   // can take any name, so the full paths are shown, and a program outside
-  // the system's folders is called out.
+  // the system's folders is called out. When ssh told the agent which
+  // server it talks to (session-bind, GATE.md S27) the question names it,
+  // and a forwarded connection (the key used on another computer) is
+  // called out too.
   import Icon from "../components/Icon.svelte";
   import { api } from "../api.js";
 
-  let { app = "An app", key = "an SSH key", path = "", system = false } = $props();
+  let { app = "An app", key = "an SSH key", path = "", system = false, host = "", forwarded = false } = $props();
 
   const WAIT = 60;
   let left = $state(WAIT);
@@ -36,8 +39,11 @@
   <span class="ewe-appicon safe-tile"><Icon name="terminal" /></span>
   <div class="safe-compact__body">
     <div class="safe-head">
-      <div class="h3" id="approve-title">Allow <strong>{app}</strong> to use <strong>{key}</strong>?</div>
+      <div class="h3" id="approve-title">Allow <strong>{app}</strong> to use <strong>{key}</strong>{#if host} for <strong>{host}</strong>{/if}?</div>
       {#if path}<div class="caption mono safe-key">{path}</div>{/if}
+      {#if forwarded}
+        <div class="ewe-field__helper ewe-field__helper--error"><Icon name="triangle-alert" /><span>Through a forwarded connection: the key is used from another computer.</span></div>
+      {/if}
       {#if !system}
         <div class="ewe-field__helper ewe-field__helper--error"><Icon name="triangle-alert" /><span>Not a system program. Allow it only if you started it yourself.</span></div>
       {/if}

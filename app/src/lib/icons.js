@@ -66,4 +66,18 @@ export const ICONS = {
   "phone": 0xE133,
   "mail": 0xE10F,
   "building-2": 0xE290,
+  // SSH: the gate, services, hosts, your ewe computers
+  "git-branch": 0xE0E2,
+  "git-commit-horizontal": 0xE0E3,
+  "square-terminal": 0xE20A,
+  "monitor": 0xE11D,
+  "link": 0xE102,
+  "signature": 0xE5F2,
+  "arrow-right": 0xE049,
+  "badge-check": 0xE241,
+  "shield": 0xE158,
+  "plug": 0xE37F,
+  "wifi": 0xE1AE,
+  "wifi-off": 0xE1AF,
+  "circle-help": 0xE082,
 };

@@ -32,6 +32,8 @@
       ui.editing = { mode: "new", kind: "login" };
     }
     if (a.import) ui.go("import");
+    // `--ssh`: the SSH page (docs/GATE.md S28)
+    if (a.ssh && ui.view !== "ssh") ui.go("ssh");
   }
 
   onMount(() => {
@@ -58,7 +60,7 @@
 </script>
 
 {#if mode === "approve"}
-  <Approve app={approve?.app || "An app"} key={approve?.key || "an SSH key"} path={approve?.path ?? ""} system={!!approve?.system} />
+  <Approve app={approve?.app || "An app"} key={approve?.key || "an SSH key"} path={approve?.path ?? ""} system={!!approve?.system} host={approve?.host ?? ""} forwarded={!!approve?.forwarded} />
 {:else if mode === "confirm"}
   <Confirm {reason} />
 {:else if mode === "unlock"}

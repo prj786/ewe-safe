@@ -2,14 +2,18 @@
   // A new SSH key (TRIO.md S2): make one in Safe, or add a private key file
   // (~/.ssh/id_ed25519). The daemon reads the file itself; a key with a
   // passphrase needs it once, and keeps it in the item's password. The new
-  // key's public line is shown to copy (GitHub → Settings → SSH keys).
+  // key's public line is shown to copy (GitHub → Settings → SSH keys). In a
+  // sheet (the SSH page) `way` picks the first tab and the sheet carries the
+  // title.
+  import { untrack } from "svelte";
   import Icon from "./Icon.svelte";
   import { api } from "../api.js";
   import { safe } from "../safe.svelte.js";
   import { ui } from "../ui.svelte.js";
   import { toasts } from "../toast.svelte.js";
 
-  let way = $state("new"); // "new" | "file"
+  let { way: first = "new", inSheet = false } = $props();
+  let way = $state(untrack(() => first)); // "new" | "file"
   let title = $state("");
   let keyType = $state("ed25519");
   let file = $state("");
@@ -66,7 +70,7 @@
 </script>
 
 <form class="safe-stack" style="gap:var(--space-md)" onsubmit={save}>
-  <div class="safe-dhead">
+  <div class="safe-dhead" hidden={inSheet}>
     <span class="safe-letter safe-letter--lg"><Icon name="terminal" /></span>
     <div class="safe-dhead__titles">
       <div class="h3">Add an SSH key</div>

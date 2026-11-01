@@ -1,7 +1,8 @@
 <script>
   // The side navigation (Side navigation card): what the list shows — every
-  // item, logins, notes, SSH keys, cards, addresses, a tag, a folder — then Trash, Settings and the sync
-  // line at the foot. Counts come from the item summaries.
+  // item, logins, notes, cards, addresses, a tag, a folder — the SSH page
+  // (keys, hosts, the gate: docs/GATE.md S28), then Trash, Settings and the
+  // sync line at the foot. Counts come from the item summaries.
   import Icon from "./Icon.svelte";
   import { safe } from "../safe.svelte.js";
   import { ui } from "../ui.svelte.js";
@@ -36,6 +37,8 @@
     return () => clearInterval(t);
   });
   const sync = $derived(syncLine(safe.status?.sync, now));
+  // the SSH page, or its keys in the list ("Show the item")
+  const sshHere = $derived(ui.view === "ssh" || ui.isFilter({ kind: "ssh-key" }));
 </script>
 
 <nav class="ewe-sidenav" aria-label="Safe">
@@ -48,7 +51,15 @@
     {@render nav("list", "All items", items.length, {})}
     {@render nav("key-round", "Logins", count((i) => i.kind === "login"), { kind: "login" })}
     {@render nav("sticky-note", "Notes", count((i) => i.kind === "note"), { kind: "note" })}
-    {@render nav("terminal", "SSH keys", count((i) => i.kind === "ssh-key"), { kind: "ssh-key" })}
+    <button
+      class="ewe-navitem"
+      class:is-selected={sshHere}
+      aria-current={sshHere ? "page" : undefined}
+      onclick={() => ui.go("ssh")}
+    >
+      <Icon name="terminal" /><span class="ewe-navitem__label">SSH</span>
+      <span class="safe-count">{count((i) => i.kind === "ssh-key")}</span>
+    </button>
     {@render nav("credit-card", "Cards", count((i) => i.kind === "card"), { kind: "card" })}
     {@render nav("map-pin", "Addresses", count((i) => i.kind === "address"), { kind: "address" })}
   </div>

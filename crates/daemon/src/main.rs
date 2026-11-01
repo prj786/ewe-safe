@@ -21,7 +21,11 @@
 //! - [`carrier`]: Safe's unlock key in the login keyring, so Safe opens at
 //!   login (docs/KEYRING.md).
 //! - [`agent`]: the SSH agent on its own socket; [`sshkeys`]: the `ssh-*`
-//!   verbs.
+//!   verbs; [`gate`]: Safe as the one SSH gate (docs/GATE.md: the two
+//!   lines in `~/.ssh/config`, `~/.ssh/ewe-safe/`); [`hosts`]: SSH hosts
+//!   in ewe.conf and the user's own; [`connect`]: the services, connect
+//!   and check; [`takeover`]: moving SSH to Safe; [`signing`]: Git
+//!   commits signed with a key in Safe.
 //! - [`cards`]: cards and addresses — their objects in `add` and `edit`,
 //!   the browser's `fields` behind the card gate, `convert`.
 //! - [`keyring`]: Safe as the keyring (`org.freedesktop.secrets`, the
@@ -32,7 +36,10 @@ mod cards;
 mod carrier;
 mod clip;
 mod config;
+mod connect;
 mod daemon;
+mod gate;
+mod hosts;
 mod hygiene;
 mod import;
 mod keyring;
@@ -42,7 +49,9 @@ mod passkey;
 mod resolve;
 mod server;
 mod session;
+mod signing;
 mod sshkeys;
+mod takeover;
 mod verbs;
 mod worker;
 
@@ -86,6 +95,8 @@ fn main() {
     worker::spawn(d.clone());
     logind::spawn(d.clone());
     agent::spawn(d.clone());
+    // the SSH gate and Git signing as the account says (docs/GATE.md)
+    d.converge();
     keyring::spawn(d.clone());
     carrier::spawn(d.clone());
     on_signals(d.clone(), bound.clone());

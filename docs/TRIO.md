@@ -177,7 +177,9 @@ built). `match` keeps answering logins only.
 - **Turning it on:** `ewe-safe ssh enable` records `[safe] ssh_agent = true`
   (through `ewe-conf`) and sets `SSH_AUTH_SOCK` for new sessions
   (environment.d); it prints the one `IdentityAgent` line for `~/.ssh/config`
-  but never edits that file. `ewe-safe ssh status` answers `enabled`,
+  but never edits that file. *(Amended 2026-11-01 by docs/GATE.md S21: `enable`
+  now puts two lines on top of `~/.ssh/config` — an `Include` of Safe's own
+  `~/.ssh/ewe-safe/config` — so Safe is the gate for every `ssh`.)* `ewe-safe ssh status` answers `enabled`,
   `socket`, `keys`, and whether `SSH_AUTH_SOCK` points at us.
 
 `ewe-plugin-ssh` stays as it is; the standalone `ewe-ssh` comes later and
