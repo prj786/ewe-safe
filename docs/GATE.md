@@ -109,8 +109,14 @@ computer match:
 - `ssh_agent = false` → Safe's two lines and files are gone (the same as
   `disable`), only when Safe wrote them.
 
-Only a settings read that ewe-conf answered counts: when ewe-conf is
-missing or broken, nothing is taken away. (As built: the re-read is every
+Only a settings read that ewe-conf answered **with a `[safe]` table**
+counts: when ewe-conf is missing or broken, has no `[safe]`, or answers
+anything but a JSON object, the daemon goes by the defaults but nothing on
+disk is taken away. The read-modify-write of `~/.ssh/config` reads the
+file again right before its rename and starts over when it changed
+meanwhile (ewe-conf rewriting its block), a few times. A `~/.ssh/ewe-safe`
+that is a link is never written or deleted through: the gate stays off
+and `gate.problem` says why. (As built: the re-read is every
 minute; `EWE_SAFE_SETTINGS_SECONDS` is the test switch.)
 
 Turn it on once on one computer, and every computer you sign in to follows.
@@ -128,7 +134,10 @@ Turn it on once on one computer, and every computer you sign in to follows.
 }
 ```
 
-- `on`: the `Include` line is on top and Safe's config file is there;
+- `problem`: `null`, or a sentence when Safe won't work (`~/.ssh/ewe-safe`
+  is a link).
+- `on`: the `Include` line is on top and Safe's config file is there (in
+  Safe's own folder, not through a link);
   `include`: the `Include` line is the first line `~/.ssh/config` says.
 - `overridden`: hosts whose own `IdentityAgent` names another agent (in
   ewe.conf or the user's own lines). With the gate on, Safe answers anyway.
@@ -320,19 +329,39 @@ without a host yet), `page`, `copied`, `opened`, `steps`, `remote_hint`
 `--sign` checks the Git email before anything changes. For a cloud
 service, the host comes later with `ssh host set`.
 
+### Names (security review, 2026-11-01)
+
+Every name Safe writes into a host definition or hands to `ssh` — an
+alias, `--host`, `--user`, `--org`, `ssh test`'s target — follows one
+rule: letters, digits and `. _ @ : -` only, not starting with `-`, at most
+253 characters (no quotes, `\`, `#`, `%`, `$`, `=`, `,`, spaces or
+control characters; an IPv6 address is written without brackets).
+Anything else is `bad-request`.
+
+ewe.conf entries Safe can't read (no string `host`, options that aren't
+`[name, value]` pairs) are kept exactly as they are and never changed: an
+alias with such an entry is `conflict`, `ssh hosts` lists it with
+`readable: false` (every other entry has `readable: true`), and an entry
+Safe doesn't change is written back as ewe.conf had it (a number stays a
+number). A `network.ssh.hosts` that isn't a list makes every write fail
+rather than replace it.
+
 ### `ssh-test`
 
 CLI: `ewe-safe ssh test <alias|service|user@host[:port]> [--key ID]`. Safe
 checks that the connection works, the way a user would by hand.
 
-- The daemon runs `ssh -T -o BatchMode=yes -o ConnectTimeout=10 -o
-  StrictHostKeyChecking=accept-new -o IdentityAgent=<Safe's socket>
-  <target>` (git services: no command; others: `true`), with `-i <public
-  file> -o IdentitiesOnly=yes` when `--key` is given. Test switch:
-  `EWE_SAFE_SSH` = the `ssh` program.
+- The daemon runs `ssh -T -a -o ForwardAgent=no -o ClearAllForwardings=yes
+  -o ControlMaster=no -o ControlPath=none -o BatchMode=yes -o
+  ConnectTimeout=10 -o StrictHostKeyChecking=accept-new -o
+  IdentityAgent=<Safe's socket> [-i <public file> -o IdentitiesOnly=yes]
+  [-p N] -- <target>` (git services: no command; others: `true`). A check
+  forwards nothing and shares no connection. Test switch: `EWE_SAFE_SSH` =
+  the `ssh` program.
 - The agent doesn't ask "Allow…?" for this one: the `ssh` is the daemon's
   own child (its parent pid is the daemon), started because the user pressed
-  Check. Logged as such.
+  Check, it is the system's `/usr/bin/ssh` (or `EWE_SAFE_SSH` in tests), and
+  the connection isn't forwarded. Logged as such.
 - It reads the answer: GitHub `Hi <name>! You've successfully authenticated`;
   GitLab `Welcome to GitLab, @<name>!`; Bitbucket `authenticated via ssh key`
   (and `logged in as <name>`); Codeberg/Gitea/Forgejo `Hi there, <name>!`;
@@ -396,13 +425,31 @@ As 1Password does. CLI `ewe-safe ssh sign-commits <id> [--email E]` and
   unset), `recorded`. The gate goes on when it is off (as `connect`).
 - Off: unsets those git keys **only where they still hold Safe's values**,
   removes `allowed_signers`, records `git_sign = ""`.
+- **As built (security review, 2026-11-01): Safe touches Git only where it
+  applied its own values.** Before it sets anything it notes, in
+  `$XDG_STATE_HOME/ewe/safe/git-signing.json`, the key it signs with, the
+  six values it sets and what each of those keys held before (`null`: not
+  set). Off (and `disable`) puts each key back to that old value — or
+  unsets it when it had none — only while it still holds Safe's value; a
+  key the user changed since stays theirs; then the note goes. **No note:
+  nothing in Git is touched**, whatever ewe.conf says.
+- From another computer (a settings re-read with `git_sign`): a Git with
+  its own signing — a `user.signingkey` that isn't one of Safe's key files,
+  or a `gpg.format` other than `ssh` — and no note is **left alone**;
+  `ssh-status`'s `signing` says so (`active: false` and a `reason`). With a
+  note, a key the user changed since Safe set it is left alone too.
+- The email must be a word `allowed_signers` can hold: no spaces or
+  control characters and none of `, * ! # "` (`bad-request` for
+  `--email`; on a re-read, an odd `user.email` means no `allowed_signers`,
+  the rest still applies).
 - Follows the account: at start and on a settings re-read, a computer with
   `git_sign` set and that key in its safe sets the same git config (only the
   keys above, only when they differ). As built, also the other way: with
   `git_sign = ""`, or Safe's agent off, Safe's values go from Git here.
-- `ssh-status` gets `signing: {item_id, title, fingerprint, active} | null`
-  (`item_id` and `title` are `null` when that key isn't in this safe;
-  `active`: Git here signs with Safe now).
+- `ssh-status` gets `signing: {item_id, title, fingerprint, active, reason}
+  | null` (`item_id` and `title` are `null` when that key isn't in this
+  safe; `active`: Git here signs with Safe now; `reason`: a sentence when
+  it doesn't, else `null`).
 - GitHub and GitLab show a signed commit as *Verified* only when the key is
   also added there as a **signing key**. The GitHub steps say so (GitHub:
   the same page, Key type → Signing Key).
@@ -451,8 +498,48 @@ agent connection.
   window's `--approve` shows them.
 - Every other extension keeps its answer today (FAILURE).
 - As built: the agent keeps up to 16 bindings per connection (as OpenSSH's
-  own agent does) and names the last one; the daemon's own `ssh` (`ssh
-  test`) is never asked about.
+  own agent does) and names the last one.
+
+**The rules, as OpenSSH's own ssh-agent has them** (security review,
+2026-11-01; `process_ext_session_bind`, `process_sign_request2`):
+
+- A binding after a **non-forwarding** one on the same connection is
+  FAILURE (that connection is bound for an authentication). The same
+  session id again: SUCCESS when it names the same host key (nothing new
+  is recorded), FAILURE when it names another.
+- **Forwarded is for good**: once a binding on a connection had
+  `is_forwarding = 1`, the connection stays forwarded; a later binding
+  (signed by the far server, `is_forwarding = 0`) can't clear it. An
+  OpenSSH ≥ 8.9 client binds a forwarded agent channel itself, with
+  `is_forwarding = 1`, before it relays anything (`clientloop.c`,
+  `client_request_agent`), so the far side can't make a forwarded channel
+  look unbound. **Forwarding is only seen when the local `ssh` is OpenSSH
+  8.9 or later**; an older client (or another program) sends no bindings,
+  and its connection counts as unbound.
+- On a connection whose last binding is non-forwarding, a **userauth**
+  sign request (`string session_id, byte 50 SSH_MSG_USERAUTH_REQUEST, …`)
+  for another session id is refused (OpenSSH: "unexpected session ID").
+  Other data — an SSHSIG (`ssh-keygen -Y sign`, Git's signing) — isn't a
+  userauth request and is unaffected.
+- `first-use` remembers an answer for the program, the key **and the
+  destination**: the bound server's host key fingerprint, or "unbound" for
+  a connection with no binding (local tools like `ssh-keygen -Y sign`, old
+  clients). A yes for github.com is not a yes for another server.
+  Forwarded: asked every time, never remembered.
+- The daemon's own `ssh` (`ssh test`) goes without a question only when it
+  is the system's `/usr/bin/ssh` (or `EWE_SAFE_SSH`, the test switch) and
+  the connection isn't forwarded; that `ssh` runs with `-a -o
+  ForwardAgent=no -o ClearAllForwardings=yes -o ControlMaster=no -o
+  ControlPath=none` and `--` before the destination (S24).
+
+**The host's name** is cleaned before it reaches the question or
+`EWE_SAFE_APPROVE_HOST`: host-name characters only (letters, digits, `.`,
+`-`, and `:`, `[`, `]` for a port or IPv6), at most 253; anything else is
+"unknown". Safe's shipped `known_hosts` is asked first. A name from the
+user's own `~/.ssh/known_hosts` is shown too, but **a program running as
+you could write a false line there** (that file is yours, not Safe's), so
+the question's name is a hint, not proof; the program's full path stays in
+the question either way.
 
 This is last in the order. Ship it only with tests (a real `ssh` against a
 real `sshd` on loopback, or the extension bytes built in a unit test). If

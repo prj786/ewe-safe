@@ -105,6 +105,12 @@ def apply_ssh(hosts):
     own = own_hosts(outside)
     lines = [A]
     for h in hosts:
+        # entries it can't read are left out of the block (ewe-conf's own
+        # validation is ewe's side)
+        if not isinstance(h, dict) or not isinstance(h.get("host"), str):
+            continue
+        if not isinstance(h.get("options", []), list):
+            continue
         if h.get("host") in own:
             continue
         lines.append("Host %s" % h["host"])
@@ -710,11 +716,23 @@ fn the_gate_goes_on_and_off_and_follows_the_account() {
         std::fs::read_to_string(&cfg).unwrap() == with_line && key_file.exists()
     });
 
-    // an ewe-conf that doesn't answer changes nothing
-    write_exec(&s.bin.join("ewe-conf"), "#!/bin/sh\nexit 2\n");
-    std::thread::sleep(Duration::from_secs(3));
-    assert!(s.gate_dir().join("config").exists());
-    assert_eq!(std::fs::read_to_string(&cfg).unwrap(), with_line);
+    // an ewe-conf that doesn't answer, or answers with anything but a
+    // [safe] table, changes nothing
+    for broken in [
+        "#!/bin/sh\nexit 2\n",
+        "#!/bin/sh\necho '[]'\n",
+        "#!/bin/sh\necho 'oops'\n",
+        "#!/bin/sh\necho '{\"error\": \"no-key\", \"key\": \"safe\"}' >&2\nexit 1\n",
+    ] {
+        write_exec(&s.bin.join("ewe-conf"), broken);
+        std::thread::sleep(Duration::from_secs(3));
+        assert!(s.gate_dir().join("config").exists(), "{broken}");
+        assert_eq!(
+            std::fs::read_to_string(&cfg).unwrap(),
+            with_line,
+            "{broken}"
+        );
+    }
     write_exec(&s.bin.join("ewe-conf"), FAKE_EWE_CONF);
 
     // off: only Safe's lines and files
@@ -1300,13 +1318,13 @@ esac
     let line = args().lines().last().unwrap().to_string();
     assert!(
         line.starts_with(&format!(
-            "-T -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new -o IdentityAgent={} ",
+            "-T -a -o ForwardAgent=no -o ClearAllForwardings=yes -o ControlMaster=no -o ControlPath=none -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new -o IdentityAgent={} ",
             s.agent().display()
         )),
         "{line}"
     );
     assert!(
-        line.ends_with(" git@github.com"),
+        line.ends_with(" -- git@github.com"),
         "a git service runs no command: {line}"
     );
     assert_eq!(s.ok(&["ssh", "test", "gitlab"])["account"], "sam");
@@ -1334,7 +1352,7 @@ esac
         &id,
     ]);
     assert_eq!(s.ok(&["ssh", "test", "github"])["connected"], true);
-    assert!(args().lines().last().unwrap().ends_with(" gh-alias"));
+    assert!(args().lines().last().unwrap().ends_with(" -- gh-alias"));
     // a server: `true`, with the key asked for
     let no = s.ok(&["ssh", "test", "deploy@denied.example:2222", "--key", &id]);
     assert_eq!(no["connected"], false);
@@ -1345,7 +1363,7 @@ esac
     assert!(no["detail"].as_str().unwrap().contains("Permission denied"));
     let line = args().lines().last().unwrap().to_string();
     assert!(
-        line.contains(" -o IdentitiesOnly=yes -p 2222 deploy@denied.example true"),
+        line.contains(" -o IdentitiesOnly=yes -p 2222 -- deploy@denied.example true"),
         "{line}"
     );
     assert!(
@@ -1517,6 +1535,34 @@ fn a_real_sshd_lets_safe_in() {
         c.read_to_end(&mut reply).unwrap();
         assert_eq!(reply, [0, 0, 0, 1, 5], "FAILURE, then closed");
     }
+
+    // review B: only the system's ssh (or the test switch's) goes without a
+    // question; another program the daemon starts is asked about
+    let copy = s.root.join("keys").join("ssh");
+    std::fs::copy("/usr/bin/ssh", &copy).unwrap();
+    write_exec(
+        &s.bin.join("other-ssh"),
+        &format!(
+            "#!/bin/sh\nexec {} -F \"$HOME/.ssh/config\" -o UserKnownHostsFile=\"$HOME/.ssh/known_hosts\" \"$@\"\n",
+            copy.display()
+        ),
+    );
+    s.extra.retain(|(k, _)| k != "EWE_SAFE_SSH");
+    s.extra.push((
+        "EWE_SAFE_SSH".into(),
+        s.bin.join("other-ssh").display().to_string(),
+    ));
+    s.stop();
+    s.start();
+    s.cli_in(&["unlock"], &format!("{MASTER}\n"));
+    let asked_before = s.approvals().len();
+    let yes = s.ok(&["ssh", "test", &target, "--key", &id]);
+    assert_eq!(yes["connected"], true, "{yes}");
+    assert_eq!(
+        s.approvals().len(),
+        asked_before + 1,
+        "asked: not the system's ssh"
+    );
 }
 
 impl Sandbox {
@@ -1600,7 +1646,7 @@ fn git_commits_are_signed_through_safe() {
     let st = s.ok(&["ssh", "status"])["signing"].clone();
     assert_eq!(
         st,
-        json!({"item_id": id, "title": "Signing key", "fingerprint": fp, "active": true})
+        json!({"item_id": id, "title": "Signing key", "fingerprint": fp, "active": true, "reason": null})
     );
 
     // a real commit and a tag, signed through the agent, verified
@@ -1688,4 +1734,269 @@ fn git_commits_are_signed_through_safe() {
             .2,
         0
     );
+}
+
+/// S25 (review C): Safe changes Git only where it applied its own values,
+/// noted with what each key held before; another computer's `git_sign`
+/// never overwrites a Git with its own signing; off puts the old values
+/// back where Safe's still are.
+#[test]
+fn git_signing_leaves_your_own_setup_alone() {
+    let mut s = Sandbox::new("ownsign");
+    let helper = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packaging/ewe-safe-ssh-sign");
+    std::fs::copy(&helper, s.bin.join("ewe-safe-ssh-sign")).unwrap();
+    // the user's own signing: GPG
+    for (k, v) in [
+        ("user.email", "sam@example.com"),
+        ("user.name", "Sam"),
+        ("gpg.format", "openpgp"),
+        ("user.signingkey", "ABCDEF0123456789"),
+        ("commit.gpgsign", "true"),
+    ] {
+        assert_eq!(s.git(&["config", "--global", k, v]).2, 0);
+    }
+    let list = |s: &Sandbox| s.git(&["config", "--global", "--list"]).0;
+    let before = list(&s);
+    let marker = s.root.join("state/ewe/safe/git-signing.json");
+    s.start();
+    s.init();
+    s.ok(&["ssh", "enable"]);
+    let k = s.ok(&["ssh", "new", "--title", "Signing key"]);
+    let id = k["item_id"].as_str().unwrap().to_string();
+    let fp = k["ssh"]["fingerprint"].as_str().unwrap().to_string();
+
+    // start-up and every re-read with git_sign unset: nothing touched
+    std::thread::sleep(Duration::from_millis(2500));
+    assert_eq!(list(&s), before);
+    // another computer turned signing on: Git here signs with its own
+    // setup, so Safe leaves it and says why
+    s.set_conf(|c| c["safe"]["git_sign"] = json!(fp));
+    std::thread::sleep(Duration::from_secs(3));
+    assert_eq!(list(&s), before);
+    assert!(!marker.exists());
+    let st = s.ok(&["ssh", "status"])["signing"].clone();
+    assert_eq!(st["active"], false, "{st}");
+    assert!(st["reason"].as_str().unwrap().contains("own setup"), "{st}");
+
+    // the user turns it on here: what the keys held is noted first
+    s.ok(&["ssh", "sign-commits", &id]);
+    assert_eq!(s.git_global("gpg.format").as_deref(), Some("ssh"));
+    let note: Value = serde_json::from_slice(&std::fs::read(&marker).unwrap()).unwrap();
+    assert_eq!(note["fingerprint"], json!(fp));
+    assert_eq!(
+        note["previous"],
+        json!({
+            "gpg.format": "openpgp",
+            "user.signingkey": "ABCDEF0123456789",
+            "gpg.ssh.program": null,
+            "commit.gpgsign": "true",
+            "tag.gpgsign": null,
+            "gpg.ssh.allowedSignersFile": null,
+        })
+    );
+    assert_eq!(s.ok(&["ssh", "status"])["signing"]["active"], true);
+    // a key the user changes by hand stays theirs
+    assert_eq!(
+        s.git(&["config", "--global", "commit.gpgsign", "false"]).2,
+        0
+    );
+    let off = s.ok(&["ssh", "sign-commits", "--off"]);
+    assert_eq!(off["unset"].as_array().unwrap().len(), 5, "{off}");
+    for (k, v) in [
+        ("gpg.format", Some("openpgp")),
+        ("user.signingkey", Some("ABCDEF0123456789")),
+        ("commit.gpgsign", Some("false")),
+        ("tag.gpgsign", None),
+        ("gpg.ssh.program", None),
+        ("gpg.ssh.allowedSignersFile", None),
+    ] {
+        assert_eq!(s.git_global(k).as_deref(), v, "{k}");
+    }
+    assert!(!marker.exists());
+
+    // no note, nothing touched: the user's own SSH signing stays, whatever
+    // ewe.conf says, also across a restart
+    assert_eq!(s.git(&["config", "--global", "gpg.format", "ssh"]).2, 0);
+    assert_eq!(
+        s.git(&[
+            "config",
+            "--global",
+            "user.signingkey",
+            "~/.ssh/id_ed25519.pub"
+        ])
+        .2,
+        0
+    );
+    let mine = list(&s);
+    s.stop();
+    s.start();
+    std::thread::sleep(Duration::from_millis(2500));
+    assert_eq!(list(&s), mine);
+
+    // an email that can't be a principal in allowed_signers
+    let bad = s.cli(&[
+        "ssh",
+        "sign-commits",
+        &id,
+        "--email",
+        "sam,evil@example.com",
+    ]);
+    assert_eq!(bad["error"], "bad-request", "{bad}");
+    // from another computer, with no signing of the user's here and an odd
+    // Git email: Safe signs, but writes no allowed_signers
+    for k in ["user.signingkey", "gpg.format"] {
+        s.git(&["config", "--global", "--unset", k]);
+    }
+    assert_eq!(
+        s.git(&["config", "--global", "user.email", "sam #1@example.com"])
+            .2,
+        0
+    );
+    s.set_conf(|c| c["safe"]["git_sign"] = json!(fp));
+    wait_until("signing from the account", 10, || {
+        s.git_global("gpg.ssh.allowedSignersFile").is_some()
+    });
+    assert_eq!(
+        s.git_global("gpg.ssh.program").as_deref(),
+        Some("ewe-safe-ssh-sign")
+    );
+    assert!(marker.exists());
+    assert!(!s.gate_dir().join("allowed_signers").exists());
+}
+
+/// Review D, F-b, F-e: names Safe hands to ssh or writes into a host
+/// definition; ewe.conf entries Safe can't read; a linked Safe folder.
+#[test]
+fn odd_names_entries_and_links_are_refused() {
+    let mut s = Sandbox::new("odd");
+    s.start();
+    s.init();
+    // D: one allowlist for every name
+    for argv in [
+        &["ssh", "connect", "github", "--alias", "x#y", "--no-open"][..],
+        &[
+            "ssh",
+            "connect",
+            "github",
+            "--alias",
+            "git\"hub",
+            "--no-open",
+        ],
+        &[
+            "ssh",
+            "connect",
+            "server",
+            "--host",
+            "h$x",
+            "--user",
+            "u",
+            "--no-open",
+        ],
+        &[
+            "ssh",
+            "connect",
+            "server",
+            "--host",
+            "box",
+            "--user",
+            "a b",
+            "--no-open",
+        ],
+        &[
+            "ssh",
+            "connect",
+            "azure-devops",
+            "--org",
+            "o=x",
+            "--no-open",
+        ],
+        &["ssh", "host", "set", "x%h"],
+        &["ssh", "host", "set", "box", "--host", "a,b"],
+        &["ssh", "test", "a=b"],
+        &["ssh", "test", "-oProxyCommand=x"],
+        &["ssh", "test", "sam@box\\x"],
+    ] {
+        let v = s.cli(argv);
+        assert_eq!(v["error"], "bad-request", "{argv:?}: {v}");
+    }
+    assert!(
+        s.ok(&["ssh", "list"])["items"]
+            .as_array()
+            .unwrap()
+            .is_empty(),
+        "nothing made"
+    );
+
+    // F-b: entries Safe can't read stay exactly as they are
+    let odd = json!([
+        {"options": [["User", "x"]]},
+        {"host": "box", "options": [["Port", 2222], ["User", "sam"]]},
+        {"host": "odd", "options": "User x"},
+    ]);
+    s.set_conf(|c| c["network"] = json!({"ssh": {"hosts": odd.clone()}}));
+    let hosts = s.ok(&["ssh", "hosts"])["hosts"].clone();
+    assert_eq!(host(&hosts, "box")["port"], 2222);
+    assert_eq!(host(&hosts, "box")["readable"], true);
+    assert_eq!(host(&hosts, "odd")["readable"], false);
+    assert!(
+        hosts
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|h| h["alias"].is_null() && h["readable"] == false)
+    );
+    assert_eq!(
+        s.cli(&["ssh", "host", "set", "odd", "--user", "y"])["error"],
+        "conflict"
+    );
+    assert_eq!(
+        s.cli(&["ssh", "host", "remove", "odd"])["error"],
+        "conflict"
+    );
+    s.ok(&["ssh", "host", "set", "box", "--user", "root"]);
+    s.ok(&["ssh", "connect", "github", "--no-open"]);
+    let stored = s.conf()["network"]["ssh"]["hosts"].clone();
+    assert_eq!(stored[0], odd[0], "kept as it was");
+    assert_eq!(
+        stored[1],
+        json!({"host": "box", "options": [["Port", 2222], ["User", "root"]]}),
+        "the number stays a number"
+    );
+    assert_eq!(stored[2], odd[2]);
+    assert_eq!(stored[3]["host"], "github.com");
+    // not a list at all: Safe won't write over it
+    s.set_conf(|c| c["network"]["ssh"]["hosts"] = json!({"host": "x"}));
+    let no = s.cli(&["ssh", "host", "set", "new", "--user", "x"]);
+    assert_eq!(no["ok"], false, "{no}");
+    assert_eq!(s.conf()["network"]["ssh"]["hosts"], json!({"host": "x"}));
+    s.set_conf(|c| c["network"]["ssh"]["hosts"] = json!([]));
+
+    // F-e: a linked ~/.ssh/ewe-safe: nothing written or deleted through it
+    s.ok(&["ssh", "disable"]);
+    let elsewhere = s.root.join("elsewhere");
+    std::fs::create_dir_all(&elsewhere).unwrap();
+    std::fs::write(elsewhere.join("known_hosts"), "mine\n").unwrap();
+    std::fs::write(elsewhere.join("key-abc.pub"), "mine\n").unwrap();
+    let _ = std::fs::remove_dir_all(s.gate_dir());
+    std::os::unix::fs::symlink(&elsewhere, s.gate_dir()).unwrap();
+    let en = s.ok(&["ssh", "enable"]);
+    assert_eq!(en["gate"]["on"], false, "{en}");
+    assert!(
+        en["gate"]["problem"]
+            .as_str()
+            .unwrap()
+            .contains("is a link"),
+        "{en}"
+    );
+    let theirs = |p: &str| read(&elsewhere.join(p));
+    assert!(
+        !elsewhere.join("config").exists(),
+        "nothing written through the link"
+    );
+    s.ok(&["ssh", "disable"]);
+    assert_eq!(
+        (theirs("known_hosts"), theirs("key-abc.pub")),
+        ("mine\n".into(), "mine\n".into())
+    );
+    assert!(s.gate_dir().is_symlink());
 }
