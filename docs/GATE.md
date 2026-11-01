@@ -1,6 +1,8 @@
 # Safe is the SSH gate
 
-**Status:** plan, 2026-11-01. Asked by the owner on 2026-11-01. Amends RFC-008
+**Status:** S21–S27 built (daemon and CLI, `feat/ssh-gate`, 2026-11-01);
+S28 (the window) in progress. Where the build differs from the first plan,
+this file says "As built" and why. Asked by the owner on 2026-11-01. Amends RFC-008
 (decisions S21–S28) and TRIO.md S2 ("Safe never edits `~/.ssh/config`" ends
 here: Safe now owns two lines at its top). Release: Safe 0.4.0-beta.
 
@@ -80,9 +82,12 @@ makes `ssh` ask Safe, even where `~/.ssh/config` names another agent.
 
    Before the first edit, Safe copies the file to
    `~/.ssh/config.before-safe` (only if that copy doesn't exist yet). It
-   writes atomically (temp file in `~/.ssh`, rename) and keeps the mode.
-   It never changes any other line. It adds the two lines only once: if they
-   are there already, nothing is written.
+   writes atomically (temp file in `~/.ssh`, rename) and keeps the mode
+   (a `~/.ssh/config` that is a link stays a link: its target is written).
+   It never changes any other line. It adds the two lines only once: if
+   they are on top already, nothing is written; lines of Safe's found
+   lower down (moved by hand) are moved back to the top, since only there
+   do they win.
 
 3. It writes `~/.ssh/ewe-safe/known_hosts` (S26) and the public key files
    (S22).
@@ -90,7 +95,9 @@ makes `ssh` ask Safe, even where `~/.ssh/config` names another agent.
 `ewe-safe ssh disable` removes the two lines (only those exact lines), the
 `config` file, the `key-*.pub` files Safe wrote, `known_hosts` and
 `allowed_signers`, as it removes the environment.d file today. It never
-touches `config.before-safe`.
+touches `config.before-safe`. It also turns commit signing off (S25):
+signing needs the agent, and with `commit.gpgsign` still set every `git
+commit` would fail (reply: `signing_off`).
 
 **It follows the account.** `[safe] ssh_agent` is shared in ewe.conf. When
 `ewe-safed` starts and whenever it re-reads its settings, it makes this
@@ -101,6 +108,10 @@ computer match:
   same writes as `enable`; nothing is written when all is in place);
 - `ssh_agent = false` → Safe's two lines and files are gone (the same as
   `disable`), only when Safe wrote them.
+
+Only a settings read that ewe-conf answered counts: when ewe-conf is
+missing or broken, nothing is taken away. (As built: the re-read is every
+minute; `EWE_SAFE_SETTINGS_SECONDS` is the test switch.)
 
 Turn it on once on one computer, and every computer you sign in to follows.
 
@@ -117,13 +128,14 @@ Turn it on once on one computer, and every computer you sign in to follows.
 }
 ```
 
-- `on`: the two lines and the config file are in place; `include`: the
-  `Include` line is on top of `~/.ssh/config`.
+- `on`: the `Include` line is on top and Safe's config file is there;
+  `include`: the `Include` line is the first line `~/.ssh/config` says.
 - `overridden`: hosts whose own `IdentityAgent` names another agent (in
   ewe.conf or the user's own lines). With the gate on, Safe answers anyway.
 - `key_files`: private key files in `~/.ssh` (see S23 for which files).
-- `other_agents`: agent sockets named in `~/.ssh/config` or known
-  (`~/.1password/agent.sock`) that exist and answer, with how many keys they
+- `other_agents`: agent sockets named in `~/.ssh/config` (and the files it
+  includes), in ewe.conf's hosts, known (`~/.1password/agent.sock`), or the
+  caller's `SSH_AUTH_SOCK`, that exist and answer, with how many keys they
   hold and how many of those Safe doesn't have (`ssh-add -L` against that
   socket, 5 s timeout, public keys only). `name` is `1Password` for that
   path, else the socket's file name. `missing_from_safe` needs the public-key
@@ -132,8 +144,10 @@ Turn it on once on one computer, and every computer you sign in to follows.
 ## S22. Keys you can point at: public key files
 
 For every key the agent offers, Safe writes `~/.ssh/ewe-safe/key-<tag>.pub`
-(0644): the key's public line, from the public-key cache, so it works while
-the safe is locked. It is written whenever the cache is written, and files
+(0644): the key's public line with its title as the comment, from the
+public-key cache, so it works while the safe is locked. (The cache,
+`ssh-public.json`, now also holds each key's item id and fingerprint, so
+`ssh hosts` and the window can name a key while locked.) It is written whenever the cache is written, and files
 for keys that are gone are removed (only `key-*.pub` files in that folder).
 
 `<tag>` = the first 16 characters of the key's SHA256 fingerprint (the base64
@@ -191,6 +205,10 @@ window's "Move SSH to Safe". Needs the safe unlocked (a dry run too).
    1Password first: Safe → Import (or `ewe-safe import op`), then `ewe-safe
    ssh adopt`." Safe can't take a private key out of another agent.
 
+The request may also carry `ssh_auth_sock` (the caller's, as `ssh status`
+does). With a terminal, the CLI runs a dry run first and asks for each
+`needs_passphrase` file (empty: leave it out).
+
 Reply: `enabled`, `gate`, `imported: [{item_id, title, file}]`, `already:
 [{item_id, title, file}]`, `needs_passphrase: [file]`, `skipped: [{file,
 reason}]`, `hosts_fixed`, `overridden`, `missing_from_safe`, `files_left`,
@@ -209,29 +227,41 @@ each:
 
 ```json
 {"service": "github", "name": "GitHub", "group": "git", "host": "github.com", "user": "git",
- "key_type": "ed25519", "page": "https://github.com/settings/ssh/new",
- "needs": [], "signing": true, "steps": ["…", "…"]}
+ "key_type": "ed25519", "key_bits": null, "page": "https://github.com/settings/ssh/new",
+ "needs": [], "optional": [], "signing": true, "steps": ["…", "…"],
+ "signing_steps": ["…"]}
 ```
 
-(The field is `service`, not `id`: `id` is the socket envelope's.)
+(The field is `service`, not `id`: `id` is the socket envelope's.) As
+built: `needs` lists what `connect` must get (`gitea`: `host`; `server`:
+`host`, `user`) and `optional` what it may take (`gitlab`: `host`;
+`azure-devops`: `org`; the cloud services: `host`, `user`). `host`/`user`
+are `null` when they come from the user; `page` is `null` when it needs
+`host` (`gitea`). `key_bits` is set for Azure DevOps only. `signing_steps`
+are the extra steps for commit signing (GitHub: add the key again as a
+Signing Key; GitLab: keep Usage type on Authentication & Signing);
+`connect --sign` adds them to its `steps`.
 
 | service | name | group | host | user | key | page | needs |
 |---|---|---|---|---|---|---|---|
 | `github` | GitHub | git | github.com | git | ed25519 | `https://github.com/settings/ssh/new` | — |
 | `gitlab` | GitLab | git | gitlab.com (or `host`) | git | ed25519 | `https://<host>/-/user_settings/ssh_keys` | optional `host` |
-| `azure-devops` | Azure DevOps | git | ssh.dev.azure.com | git | **rsa 4096** (Azure Repos takes RSA only; rsa-sha2-256/512) | `https://dev.azure.com/<org>/_usersSettings/keys` | `org` (without it: `https://dev.azure.com/`, the steps say where) |
+| `azure-devops` | Azure DevOps | git | ssh.dev.azure.com | git | **rsa 3072** (Azure Repos takes RSA only; rsa-sha2-256/512; 3072 bits as Microsoft's own steps make it — no Microsoft page names 4096) | `https://dev.azure.com/<org>/_usersSettings/keys` | `org` (without it: `https://dev.azure.com/`, the steps say where) |
 | `bitbucket` | Bitbucket | git | bitbucket.org | git | ed25519 | `https://bitbucket.org/account/settings/ssh-keys/` | — |
 | `codeberg` | Codeberg | git | codeberg.org | git | ed25519 | `https://codeberg.org/user/settings/keys` | — |
 | `gitea` | Gitea or Forgejo | git | `host` | git | ed25519 | `https://<host>/user/settings/keys` | `host` |
 | `azure-vm` | Azure virtual machine | cloud | `host` (later) | azureuser | ed25519 (GA since 2024-10) | `https://portal.azure.com/#browse/Microsoft.Compute%2FVirtualMachines` | — |
-| `aws` | AWS EC2 | cloud | `host` (later) | ec2-user | ed25519 | `https://console.aws.amazon.com/ec2/home#ImportKeyPair:` | — |
-| `gcloud` | Google Cloud VM | cloud | `host` (later) | your name | ed25519 | `https://console.cloud.google.com/compute/metadata?tab=sshkeys` | — |
+| `aws` | AWS EC2 | cloud | `host` (later) | ec2-user | ed25519 | `https://console.aws.amazon.com/ec2/` (the console AWS's docs give; the steps say Key Pairs → Import key pair) | — |
+| `gcloud` | Google Cloud VM | cloud | `host` (later) | your name (`--user`, else this computer's login) | ed25519 | `https://console.cloud.google.com/compute/metadata/sshKeys` (as Google's docs give it) | — |
 | `digitalocean` | DigitalOcean | cloud | `host` (later) | root | ed25519 | `https://cloud.digitalocean.com/account/security` | — |
 | `hetzner` | Hetzner Cloud | cloud | `host` (later) | root | ed25519 | `https://console.hetzner.cloud/` | — |
 | `server` | A server you can log in to | server | `host` | `user` | ed25519 | — (a terminal runs `ssh-copy-id`) | `host`, `user` |
 
 `steps`: two or three short, plain sentences per service (the owner is not a
-native English speaker: short words, no jargon). Example for GitHub: "Safe
+native English speaker: short words, no jargon). Every URL, menu path and
+answer was checked against the service's own docs on 2026-11-01 (Hetzner's
+console path against Hetzner's community tutorial: no official page has
+it). Example for GitHub: "Safe
 copied your public key.", "On the GitHub page, paste it into Key, give it a
 name and press Add SSH key.", "Come back and press Check." Azure DevOps:
 "…User settings (top right) → SSH public keys → New key…". Azure VM: "Paste
@@ -242,7 +272,13 @@ against the service's own docs when you write them.
 ### `ssh-connect`
 
 CLI: `ewe-safe ssh connect <service> [--key ID | --title T] [--host H]
-[--user U] [--port N] [--alias A] [--org O] [--replace] [--sign] [--no-open]`.
+[--user U] [--port N] [--alias A] [--org O] [--replace] [--sign [--email E]]
+[--no-open]`. Socket args: the long options (`key` is an item id), plus
+`wayland_display` (the CLI sends its own). Needs the safe unlocked.
+
+0. **The gate**: when Safe's agent is off, `connect` turns it on (as
+   `enable`): a key Safe holds is no use to `ssh` without it. The reply's
+   `enabled` says it did.
 
 1. **The key:** `--key` an SSH key item, else a new one (`ssh new` with the
    service's type; title `--title`, default the service's name, e.g.
@@ -268,15 +304,21 @@ CLI: `ewe-safe ssh connect <service> [--key ID | --title T] [--host H]
    <url>`; without ewe browser, `xdg-open`), unless `--no-open`. The page is
    where the user signs in; Safe fills that login in the browser as always.
    For `server`: Safe opens a kitty terminal that runs `ssh-copy-id -f -i
-   <public file> [-p N] <user>@<host>` (the user types the server's password
-   once, there). Test switch: `EWE_SAFE_OPEN` = a program called with the URL
+   <public file> -o PreferredAuthentications=keyboard-interactive,password,publickey
+   [-p N] <user>@<host>` (the user types the server's password once, there;
+   the password is asked first because an agent with many keys would use
+   up the server's tries before it). Google Cloud takes the key with the
+   login name as its last word, so for `gcloud` the clipboard holds
+   `<key> <user>`. Test switch: `EWE_SAFE_OPEN` = a program called with the URL
    (or the terminal's argv) instead.
 5. `--sign` turns on commit signing with this key (S25).
 
 Reply: `item_id`, `ssh`, `service`, `alias` (or `null` for a cloud service
 without a host yet), `page`, `copied`, `opened`, `steps`, `remote_hint`
-(git services), `sync`. For a cloud service, the host comes later with `ssh
-host set`.
+(git services; Azure DevOps: `git@<alias>:v3/<org>/<project>/<repo>`),
+`enabled`, `sync`, and `signing` (as `ssh sign-commits`) with `--sign`.
+`--sign` checks the Git email before anything changes. For a cloud
+service, the host comes later with `ssh host set`.
 
 ### `ssh-test`
 
@@ -301,7 +343,11 @@ checks that the connection works, the way a user would by hand.
   then check again.", "The server's key changed. Safe stopped. Check with the
   server's owner."), `detail` (ssh's last lines, at most 400 characters).
   `changed` is never `connected`. Needs the safe unlocked (`locked`).
-  Exit 0 (rule 5).
+  Exit 0 (rule 5). Also `service` (the catalogue's, or `null`).
+- A service name tests ewe.conf's host for that service when there is one
+  (its `IdentityFile` applies), else `git@<the service's host>`; a service
+  without a host of its own (`gitea`, the cloud ones) and none in ewe.conf
+  is `bad-request` with a hint (`ssh host set`).
 
 ### `ssh-hosts`, `ssh-host-set`, `ssh-host-remove`
 
@@ -317,9 +363,11 @@ checks that the connection works, the way a user would by hand.
 - `ewe-safe ssh host set <alias> [--host H] [--user U] [--port N] [--key ID
   | --no-key]`: adds or changes an ewe.conf host; other options it had stay.
   An alias with a space, `*`, `?` or `!` is `bad-request`; one in the user's
-  own lines is `conflict`.
+  own lines is `conflict`. Reply: `alias`, `created`, `entry` (as in `ssh
+  hosts`).
 - `ewe-safe ssh host remove <alias>`: removes it from ewe.conf (never the
-  user's own lines: `conflict`).
+  user's own lines: `conflict`; an unknown alias: `not-found`). Reply:
+  `alias`, `removed`.
 
 ## S25. Sign Git commits with an SSH key
 
@@ -338,13 +386,23 @@ As 1Password does. CLI `ewe-safe ssh sign-commits <id> [--email E]` and
   `packaging/`): `ssh-keygen` with `SSH_AUTH_SOCK` set to Safe's socket, so
   signing reaches Safe even from a terminal that started before the gate.
   `ssh-keygen -Y sign -f <public file>` signs through the agent; the agent
-  asks "Allow ssh-keygen (from git) to use GitHub key?" as usual.
+  asks "Allow ssh-keygen (from git) to use GitHub key?" as usual. (Git
+  expands the `~` of `user.signingkey` and `allowedSignersFile` itself:
+  checked with Git 2.56.)
+- The email comes from Git's **global** `user.email` (`git config --global`):
+  the daemon's working folder may be any repository.
+- Reply: on: `signing: {item_id, title, fingerprint, email, file,
+  allowed_signers, recorded}`; off: `signing: null`, `unset` (the keys it
+  unset), `recorded`. The gate goes on when it is off (as `connect`).
 - Off: unsets those git keys **only where they still hold Safe's values**,
   removes `allowed_signers`, records `git_sign = ""`.
 - Follows the account: at start and on a settings re-read, a computer with
   `git_sign` set and that key in its safe sets the same git config (only the
-  keys above, only when they differ).
-- `ssh-status` gets `signing: {item_id, title, fingerprint} | null`.
+  keys above, only when they differ). As built, also the other way: with
+  `git_sign = ""`, or Safe's agent off, Safe's values go from Git here.
+- `ssh-status` gets `signing: {item_id, title, fingerprint, active} | null`
+  (`item_id` and `title` are `null` when that key isn't in this safe;
+  `active`: Git here signs with Safe now).
 - GitHub and GitLab show a signed commit as *Verified* only when the key is
   also added there as a **signing key**. The GitHub steps say so (GitHub:
   the same page, Key type → Signing Key).
@@ -386,8 +444,15 @@ agent connection.
   (the first name on that line). Otherwise the question stays as today.
 - `is_forwarding` true (an agent forwarded to another machine) → the
   question says "…through a forwarded connection" and `first-use` approval
-  is not remembered for it.
+  is not remembered for it. As built: it is also asked every time (an
+  approval remembered for the local `ssh` would otherwise skip it).
+- The prompt gets two more variables: `EWE_SAFE_APPROVE_HOST` (the host,
+  `""` when unknown) and `EWE_SAFE_APPROVE_FORWARDED` (`1` or `0`). The
+  window's `--approve` shows them.
 - Every other extension keeps its answer today (FAILURE).
+- As built: the agent keeps up to 16 bindings per connection (as OpenSSH's
+  own agent does) and names the last one; the daemon's own `ssh` (`ssh
+  test`) is never asked about.
 
 This is last in the order. Ship it only with tests (a real `ssh` against a
 real `sshd` on loopback, or the extension bytes built in a unit test). If
@@ -468,6 +533,16 @@ dev` (`?view=ssh&…` flags) for screenshots.
   SUN_LEN), a fake `ewe-conf` on `PATH` that stores into a JSON file, low KDF,
   `EWE_SAFE_NO_LOGIND`. Never the live `~/.ssh`, `~/.gitconfig`
   (`GIT_CONFIG_GLOBAL` into the sandbox), ewe.conf or agent.
+- **OpenSSH takes `~` from the passwd entry, not `$HOME`**, for its default
+  config, known_hosts and identity files (an `Include ~/…` follows `$HOME`).
+  So every real `ssh` in a test runs with `-F <sandbox config>` and a
+  sandbox `UserKnownHostsFile`, and a real connection names its key with
+  `-i <absolute path>`; an alias whose `IdentityFile` is `~/…` is checked
+  with `ssh -G` only. The test `sshd` gets `SetEnv HOME=<sandbox>` and
+  `PermitUserRC no`, so the session's shell reads nothing of the real home.
+- Test switches: `EWE_SAFE_SSH` (the `ssh` of `ssh test`), `EWE_SAFE_OPEN`
+  (what opens a page or a terminal), `EWE_SAFE_SETTINGS_SECONDS` (the
+  settings re-read).
 - A real `ssh-agent` with a key loaded plays "1Password" for `takeover`.
 - `ssh -G -F <sandbox config>` proves the gate wins over another
   `IdentityAgent`.

@@ -50,19 +50,26 @@ KeePassXC's own fields, so KeePassXC, KeePassDX and Strongbox use them too
 (docs/FORMAT.md). `ewe-safe passkey list [--rp github.com]` lists them;
 `ewe-safe edit <id> --remove-passkey` removes one.
 
-**SSH keys** (TRIO.md S2): Safe keeps them the way KeePassXC does and is an
-SSH agent for `ssh` and `git`, asking once per app before a key is used:
+**SSH keys** (TRIO.md S2, docs/GATE.md): Safe keeps them the way KeePassXC
+does and is the SSH gate for `ssh` and `git`, asking once per app before a
+key is used:
 
-    ewe-safe ssh new --title "GitHub key"      # prints the public key to give GitHub
+    ewe-safe ssh enable                        # Safe answers every ssh (two lines on top of ~/.ssh/config)
+    ewe-safe ssh takeover --dry-run            # what "Move SSH to Safe" would do; without --dry-run, it does it
+    ewe-safe ssh connect github                # a new key, the host, the key copied, GitHub's page open
+    ewe-safe ssh test github                   # "Connected to GitHub as sam."
+    ewe-safe ssh sign-commits <id>             # Git signs commits with that key
     ewe-safe ssh add ~/.ssh/id_ed25519         # an existing key (asks its passphrase)
-    ewe-safe ssh adopt --dry-run               # keys an earlier 1Password import made notes
-    ewe-safe ssh enable                        # SSH_AUTH_SOCK for new sessions, and the IdentityAgent line
+    ewe-safe ssh hosts                         # your hosts, and the key each one uses
     ssh-add -L                                 # the keys, through Safe
 
-`enable` never edits `~/.ssh/config`: if it names another agent
-(`IdentityAgent ~/.1password/agent.sock`), put the line it prints there.
-The question names the program by its full path and marks one outside
-`/usr` and `/opt`. It cuts down on surprises, nothing more: the master
+`enable` puts two lines on top of `~/.ssh/config` (an `Include` of
+`~/.ssh/ewe-safe/config`), so Safe's agent wins even where a host names
+another one (`IdentityAgent ~/.1password/agent.sock`); `disable` takes them
+away again, and nothing else in the file changes. Every computer of the
+account follows (`[safe] ssh_agent`). The question names the program by its
+full path and marks one outside `/usr` and `/opt`, and names the server
+when Safe knows it. It cuts down on surprises, nothing more: the master
 password is what protects the keys, since any program running as you can
 use the agent while Safe is unlocked (docs/PROTOCOL.md, "The SSH agent").
 

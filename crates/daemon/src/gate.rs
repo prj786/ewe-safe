@@ -74,6 +74,13 @@ pub fn env_file() -> PathBuf {
     config_home().join("environment.d").join(ENV_FILE)
 }
 
+/// `~/.ssh` comes from `$HOME`; without a full path there, Safe writes
+/// nothing (it would land in the daemon's working folder).
+fn home_ok() -> bool {
+    let h = hosts::home();
+    h.is_absolute() && h != Path::new("/")
+}
+
 // ── key files (S22) ─────────────────────────────────────────────────────
 
 /// `key-<tag>.pub`'s tag: the first 16 characters of the SHA256
@@ -129,6 +136,9 @@ pub fn key_file_text(line: &str, title: &str) -> Option<String> {
 /// Write one key's public file (S24's `connect` and `host set` need it now,
 /// before the agent's list catches up). Its path.
 pub fn write_key_file(line: &str, title: &str) -> io::Result<PathBuf> {
+    if !home_ok() {
+        return Err(io::Error::other("HOME isn't a full path"));
+    }
     let fp = keys::fingerprint_of_line(line).ok_or_else(|| io::Error::other("not a public key"))?;
     let path = key_file(&fp).ok_or_else(|| io::Error::other("no fingerprint"))?;
     let text = key_file_text(line, title).ok_or_else(|| io::Error::other("not a public key"))?;
@@ -141,6 +151,9 @@ pub fn write_key_file(line: &str, title: &str) -> io::Result<PathBuf> {
 /// Make `key-*.pub` match the agent's keys: (public line, title) pairs.
 /// Files for keys that are gone are removed (only `key-*.pub`).
 pub fn sync_key_files(list: &[(String, String)]) -> io::Result<bool> {
+    if !home_ok() {
+        return Err(io::Error::other("HOME isn't a full path"));
+    }
     let mut wanted = std::collections::HashSet::new();
     let mut changed = false;
     make_dirs()?;
@@ -407,6 +420,9 @@ fn remove_if(path: &Path, cond: bool) -> bool {
 /// its files, the key files from the public-key list, the two lines.
 /// Whether anything was written.
 pub fn apply(d: &Daemon) -> io::Result<bool> {
+    if !home_ok() {
+        return Err(io::Error::other("HOME isn't a full path"));
+    }
     let _one = lk(&WRITING);
     let env = env_file();
     if let Some(dir) = env.parent() {
@@ -428,6 +444,9 @@ pub fn apply(d: &Daemon) -> io::Result<bool> {
 /// config file, the key files, `known_hosts`, `allowed_signers`, the
 /// environment.d file. `config.before-safe` stays. Whether anything went.
 pub fn remove() -> bool {
+    if !home_ok() {
+        return false;
+    }
     let _one = lk(&WRITING);
     let mut gone = match remove_lines() {
         Ok(x) => x,

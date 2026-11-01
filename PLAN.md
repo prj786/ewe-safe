@@ -666,6 +666,26 @@ with phase 2, as one release wave:
   - the browser never fills without a click, and never on a site that doesn't match;
   - the canary secret appears in no companion log, prompt or request.
 
+### Phase 2+++: the SSH gate (owner, 2026-11-01)
+
+Safe becomes the one gate for SSH (1Password's agent still answered `ssh`
+on the owner's computer), tied to the account, with an easy way to GitHub,
+Azure DevOps, Azure VMs and others. Contract: [docs/GATE.md](docs/GATE.md)
+(S21–S28), amending RFC-008 and TRIO.md S2. Release: Safe 0.4.0-beta, with
+the owner's OK.
+
+- [x] **Daemon and CLI** (S21–S27, branch `feat/ssh-gate`): two lines on
+      top of `~/.ssh/config` and Safe's own `~/.ssh/ewe-safe/`, following
+      `[safe] ssh_agent` on every computer; a public file per key
+      (`key-<tag>.pub`, `last_used`); `ssh takeover`; the services'
+      catalogue, `ssh connect`, `ssh test`, `ssh hosts` / `host set` /
+      `host remove` (error `conflict`); `ssh sign-commits` with
+      `ewe-safe-ssh-sign` and `[safe] git_sign`; the services' host keys
+      shipped and checked against their pages; session-bind, so the
+      question names the host. *Open:* the owner's real takeover and `git
+      push`; a real GitHub and Azure DevOps connect.
+- [ ] **The window's SSH page** (S28, branch `feat/ssh-gate-app`).
+
 ### Phase 2+++: Safe and the system (owner, 2026-10-18)
 
 Unlock with the login password, the keyring prompt at every start fixed
