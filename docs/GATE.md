@@ -184,7 +184,7 @@ git)`). The agent keeps this in `$XDG_STATE_HOME/ewe/safe/ssh-used.json`
 ## S23. Moving SSH to Safe (`ssh takeover`)
 
 New verb **`ssh-takeover`**, CLI `ewe-safe ssh takeover [--dry-run]`. The
-window's "Move SSH to Safe". Needs the safe unlocked (a dry run too).
+window's "Move SSH to ewe Safe". Needs the safe unlocked (a dry run too).
 
 1. Turns the gate on (S21) if it is off.
 2. **Key files:** every regular file in `~/.ssh` (not in subfolders) whose
@@ -551,16 +551,22 @@ The side navigation's "SSH keys" becomes **SSH** (same icon). It opens a page,
 not the item list. One scroll, in this order:
 
 1. **The gate card.**
-   - Off: "Make Safe your SSH agent" — one line why, **Turn on** (`ssh
+   - Off: "Make ewe Safe your SSH agent" — one line why, **Turn on** (`ssh
      enable`), and the approval choice (first use / every time / never).
    - On, and another agent still has keys or hosts → warning card "1Password
      still answers ssh for work, work-proxy" (from `gate`) → **Move SSH to
-     Safe** opens the takeover sheet: a dry run list first (keys to import,
+     ewe Safe** opens the takeover sheet: a dry run list first (keys to import,
      files that need a passphrase with a field each, hosts to fix, keys only
      1Password has → "Import from 1Password" opens the Import screen), then
      **Move** → the result.
-   - On, all good → a quiet success line: "Safe is your SSH agent. Every
-     ssh and git on this computer asks Safe." and the approval choice.
+   - On, all good → a quiet success line: "ewe Safe is your SSH agent. Every
+     ssh and git on this computer asks ewe Safe." and the approval choice.
+   - Since the 0.4.0-beta UI revamp the "on" states share one list under
+     the alert: an **SSH agent** row (its state in a word and a tone, the
+     ⋯ menu with "Turn off ewe Safe’s SSH agent…", which asks in a dialog)
+     and the **Ask before a key is used** row. The page uses the window's
+     settings-page grammar (page title, overline sections, rows in wells,
+     an empty state with its next step under Keys, Hosts and computers).
 2. **Connect.** A grid of the catalogue's services (name + a simple glyph or
    letter tile; no brand logos we don't have the right to ship). A click
    opens the connect sheet, three steps on one sheet:
@@ -576,7 +582,7 @@ not the item list. One scroll, in this order:
 3. **Keys.** Each key: title, type, short fingerprint, "Used by" chips (the
    hosts that point at it), "Last used 2 min ago by git" (S22). Actions:
    Copy public key, Connect…, a menu with Sign commits on/off, Show item.
-   **Add a key** (file) and **New key** stay.
+   **Add a key file** and **New key** stay.
 4. **Hosts.** From `ssh hosts`: alias, `user@host:port`, the key chip (or
    "any key"), a "yours" badge for the user's own lines. Actions: **Open
    terminal** (kitty `ssh <alias>`), **Check** (inline result), Edit and
