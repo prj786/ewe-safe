@@ -666,7 +666,7 @@ with phase 2, as one release wave:
   - the browser never fills without a click, and never on a site that doesn't match;
   - the canary secret appears in no companion log, prompt or request.
 
-### Phase 2+++: the SSH gate (owner, 2026-11-01)
+### Phase 2++++: the SSH gate (owner, 2026-11-01)
 
 Safe becomes the one gate for SSH (1Password's agent still answered `ssh`
 on the owner's computer), tied to the account, with an easy way to GitHub,

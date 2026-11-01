@@ -405,6 +405,11 @@ struct Approve {
     key: String,
     path: String,
     system: bool,
+    /// The server the key goes to, when ssh told the agent (GATE.md S27);
+    /// empty when unknown.
+    host: String,
+    /// The request came through a forwarded agent connection.
+    forwarded: bool,
 }
 
 /// What this process was started with (see the module notes).
@@ -438,6 +443,8 @@ impl Launch {
                         key: env("EWE_SAFE_APPROVE_KEY"),
                         path: env("EWE_SAFE_APPROVE_PATH"),
                         system: env("EWE_SAFE_APPROVE_SYSTEM") == "1",
+                        host: env("EWE_SAFE_APPROVE_HOST"),
+                        forwarded: env("EWE_SAFE_APPROVE_FORWARDED") == "1",
                     });
                 }
                 "--confirm" => confirm = true,
@@ -472,7 +479,7 @@ impl Launch {
         };
         json!({
             "mode": mode,
-            "approve": self.approve.as_ref().map(|a| json!({"app": a.app, "key": a.key, "path": a.path, "system": a.system})),
+            "approve": self.approve.as_ref().map(|a| json!({"app": a.app, "key": a.key, "path": a.path, "system": a.system, "host": a.host, "forwarded": a.forwarded})),
             "reason": self.confirm,
             "show": self.show,
             "new": self.new,

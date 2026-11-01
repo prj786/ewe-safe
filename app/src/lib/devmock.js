@@ -13,7 +13,8 @@
 //   &login=1              login unlock is on (the login password is "login")
 //   &mode=unlock          the compact `--unlock` window
 //   &mode=approve         the SSH agent's question (`--approve`); &system=0 a
-//                         program outside /usr and /opt
+//                         program outside /usr and /opt; &host=github.com the
+//                         server (session-bind); &forwarded=1 a forwarded connection
 //   &mode=confirm         a card fill's confirm (`--confirm`); &reason=…
 //   &view=ssh             the SSH page (docs/GATE.md S28)   &view=sshkeys  the SSH key list
 //   &gate=off|old|1password|good   the SSH gate: the agent off (default; &agent=1
@@ -751,7 +752,9 @@ export function install(params) {
               app: "ssh (from git)",
               key: "GitHub key",
               path: params.get("system") === "0" ? "/home/sam/.local/bin/ssh (not a system program), started by /usr/bin/git" : "/usr/bin/ssh, started by /usr/bin/git",
-              system: params.get("system") !== "0"
+              system: params.get("system") !== "0",
+              host: params.get("host") ?? "",
+              forwarded: params.get("forwarded") === "1"
             }
           : null,
       show: null,
