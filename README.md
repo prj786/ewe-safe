@@ -51,8 +51,9 @@ KeePassXC's own fields, so KeePassXC, KeePassDX and Strongbox use them too
 `ewe-safe edit <id> --remove-passkey` removes one.
 
 **SSH keys** (TRIO.md S2, docs/GATE.md): Safe keeps them the way KeePassXC
-does and is the SSH gate for `ssh` and `git`, asking once per app before a
-key is used:
+does and is the SSH gate for `ssh` and `git`. It asks one time after you turn
+on the computer, never from an SSH session on it, and not at all when you typed
+your password:
 
     ewe-safe ssh enable                        # Safe answers every ssh (two lines on top of ~/.ssh/config)
     ewe-safe ssh takeover --dry-run            # what "Move SSH to Safe" would do; without --dry-run, it does it

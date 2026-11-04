@@ -69,7 +69,7 @@
 </script>
 
 {#if mode === "approve"}
-  <Approve app={approve?.app || "An app"} key={approve?.key || "an SSH key"} path={approve?.path ?? ""} system={!!approve?.system} host={approve?.host ?? ""} forwarded={!!approve?.forwarded} />
+  <Approve app={approve?.app || "An app"} key={approve?.key || "an SSH key"} path={approve?.path ?? ""} system={!!approve?.system} host={approve?.host ?? ""} forwarded={!!approve?.forwarded} once={!!approve?.once} />
 {:else if mode === "confirm"}
   <Confirm {reason} />
 {:else if mode === "unlock"}

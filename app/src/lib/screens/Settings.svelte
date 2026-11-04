@@ -35,6 +35,8 @@
   const state = $derived(syncDetail(sync, place, place?.kind === "nextcloud" ? server : "", now));
   const s = $derived(safe.settings);
   const flag = (k) => s[k] !== false;
+  // once per power-on: these are off until the user turns them on
+  const optIn = (k) => s[k] === true || s[k] === "true";
   const loginOn = $derived((safe.status?.unlock_methods ?? []).includes("login"));
 
   // the toggle: on opens the one-time setup dialog; off turns it straight off
@@ -60,7 +62,7 @@
       login = { ...login, login: "", master: "", busy: false, error: r?.message ?? "Couldn’t turn it on." };
     }
   }
-  const lockAfter = $derived(Number(s.lock_after_minutes ?? 30));
+  const lockAfter = $derived(Number(s.lock_after_minutes ?? 0));
   const clearAfter = $derived(Number(s.clipboard_clear_seconds ?? 30));
 
   // The keyring (docs/KEYRING.md): who keeps the apps' passwords, the fix
@@ -191,12 +193,12 @@
     <div class="ewe-list">
       <div class="ewe-switch-row ewe-row">
         <span class="ewe-check__text"><span class="ewe-check__label">Lock when the screen locks</span></span>
-        <Switch on={flag("lock_on_screen_lock")} label="Lock when the screen locks" toggled={(v) => set("lock_on_screen_lock", v)} />
+        <Switch on={optIn("lock_on_screen_lock")} label="Lock when the screen locks" toggled={(v) => set("lock_on_screen_lock", v)} />
       </div>
       <div class="ewe-list__divider"></div>
       <div class="ewe-switch-row ewe-row">
         <span class="ewe-check__text"><span class="ewe-check__label">Lock before sleep</span></span>
-        <Switch on={flag("lock_on_sleep")} label="Lock before sleep" toggled={(v) => set("lock_on_sleep", v)} />
+        <Switch on={optIn("lock_on_sleep")} label="Lock before sleep" toggled={(v) => set("lock_on_sleep", v)} />
       </div>
       <div class="ewe-list__divider"></div>
       <div class="ewe-row">

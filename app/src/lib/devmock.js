@@ -14,7 +14,8 @@
 //   &mode=unlock          the compact `--unlock` window
 //   &mode=approve         the SSH agent's question (`--approve`); &system=0 a
 //                         program outside /usr and /opt; &host=github.com the
-//                         server (session-bind); &forwarded=1 a forwarded connection
+//                         server (session-bind); &forwarded=1 a forwarded connection;
+//                         &once=0 the per-app question
 //   &mode=confirm         a card fill's confirm (`--confirm`); &reason=…
 //   &view=ssh             the SSH page (docs/GATE.md S28)   &view=sshkeys  the SSH key list
 //   &gate=off|old|1password|good   the SSH gate: the agent off (default; &agent=1
@@ -75,9 +76,9 @@ export function install(params) {
     items: flag("empty", false) ? [] : clone(fixture.items),
     deleted: flag("empty", false) ? [] : clone(fixture.deleted),
     settings: {
-      lock_after_minutes: 30,
-      lock_on_screen_lock: true,
-      lock_on_sleep: true,
+      lock_after_minutes: 0,
+      lock_on_screen_lock: false,
+      lock_on_sleep: false,
       clipboard_clear_seconds: 30,
       generator_length: 20,
       generator_words: 5,
@@ -132,7 +133,7 @@ export function install(params) {
   const g = {
     enabled: gateFlag !== "off",
     on: gateFlag === "1password" || good,
-    confirm: "first-use",
+    confirm: "once",
     // 1Password's agent: its keys, and the ones Safe doesn't have
     op: good ? null : { keys: 4, missing: [{ agent: "1Password", comment: "Staging deploy key", fingerprint: "SHA256:op9Qm2Lx7RkVt3eN1bW8uYc5", key_type: "ed25519" }] },
     // private key files in ~/.ssh
@@ -283,7 +284,7 @@ export function install(params) {
   const verbs = {
     daemon_state: () => (s.daemon ? { available: true } : { available: false, ...unavailable(), ok: undefined }),
     ping: () => ({ ok: true, pong: true }),
-    version: () => ({ ok: true, version: "0.4.0-beta", protocol: 1 }),
+    version: () => ({ ok: true, version: "0.5.0-beta", protocol: 1 }),
     status: () => ({
       ok: true,
       set_up: s.setUp,
@@ -295,7 +296,7 @@ export function install(params) {
       login: { enabled: s.loginEnabled, session_open: s.loginEnabled },
       items: s.locked ? null : s.items.length,
       sync: s.setUp ? sync : null,
-      version: "0.4.0-beta"
+      version: "0.5.0-beta"
     }),
     summary: () => ({ ok: true, locked: s.locked, items: s.locked ? null : s.items.length, sync_state: sync.state }),
     init: ({ place: p, password }) => {
@@ -756,7 +757,8 @@ export function install(params) {
               path: params.get("system") === "0" ? "/home/sam/.local/bin/ssh (not a system program), started by /usr/bin/git" : "/usr/bin/ssh, started by /usr/bin/git",
               system: params.get("system") !== "0",
               host: params.get("host") ?? "",
-              forwarded: params.get("forwarded") === "1"
+              forwarded: params.get("forwarded") === "1",
+              once: params.get("once") !== "0"
             }
           : null,
       show: null,

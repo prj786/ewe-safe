@@ -152,21 +152,24 @@ fn the_screen_lock_and_sleep_lock_the_safe() {
         .expect("logind");
 
     let sock = run.join("ewe-safe.sock");
-    let _daemon = Daemon(
-        Command::new(env!("CARGO_BIN_EXE_ewe-safed"))
-            .env_clear()
-            .env("HOME", &root)
-            .env("PATH", root.join("bin"))
-            .env("XDG_RUNTIME_DIR", &run)
-            .env("XDG_STATE_HOME", root.join("state"))
-            .env("XDG_DATA_HOME", root.join("data"))
-            .env("XDG_CONFIG_HOME", root.join("config"))
-            .env("EWE_SAFE_KDF_ITERATIONS", "2")
-            .env("EWE_SAFE_LOGIND_BUS", &addr)
-            .stderr(Stdio::null())
-            .spawn()
-            .expect("ewe-safed"),
-    );
+    let start = || {
+        Daemon(
+            Command::new(env!("CARGO_BIN_EXE_ewe-safed"))
+                .env_clear()
+                .env("HOME", &root)
+                .env("PATH", root.join("bin"))
+                .env("XDG_RUNTIME_DIR", &run)
+                .env("XDG_STATE_HOME", root.join("state"))
+                .env("XDG_DATA_HOME", root.join("data"))
+                .env("XDG_CONFIG_HOME", root.join("config"))
+                .env("EWE_SAFE_KDF_ITERATIONS", "2")
+                .env("EWE_SAFE_LOGIND_BUS", &addr)
+                .stderr(Stdio::null())
+                .spawn()
+                .expect("ewe-safed"),
+        )
+    };
+    let daemon = start();
     wait("the daemon", || UnixStream::connect(&sock).is_ok());
     let v = call(&sock, "init", json!({"place": "local", "password": "pw"}));
     assert_eq!(v["ok"], true, "{v}");
@@ -177,6 +180,36 @@ fn the_screen_lock_and_sleep_lock_the_safe() {
         .object_server()
         .interface::<_, Session>(SESSION)
         .unwrap();
+    let manager = logind
+        .object_server()
+        .interface::<_, Manager>("/org/freedesktop/login1")
+        .unwrap();
+
+    // by default neither locks the safe: once per power-on
+    session.get_mut().locked = true;
+    zbus::block_on(session.get().locked_hint_changed(session.signal_emitter())).unwrap();
+    zbus::block_on(Manager::prepare_for_sleep(manager.signal_emitter(), true)).unwrap();
+    std::thread::sleep(Duration::from_millis(500));
+    assert!(!locked(&sock), "by default the safe stays open");
+    session.get_mut().locked = false;
+    zbus::block_on(session.get().locked_hint_changed(session.signal_emitter())).unwrap();
+    drop(daemon);
+
+    // the user turned both on
+    let conf = root.join("bin").join("ewe-conf");
+    std::fs::write(
+        &conf,
+        "#!/bin/sh\n[ \"$1 $2\" = \"get safe\" ] || exit 1\necho '{\"lock_on_screen_lock\": true, \"lock_on_sleep\": true}'\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&conf, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let _daemon = start();
+    wait("the daemon again", || {
+        UnixStream::connect(&sock).is_ok()
+            && call(&sock, "unlock", json!({"password": "pw"}))["ok"] == true
+    });
+    assert!(!locked(&sock));
+
     session.get_mut().locked = true;
     zbus::block_on(session.get().locked_hint_changed(session.signal_emitter())).unwrap();
     wait("the screen lock", || locked(&sock));
@@ -187,10 +220,6 @@ fn the_screen_lock_and_sleep_lock_the_safe() {
     zbus::block_on(session.get().locked_hint_changed(session.signal_emitter())).unwrap();
     std::thread::sleep(Duration::from_millis(300));
     assert!(!locked(&sock), "LockedHint false doesn't lock");
-    let manager = logind
-        .object_server()
-        .interface::<_, Manager>("/org/freedesktop/login1")
-        .unwrap();
     zbus::block_on(Manager::prepare_for_sleep(manager.signal_emitter(), false)).unwrap();
     std::thread::sleep(Duration::from_millis(300));
     assert!(!locked(&sock), "waking up doesn't lock");

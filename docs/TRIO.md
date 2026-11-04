@@ -167,11 +167,10 @@ built). `match` keeps answering logins only.
   `$XDG_STATE_HOME/ewe/safe/ssh-public.json` (public keys only).
 - `SIGN_REQUEST`: ed25519, ecdsa-sha2-nistp256/384, rsa-sha2-256/512. Locked →
   the daemon opens the unlock prompt and waits (60 s), as 1Password does.
-- **Approval:** the first use of a key by an app in each unlock asks "Allow
-  *ssh (from git)* to use *GitHub key*?" (Allow / Deny), like 1Password. The
-  app is found through `SO_PEERCRED` → `/proc/<pid>` (and its parent). Setting
-  `[safe] ssh_confirm = "first-use" | "every-time" | "never"`, default
-  `first-use`. No answer in 60 s = deny.
+- **Approval:** one question per power-on (since 2026-11-04; docs/PROTOCOL.md).
+  The app is found through `SO_PEERCRED` → `/proc/<pid>` (and its parent).
+  Setting `[safe] ssh_confirm = "once" | "first-use" | "every-time" | "never"`,
+  default `once`. No answer in 60 s = deny.
 - Adding or removing keys through the agent (`ssh-add`) is refused; keys come
   from Safe.
 - **Turning it on:** `ewe-safe ssh enable` records `[safe] ssh_agent = true`

@@ -525,7 +525,9 @@ agent connection.
   destination**: the bound server's host key fingerprint, or "unbound" for
   a connection with no binding (local tools like `ssh-keygen -Y sign`, old
   clients). A yes for github.com is not a yes for another server.
-  Forwarded: asked every time, never remembered.
+  Forwarded: asked every time, never remembered. `once`, the default since
+  2026-11-04, remembers one answer for everything, but a forwarded connection
+  is still asked every time.
 - The daemon's own `ssh` (`ssh test`) goes without a question only when it
   is the system's `/usr/bin/ssh` (or `EWE_SAFE_SSH`, the test switch) and
   the connection isn't forwarded; that `ssh` runs with `-a -o
@@ -552,7 +554,7 @@ not the item list. One scroll, in this order:
 
 1. **The gate card.**
    - Off: "Make ewe Safe your SSH agent" — one line why, **Turn on** (`ssh
-     enable`), and the approval choice (first use / every time / never).
+     enable`), and the approval choice (once per start / once per app / every time / never).
    - On, and another agent still has keys or hosts → warning card "1Password
      still answers ssh for work, work-proxy" (from `gate`) → **Move SSH to
      ewe Safe** opens the takeover sheet: a dry run list first (keys to import,

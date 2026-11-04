@@ -361,6 +361,17 @@ impl Drop for Sandbox {
     }
 }
 
+/// Unlocked with this power-on's question still open, as login unlock leaves
+/// it: a restarted daemon, and a test switch for the login keyring it needs.
+fn open_without_typing(s: &mut Sandbox) {
+    s.stop();
+    s.extra.retain(|(k, _)| k != "EWE_SAFE_UNLOCK_UNTYPED");
+    s.extra.push(("EWE_SAFE_UNLOCK_UNTYPED".into(), "1".into()));
+    s.start();
+    s.cli_in(&["unlock"], &format!("{MASTER}\n"));
+    assert_eq!(s.ok(&["status"])["locked"], false);
+}
+
 /// The key part of a public line (no comment).
 fn bare(line: &str) -> String {
     line.split_whitespace()
@@ -380,7 +391,7 @@ fn keys_come_in_and_the_agent_signs_with_them() {
         (st["enabled"].clone(), st["listening"].clone()),
         (json!(false), json!(true))
     );
-    assert_eq!(st["confirm"], "first-use");
+    assert_eq!(st["confirm"], "once");
     let mode = std::fs::metadata(s.agent()).unwrap().permissions().mode();
     assert_eq!(mode & 0o777, 0o600, "the agent's socket is private");
 
@@ -481,7 +492,7 @@ fn keys_come_in_and_the_agent_signs_with_them() {
 
     // off until enabled
     assert!(s.listed().is_empty(), "the agent is off");
-    let en = s.ok(&["ssh", "enable"]);
+    let en = s.ok(&["ssh", "enable", "--confirm", "first-use"]);
     assert_eq!(
         (en["enabled"].clone(), en["recorded"].clone()),
         (json!(true), json!(true))
@@ -682,6 +693,176 @@ fn keys_come_in_and_the_agent_signs_with_them() {
         );
     }
     assert!(log.contains("refused to add or remove keys"));
+}
+
+/// The installed unit must not put the daemon in a user namespace: from there
+/// the kernel hides every other program's /proc/<pid>/exe, the agent can't see
+/// who asks, and it asks every time. Found on real machines only: no test runs
+/// under systemd. (A user service gets a mount namespace only inside a user one.)
+#[test]
+fn the_unit_keeps_the_daemon_out_of_a_user_namespace() {
+    let unit = include_str!("../../../packaging/ewe-safe.service");
+    let settings = unit
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.starts_with('#'))
+        .filter_map(|l| l.split('=').next())
+        .collect::<Vec<_>>();
+    for needs_a_namespace in [
+        "PrivateTmp",
+        "PrivateDevices",
+        "PrivateUsers",
+        "PrivateMounts",
+        "ProtectSystem",
+        "ProtectHome",
+        "ProtectProc",
+        "ProcSubset",
+        "ProtectKernelTunables",
+        "ProtectKernelModules",
+        "ProtectKernelLogs",
+        "ProtectControlGroups",
+        "ProtectHostname",
+        "ProtectClock",
+        "ReadWritePaths",
+        "ReadOnlyPaths",
+        "InaccessiblePaths",
+        "TemporaryFileSystem",
+        "BindPaths",
+        "BindReadOnlyPaths",
+        "RootDirectory",
+    ] {
+        assert!(
+            !settings.contains(&needs_a_namespace),
+            "{needs_a_namespace}= in ewe-safe.service: the agent would go blind"
+        );
+    }
+}
+
+/// `ssh_confirm = once`, the default: one question per power-on for every app
+/// and key; a typed password is that question; a lock forgets it.
+#[test]
+fn the_default_asks_once_per_power_on() {
+    let mut s = Sandbox::new("once");
+    s.start();
+    s.init();
+    let (gh, gh_public) = s.keygen("gh", &["-t", "ed25519", "-C", "gh"], "");
+    let (other, other_public) = s.keygen("other", &["-t", "ed25519", "-C", "other"], "");
+    for (f, title) in [(&gh, "GitHub key"), (&other, "Other key")] {
+        s.ok(&["ssh", "add", f.to_str().unwrap(), "--title", title]);
+    }
+    s.ok(&["ssh", "enable"]);
+    assert_eq!(s.ok(&["ssh", "status"])["confirm"], "once");
+
+    // init typed the password: that was the question
+    assert!(
+        s.sign_and_verify(&gh_public),
+        "no question after a typed password"
+    );
+    assert!(s.approvals().is_empty(), "{:?}", s.approvals());
+
+    // a lock forgets it, and a typed unlock answers it again
+    s.ok(&["lock"]);
+    s.cli_in(&["unlock"], &format!("{MASTER}\n"));
+    assert!(s.sign_and_verify(&gh_public));
+    assert!(s.approvals().is_empty(), "{:?}", s.approvals());
+
+    // the agent's own unlock prompt is a typed password too
+    s.ok(&["lock"]);
+    assert!(s.sign_and_verify(&gh_public), "through the unlock prompt");
+    assert_eq!(s.ok(&["status"])["locked"], false);
+    assert!(s.approvals().is_empty(), "{:?}", s.approvals());
+
+    // a Deny stands for that request only; an Allow holds for every app and key
+    open_without_typing(&mut s);
+    s.answer("1");
+    assert!(!s.sign_and_verify(&gh_public), "denied");
+    assert_eq!(s.approvals().len(), 1);
+    s.answer("0");
+    assert!(s.sign_and_verify(&gh_public), "allowed");
+    assert_eq!(s.approvals().len(), 2);
+    s.answer("1");
+    assert!(s.sign_and_verify(&other_public), "another key: not asked");
+    let copy = s.root.join("keys").join("another-app");
+    std::fs::copy("/usr/bin/ssh-keygen", &copy).unwrap();
+    assert!(
+        s.sign_with(copy.to_str().unwrap(), &gh_public),
+        "another app: not asked"
+    );
+    assert_eq!(s.approvals().len(), 2, "{:?}", s.approvals());
+}
+
+/// A request from an SSH session on this computer asks nothing on this screen,
+/// and a locked safe fails at once instead of hanging the session.
+#[test]
+fn an_ssh_session_never_waits_for_this_screen() {
+    let mut s = Sandbox::new("session");
+    s.start();
+    s.init();
+    let (gh, gh_public) = s.keygen("gh", &["-t", "ed25519", "-C", "gh"], "");
+    s.ok(&["ssh", "add", gh.to_str().unwrap(), "--title", "GitHub key"]);
+    s.ok(&["ssh", "enable"]);
+
+    // SSH_CONNECTION: a tmux server, an IDE's backend
+    let by_env = s.root.join("keys").join("by-env");
+    write_exec(
+        &by_env,
+        "#!/bin/sh\nSSH_CONNECTION='100.1.1.1 5 100.2.2.2 3933' exec ssh-keygen \"$@\"\n",
+    );
+    // a parent called sshd-session: the session's own shell (the `; exit` keeps
+    // sh from exec'ing ssh-keygen in its place)
+    let sshd = s.root.join("keys").join("sshd-session");
+    std::fs::copy("/bin/sh", &sshd).unwrap();
+    let by_parent = s.root.join("keys").join("by-parent");
+    write_exec(
+        &by_parent,
+        &format!(
+            "#!/bin/sh\nexec {} -c 'ssh-keygen \"$@\"; exit $?' sh \"$@\"\n",
+            sshd.display()
+        ),
+    );
+
+    // nobody answers here: a question would be a no
+    s.answer("1");
+    open_without_typing(&mut s);
+    assert!(
+        !s.sign_and_verify(&gh_public),
+        "from this screen it still asks"
+    );
+    assert_eq!(s.approvals().len(), 1);
+    for prog in [&by_env, &by_parent] {
+        assert!(
+            s.sign_with(prog.to_str().unwrap(), &gh_public),
+            "{} signs",
+            prog.display()
+        );
+    }
+    assert_eq!(s.approvals().len(), 1, "{:?}", s.approvals());
+    assert!(s.daemon_log().contains("runs in an SSH session"));
+
+    // every-time was the user's own choice: it still asks
+    s.ok(&["ssh", "enable", "--confirm", "every-time"]);
+    assert!(!s.sign_with(by_env.to_str().unwrap(), &gh_public));
+    assert_eq!(s.approvals().len(), 2);
+    s.ok(&["ssh", "enable", "--confirm", "once"]);
+
+    // locked: at once, with no prompt (one would sit on an empty screen)
+    let asks = s.root.join("asks");
+    s.stop();
+    s.extra.retain(|(k, _)| k != "EWE_SAFE_ASK_CMD");
+    s.extra.push((
+        "EWE_SAFE_ASK_CMD".into(),
+        format!("echo asked >> {}", asks.display()),
+    ));
+    s.start();
+    let start = Instant::now();
+    assert!(!s.sign_with(by_env.to_str().unwrap(), &gh_public));
+    assert!(start.elapsed() < Duration::from_secs(2), "no waiting");
+    assert!(!asks.exists(), "no unlock prompt");
+    assert!(s.daemon_log().contains("no prompt on this screen"));
+
+    // `ewe-safe unlock` in that session opens it, and then it signs
+    s.cli_in(&["unlock"], &format!("{MASTER}\n"));
+    assert!(s.sign_with(by_env.to_str().unwrap(), &gh_public));
 }
 
 #[test]

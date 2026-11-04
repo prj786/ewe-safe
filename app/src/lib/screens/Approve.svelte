@@ -9,11 +9,12 @@
   // the system's folders is called out. When ssh told the agent which
   // server it talks to (session-bind, GATE.md S27) the question names it,
   // and a forwarded connection (the key used on another computer) is
-  // called out too.
+  // called out too. `once` (`ssh_confirm = once`, the default): this Allow
+  // holds for every app and key until the computer turns off, and says so.
   import Icon from "../components/Icon.svelte";
   import { api } from "../api.js";
 
-  let { app = "An app", key = "an SSH key", path = "", system = false, host = "", forwarded = false } = $props();
+  let { app = "An app", key = "an SSH key", path = "", system = false, host = "", forwarded = false, once = false } = $props();
 
   const WAIT = 60;
   let left = $state(WAIT);
@@ -39,7 +40,11 @@
   <span class="ewe-appicon safe-tile"><Icon name="terminal" /></span>
   <div class="safe-compact__body">
     <div class="safe-head">
-      <div class="h3 safe-ask" id="approve-title">Allow <span class="safe-ask__name">{app}</span> to use <span class="safe-ask__name">{key}</span>{#if host}{" for "}<span class="safe-ask__name">{host}</span>{/if}?</div>
+      {#if once}
+        <div class="h3 safe-ask" id="approve-title">Allow SSH keys until this computer turns off?</div>
+      {:else}
+        <div class="h3 safe-ask" id="approve-title">Allow <span class="safe-ask__name">{app}</span> to use <span class="safe-ask__name">{key}</span>{#if host}{" for "}<span class="safe-ask__name">{host}</span>{/if}?</div>
+      {/if}
       {#if path}<div class="caption mono safe-key">{path}</div>{/if}
       {#if forwarded}
         <div class="ewe-field__helper ewe-field__helper--error"><Icon name="triangle-alert" /><span>Through a forwarded connection: the key is used from another computer.</span></div>

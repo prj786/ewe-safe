@@ -20,7 +20,7 @@
   import { arrowFocus, edge } from "../trap.js";
 
   let now = $state(new Date());
-  let choice = $state("first-use"); // the approval choice before Turn on
+  let choice = $state("once"); // the approval choice before Turn on
   let checks = $state({}); // alias → {busy} | {r}
   let menu = $state(""); // "key:<id>" | "host:<alias>" | "gate"
   let hostEdit = $state(null); // {host?} — a new host, or one to change
@@ -45,7 +45,7 @@
   const keys = $derived(safe.items.filter((i) => i.kind === "ssh-key").sort((a, b) => a.title.localeCompare(b.title)));
   const remote = $derived(safe.ssh.remote);
   const signing = $derived(st?.signing ?? null);
-  const confirm = $derived(st?.confirm ?? "first-use");
+  const confirm = $derived(st?.confirm ?? "once");
   const account = $derived(safe.status?.place?.kind === "nextcloud");
   const connected = (service) => hosts.some((h) => h.service === service && h.key);
 
@@ -254,7 +254,7 @@
           <span class="ewe-row__lead ewe-row__lead--tile"><Icon name="shield" /></span>
           <span class="ewe-row__text">
             <span class="ewe-row__title">Ask before a key is used</span>
-            <span class="ewe-row__desc">{confirm === "never" ? "Any app can use your keys without a question while ewe Safe is open." : "ewe Safe asks you, and names the app."}</span>
+            <span class="ewe-row__desc">{confirm === "never" ? "Any app can use your keys without a question while ewe Safe is open." : confirm === "once" ? "ewe Safe asks one time after you turn on this computer." : "ewe Safe asks you, and names the app."}</span>
           </span>
           <span class="ewe-row__trail">{@render approvalSeg(confirm, setConfirm)}</span>
         </div>
@@ -456,7 +456,9 @@
     <div class="label">Ask before a key is used</div>
     <div class="safe-seg-start">{@render approvalSeg(value, pick)}</div>
     <div class="caption safe-muted">
-      {value === "first-use"
+      {value === "once"
+        ? "ewe Safe asks one time after you turn on this computer. If you typed your password, it doesn’t ask at all. From an SSH session it never asks on this screen."
+        : value === "first-use"
         ? "ewe Safe asks the first time each app uses a key, and names the app."
         : value === "every-time"
           ? "ewe Safe asks every time a key is used."

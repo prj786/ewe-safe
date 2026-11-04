@@ -364,14 +364,19 @@ table of tests).
     cryptographic protection, because malware running as you could read the
     keyring directly. That's the same on every desktop password manager.
 
-**Locking** (each can be switched off in Settings → Security):
+**Locking.** Since 2026-11-04 the safe opens once per power-on and stays open
+(the owner: "asking for password should not be all the time thing"; the screen
+lock guards it while you are away). These two always lock:
+
+- by hand: the app, `ewe-safe lock`, or `Ctrl+L` in the picker;
+- at logout and power-off, because the user unit stops.
+
+These are off unless turned on in Settings → Security:
 
 - when the screen locks: logind `LockedHint`. Verified: `Lock.qml` sets it
   through `Logind.setLockedHint(root.locked)`;
 - before sleep: logind `PrepareForSleep(true)`;
-- after **30 minutes** without the safe being used;
-- by hand: the app, `ewe-safe lock`, or `Ctrl+L` in the picker;
-- at logout, because the user unit stops.
+- after a chosen time without the safe being used.
 
 Locking wipes the key and the decrypted database from memory (zeroize). It
 also clears the clipboard if it still holds a value Safe put there.
@@ -483,7 +488,7 @@ connection.
 | what | where | synced? |
 |---|---|---|
 | the safe (encrypted) | the place (`ewe/safe/passwords.kdbx` in a remote place; `~/.local/share/ewe/safe/passwords.kdbx` for this computer) | by `ewe-safed` |
-| settings (non-secret) | `ewe.conf` `[safe]`: `place`, `location`, `webdav_url`, `webdav_user`, `lock_after_minutes = 30`, `lock_on_screen_lock`, `lock_on_sleep`, `clipboard_clear_seconds = 30`, `generator_length = 20`, `generator_words = 5` | yes (ewe-sync) |
+| settings (non-secret) | `ewe.conf` `[safe]`: `place`, `location`, `webdav_url`, `webdav_user`, `lock_after_minutes = 0`, `lock_on_screen_lock = false`, `lock_on_sleep = false`, `clipboard_clear_seconds = 30`, `generator_length = 20`, `generator_words = 5` | yes (ewe-sync) |
 | local cache + sync record | `~/.local/state/ewe/safe/cache/passwords.kdbx`, `sync.json` (etag, hash, newest-seen time, pending) | never |
 | backups | `~/.local/state/ewe/safe/backups/` (20, encrypted) | never |
 | per-machine choices | `~/.local/state/ewe/safe/machine.json` (safe id, unlock-with-login on/off) | never |

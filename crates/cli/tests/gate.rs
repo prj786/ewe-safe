@@ -587,7 +587,7 @@ fn the_gate_goes_on_and_off_and_follows_the_account() {
     assert!(!s.gate_dir().exists());
 
     // on
-    let en = s.ok(&["ssh", "enable"]);
+    let en = s.ok(&["ssh", "enable", "--confirm", "first-use"]);
     assert_eq!(en["gate"]["on"], true, "{en}");
     assert_eq!(en["gate"]["include"], true);
     let text = std::fs::read_to_string(&cfg).unwrap();
@@ -1457,7 +1457,7 @@ fn a_real_sshd_lets_safe_in() {
     ));
     s.start();
     s.init();
-    s.ok(&["ssh", "enable"]);
+    s.ok(&["ssh", "enable", "--confirm", "first-use"]);
     let k = s.ok(&["ssh", "new", "--title", "Server key"]);
     let id = k["item_id"].as_str().unwrap().to_string();
     let me = String::from_utf8(Command::new("id").arg("-un").output().unwrap().stdout).unwrap();
@@ -1663,7 +1663,9 @@ fn git_commits_are_signed_through_safe() {
         json!({"item_id": id, "title": "Signing key", "fingerprint": fp, "active": true, "reason": null})
     );
 
-    // a real commit and a tag, signed through the agent, verified
+    // a real commit and a tag, signed through the agent, verified (with the
+    // per-app question on: this test reads what it says)
+    s.ok(&["ssh", "enable", "--confirm", "first-use"]);
     let repo = s.root.join("repo");
     assert_eq!(s.git(&["init", "-q", repo.to_str().unwrap()]).2, 0);
     let r = repo.to_str().unwrap();

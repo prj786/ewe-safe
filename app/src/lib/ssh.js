@@ -7,6 +7,7 @@ import { ago } from "./format.js";
 
 /** The approval choice (`ssh_confirm`), in the window's words. */
 export const CONFIRMS = [
+  ["once", "Once per start"],
   ["first-use", "Once per app"],
   ["every-time", "Every time"],
   ["never", "Never"]
