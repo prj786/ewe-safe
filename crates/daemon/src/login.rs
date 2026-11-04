@@ -249,7 +249,7 @@ pub fn unlock_from_session(d: &Arc<Daemon>) -> Result<usize, Fail> {
         other => login_fail(other),
     })?;
     let master = Zeroizing::new(master.to_string());
-    d.unlock(&master)
+    d.unlock_quietly(&master)
 }
 
 /// `confirm {password | login_password}`: a fresh presence check for a

@@ -10,9 +10,12 @@
 //! - `SIGN_REQUEST`: ed25519, ecdsa-sha2-nistp256/384, rsa-sha2-256/512.
 //!   Locked: the unlock prompt opens (`ewe-safe unlock --ask`) and the
 //!   request waits for it.
-//! - Approval: the first use of a key by an app in each unlock asks "Allow
-//!   ssh (from git) to use GitHub key?" (`[safe] ssh_confirm`). No answer
-//!   in time is a no.
+//! - Approval (`[safe] ssh_confirm`): by default one question per power-on,
+//!   for every app and key; a typed password counts as that question. No
+//!   answer in time is a no.
+//! - A request from an SSH session on this computer never puts anything on
+//!   this computer's screen: whoever is working there is somewhere else, and
+//!   the question would only time out.
 //! - Every other request (adding or removing keys, locking the agent, …)
 //!   is refused: the keys come from Safe.
 //!
@@ -642,6 +645,16 @@ impl Agent {
             (true, false) => return true,
             _ => {}
         }
+        // nobody at this screen would see the prompt; waiting for it only
+        // hangs the session, and the pause it starts would silence the next
+        // prompt for someone who is here
+        if peer.ssh_session {
+            log(&format!(
+                "ssh agent: locked, and {} runs in an SSH session: no prompt on this screen (`ewe-safe unlock` in that session opens the safe)",
+                peer.label
+            ));
+            return false;
+        }
         {
             let mut cd = lk(&self.cooldown);
             if let Some(until) = cd.0
@@ -716,7 +729,8 @@ impl Agent {
     }
 
     /// `[safe] ssh_confirm`: `never` asks nothing, `every-time` asks every
-    /// time, `first-use` once per app and key until the safe locks — but a
+    /// time, `first-use` once per app and key until the safe locks, `once`
+    /// (the default) once for everything until the safe locks — but a
     /// signature for a forwarded connection is asked about every time and
     /// never remembered (docs/GATE.md S27).
     fn approved(&self, peer: &Peer, key: &str, title: &str, dest: &Dest) -> bool {
@@ -729,6 +743,36 @@ impl Agent {
                 "ssh agent: no question for the daemon's own ssh (ssh test: the user pressed Check)",
             );
             return true;
+        }
+        // whoever is in that session isn't at this screen: a question here
+        // would only time out. `every-time` still asks: the user chose it.
+        if peer.ssh_session && !dest.forwarded && mode != "every-time" {
+            log(&format!(
+                "ssh agent: no question for {}: it runs in an SSH session",
+                peer.label
+            ));
+            return true;
+        }
+        if mode == config::CONFIRM_ONCE && !dest.forwarded {
+            let answered = || self.d.ssh_once.load(Ordering::SeqCst);
+            if answered() {
+                return true;
+            }
+            let _one = lk(&self.asking);
+            // answered while this request waited for the other prompt
+            if answered() {
+                return true;
+            }
+            let yes = ask(&self.d.paths, peer, title, dest, true);
+            if yes {
+                // in this order: `lock` marks the safe locked, then clears
+                // this, so one of the two always sees the other
+                self.d.ssh_once.store(true, Ordering::SeqCst);
+                if rd(&self.d.snap).locked {
+                    self.d.ssh_once.store(false, Ordering::SeqCst);
+                }
+            }
+            return yes;
         }
         // a program whose file can't be seen is asked every time; an
         // answer holds for that program, key and server only
@@ -746,7 +790,7 @@ impl Agent {
         if known(&pair) {
             return true;
         }
-        let yes = ask(&self.d.paths, peer, title, dest);
+        let yes = ask(&self.d.paths, peer, title, dest, false);
         if yes
             && first_use
             && let Some(p) = pair
@@ -822,6 +866,8 @@ struct Peer {
     /// `ssh` (or `EWE_SAFE_SSH`, a test switch): the `ssh` of `ssh test`
     /// (docs/GATE.md S24), run because the user pressed Check.
     own_child: bool,
+    /// It runs in an SSH session on this computer ([`in_ssh_session`]).
+    ssh_session: bool,
 }
 
 /// One running program, from /proc.
@@ -870,6 +916,30 @@ fn program(pid: i32) -> Option<Program> {
     }
 }
 
+/// Does this program run in an SSH session on this computer? Its parents
+/// lead to an sshd, or it inherited `SSH_CONNECTION` (a tmux server or an IDE's
+/// backend started from a session has lost its sshd parent, and a question on
+/// an empty screen is what this is here to prevent). A program running as you
+/// can fake either, as it can imitate an app you allowed: `ssh_confirm` is not
+/// a security boundary (docs/PROTOCOL.md).
+fn in_ssh_session(pid: i32) -> bool {
+    let mut at = pid;
+    for _ in 0..64 {
+        let comm = std::fs::read_to_string(format!("/proc/{at}/comm")).unwrap_or_default();
+        if matches!(comm.trim(), "sshd" | "sshd-session") {
+            return true;
+        }
+        match parent_of(at) {
+            Some(up) if up > 1 => at = up,
+            _ => break,
+        }
+    }
+    std::fs::read(format!("/proc/{pid}/environ")).is_ok_and(|env| {
+        env.split(|b| *b == 0)
+            .any(|var| var.starts_with(b"SSH_CONNECTION="))
+    })
+}
+
 fn parent_of(pid: i32) -> Option<i32> {
     let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
     // "pid (comm) state ppid …": comm may hold spaces and parentheses
@@ -894,12 +964,14 @@ impl Peer {
                 system: false,
                 identity: None,
                 own_child: false,
+                ssh_session: false,
             };
         };
         let up_pid = parent_of(pid);
         let own_child = up_pid == Some(std::process::id() as i32) && own_ssh(&me.path);
         let parent = up_pid.filter(|p| *p > 1).and_then(program);
         let file = |p: &Program| p.file.map(|(d, i)| format!("{d}:{i}"));
+        let ssh_session = in_ssh_session(pid);
         match parent {
             Some(up) => Peer {
                 label: if up.name != me.name {
@@ -909,8 +981,14 @@ impl Peer {
                 },
                 detail: format!("{}, started by {}", shown(&me), shown(&up)),
                 system: me.system && up.system,
-                identity: file(&me).zip(file(&up)).map(|(a, b)| format!("{a}/{b}")),
+                // a parent the kernel hides (the user's systemd holds a
+                // capability) says nothing about who asks: the program does
+                identity: file(&me).map(|a| match file(&up) {
+                    Some(b) => format!("{a}/{b}"),
+                    None => a,
+                }),
                 own_child,
+                ssh_session,
             },
             None => Peer {
                 label: me.name.clone(),
@@ -918,6 +996,7 @@ impl Peer {
                 system: me.system,
                 identity: file(&me),
                 own_child,
+                ssh_session,
             },
         }
     }
@@ -1037,8 +1116,9 @@ fn finish(mut child: Child, wait: Duration) -> Option<std::process::ExitStatus> 
 /// The app, its paths, whether both are system programs (`1` or `0`) and
 /// the key's name travel in `EWE_SAFE_APPROVE_APP`, `EWE_SAFE_APPROVE_PATH`,
 /// `EWE_SAFE_APPROVE_SYSTEM` and `EWE_SAFE_APPROVE_KEY`, never on a
-/// command line (the notification's text excepted).
-fn ask(paths: &Paths, peer: &Peer, key: &str, dest: &Dest) -> bool {
+/// command line (the notification's text excepted). `once`: the answer holds
+/// until the safe locks (`EWE_SAFE_APPROVE_ONCE`).
+fn ask(paths: &Paths, peer: &Peer, key: &str, dest: &Dest, once: bool) -> bool {
     let wait = prompt_wait();
     let app = peer.label.as_str();
     let mut env = display_env(paths);
@@ -1052,6 +1132,11 @@ fn ask(paths: &Paths, peer: &Peer, key: &str, dest: &Dest) -> bool {
     env.push((
         "EWE_SAFE_APPROVE_FORWARDED".into(),
         if dest.forwarded { "1" } else { "0" }.to_string(),
+    ));
+    // `ssh_confirm = once`: this Allow holds for every app and key
+    env.push((
+        "EWE_SAFE_APPROVE_ONCE".into(),
+        if once { "1" } else { "0" }.to_string(),
     ));
     env.push(("EWE_SAFE_APPROVE_PATH".into(), peer.detail.clone()));
     env.push((
@@ -1077,7 +1162,14 @@ fn ask(paths: &Paths, peer: &Peer, key: &str, dest: &Dest) -> bool {
     if let Some(notify) = on_path("notify-send") {
         let expire = format!("--expire-time={}", wait.as_millis());
         let summary = question(app, key, dest);
-        let body = format!("{}. Click to allow. Close it to deny.", peer.detail);
+        let body = if once {
+            format!(
+                "{}. Click to allow every SSH key until this computer turns off. Close it to deny.",
+                peer.detail
+            )
+        } else {
+            format!("{}. Click to allow. Close it to deny.", peer.detail)
+        };
         let mut c = prompt(
             notify.as_os_str(),
             &[

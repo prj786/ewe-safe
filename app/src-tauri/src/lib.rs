@@ -410,6 +410,8 @@ struct Approve {
     host: String,
     /// The request came through a forwarded agent connection.
     forwarded: bool,
+    /// `ssh_confirm = once`: the answer holds until the computer turns off.
+    once: bool,
 }
 
 /// What this process was started with (see the module notes).
@@ -445,6 +447,7 @@ impl Launch {
                         system: env("EWE_SAFE_APPROVE_SYSTEM") == "1",
                         host: env("EWE_SAFE_APPROVE_HOST"),
                         forwarded: env("EWE_SAFE_APPROVE_FORWARDED") == "1",
+                        once: env("EWE_SAFE_APPROVE_ONCE") == "1",
                     });
                 }
                 "--confirm" => confirm = true,
@@ -479,7 +482,7 @@ impl Launch {
         };
         json!({
             "mode": mode,
-            "approve": self.approve.as_ref().map(|a| json!({"app": a.app, "key": a.key, "path": a.path, "system": a.system, "host": a.host, "forwarded": a.forwarded})),
+            "approve": self.approve.as_ref().map(|a| json!({"app": a.app, "key": a.key, "path": a.path, "system": a.system, "host": a.host, "forwarded": a.forwarded, "once": a.once})),
             "reason": self.confirm,
             "show": self.show,
             "new": self.new,

@@ -16,12 +16,11 @@ RestartSec=2
 # itself undumpable). PLAN.md §8.
 LimitCORE=0
 NoNewPrivileges=yes
-PrivateTmp=yes
-# The safe's state and the default This-computer safe live under $HOME, and
-# a synced-folder place can be anywhere in it: home stays writable.
-ProtectSystem=strict
-ReadWritePaths=%h %t
-ProtectHome=no
+# No PrivateTmp=, ProtectSystem=, ReadWritePaths= or anything else that needs
+# a mount namespace: a user service gets one only inside its own user
+# namespace, and from there the kernel hides /proc/<pid>/exe of every program
+# outside it. The SSH agent then can't tell who asks for a key, and asks every
+# time (docs/PROTOCOL.md, "The SSH agent"; crates/cli/tests/ssh.rs guards it).
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 MemoryDenyWriteExecute=yes
 LockPersonality=yes

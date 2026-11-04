@@ -110,7 +110,7 @@ pub struct Settings {
     /// `ssh_agent`: the agent answers (`ewe-safe ssh enable`); off, it
     /// lists no key and signs nothing.
     pub ssh_agent: bool,
-    /// `ssh_confirm`: `first-use` | `every-time` | `never`.
+    /// `ssh_confirm`: `once` | `first-use` | `every-time` | `never`.
     pub ssh_confirm: String,
     /// `unlock_at_login`: the key carried in the login keyring also unlocks the safe (not
     /// only the keyring), when login unlock is on (docs/SYSTEM.md §2).
@@ -132,14 +132,16 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Settings {
         Settings {
-            lock_after_minutes: 30,
-            lock_on_screen_lock: true,
-            lock_on_sleep: true,
+            // once per power-on: unlocked stays unlocked until the computer
+            // turns off or the user presses Lock (docs/PROTOCOL.md)
+            lock_after_minutes: 0,
+            lock_on_screen_lock: false,
+            lock_on_sleep: false,
             clipboard_clear_seconds: 30,
             generator_length: 20,
             generator_words: 5,
             ssh_agent: false,
-            ssh_confirm: CONFIRM_FIRST_USE.to_string(),
+            ssh_confirm: CONFIRM_ONCE.to_string(),
             unlock_at_login: true,
             confirm_cards: true,
             place: None,
@@ -149,8 +151,10 @@ impl Default for Settings {
     }
 }
 
+/// One question per power-on, for every app and key (the default).
+pub const CONFIRM_ONCE: &str = "once";
 pub const CONFIRM_FIRST_USE: &str = "first-use";
-pub const CONFIRMS: [&str; 3] = [CONFIRM_FIRST_USE, "every-time", "never"];
+pub const CONFIRMS: [&str; 4] = [CONFIRM_ONCE, CONFIRM_FIRST_USE, "every-time", "never"];
 
 /// A boolean as JSON or as text ("true", "yes", "on", "1").
 fn truthy(v: Option<&Value>, dflt: bool) -> bool {
@@ -394,12 +398,22 @@ mod tests {
 
     #[test]
     fn settings_take_defaults_for_what_is_missing() {
-        let s = Settings::from_table(&json!({"lock_after_minutes": 5, "lock_on_sleep": false}));
+        let s = Settings::from_table(&json!({"lock_after_minutes": 5, "lock_on_sleep": true}));
         assert_eq!(s.lock_after_minutes, 5);
-        assert!(!s.lock_on_sleep);
-        assert!(s.lock_on_screen_lock);
+        assert!(s.lock_on_sleep);
+        assert!(!s.lock_on_screen_lock);
         assert_eq!(s.clipboard_clear_seconds, 30);
         assert_eq!(Settings::from_table(&json!({})), Settings::default());
+    }
+
+    /// Once per power-on: nothing locks by itself unless the user asks for it.
+    #[test]
+    fn the_safe_stays_open_until_power_off_by_default() {
+        let d = Settings::default();
+        assert_eq!(d.lock_after_minutes, 0, "no idle lock");
+        assert!(!d.lock_on_screen_lock);
+        assert!(!d.lock_on_sleep);
+        assert_eq!(d.ssh_confirm, "once");
     }
 
     #[test]
@@ -414,16 +428,13 @@ mod tests {
     fn ssh_settings_read_as_json_or_text() {
         let d = Settings::default();
         assert!(!d.ssh_agent);
-        assert_eq!(d.ssh_confirm, "first-use");
+        assert_eq!(d.ssh_confirm, "once");
         let s = Settings::from_table(&json!({"ssh_agent": true, "ssh_confirm": "Every-Time"}));
         assert!(s.ssh_agent);
         assert_eq!(s.ssh_confirm, "every-time");
         let s = Settings::from_table(&json!({"ssh_agent": "true", "ssh_confirm": "sometimes"}));
         assert!(s.ssh_agent, "a fake ewe-conf stores text");
-        assert_eq!(
-            s.ssh_confirm, "first-use",
-            "an unknown value is the default"
-        );
+        assert_eq!(s.ssh_confirm, "once", "an unknown value is the default");
     }
 
     #[test]

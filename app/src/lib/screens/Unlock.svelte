@@ -34,7 +34,9 @@
       ? [placeLabel(place), place.kind === "local" ? place.location?.split("/").pop() : place.location].filter(Boolean).join(" · ")
       : ""
   );
-  const minutes = $derived(Number(safe.settings.lock_after_minutes ?? 30));
+  const minutes = $derived(Number(safe.settings.lock_after_minutes ?? 0));
+  const onScreen = $derived(safe.settings.lock_on_screen_lock === true || safe.settings.lock_on_screen_lock === "true");
+  const onSleep = $derived(safe.settings.lock_on_sleep === true || safe.settings.lock_on_sleep === "true");
   const methods = $derived(safe.status?.unlock_methods ?? ["password"]);
   const loginOn = $derived(methods.includes("login"));
   // the master field always, unless login unlock is on and not overridden
@@ -94,11 +96,14 @@
     if (compact && e.key === "Escape") api.quit(1);
   }
 
-  const lockLine = $derived(
-    minutes > 0
-      ? `ewe Safe locks when the screen locks and after ${minutes < 60 ? `${minutes} min` : `${minutes / 60} h`} without use.`
-      : "ewe Safe locks when the screen locks."
-  );
+  const lockLine = $derived.by(() => {
+    const when = [];
+    if (onScreen) when.push("when the screen locks");
+    if (onSleep) when.push("before sleep");
+    if (minutes > 0) when.push(`after ${minutes < 60 ? `${minutes} min` : `${minutes / 60} h`} without use`);
+    if (!when.length) return "ewe Safe stays open until this computer turns off, or until you lock it.";
+    return `ewe Safe locks ${when.join(", ")}.`;
+  });
 </script>
 
 <svelte:window onkeydown={onkey} />

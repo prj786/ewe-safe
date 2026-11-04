@@ -262,7 +262,11 @@ fn enable(d: &Arc<Daemon>, a: &Args) -> Result<Value, Fail> {
     let confirm = match s(a, "confirm") {
         None => None,
         Some(c) if CONFIRMS.contains(&c.to_lowercase().as_str()) => Some(c.to_lowercase()),
-        Some(_) => return Err(Fail::bad("--confirm is first-use, every-time or never")),
+        Some(_) => {
+            return Err(Fail::bad(
+                "--confirm is once, first-use, every-time or never",
+            ));
+        }
     };
     let _turning = crate::daemon::lk(&gate::TURNING);
     let mut recorded = config::conf_store("ssh_agent", "true");

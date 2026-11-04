@@ -213,6 +213,9 @@ pub struct Daemon {
     settings: RwLock<Settings>,
     /// The last settings read got an answer from ewe-conf.
     fresh: std::sync::atomic::AtomicBool,
+    /// `ssh_confirm = once`: this power-on's one question is answered, by a
+    /// typed password or an Allow. Forgotten when the safe locks.
+    pub ssh_once: std::sync::atomic::AtomicBool,
     machine: Mutex<Option<Machine>>,
     pub syncer: Mutex<Option<Syncer>>,
     pub held: RwLock<Option<Held>>,
@@ -234,6 +237,7 @@ impl Daemon {
             paths,
             settings: RwLock::new(Settings::default()),
             fresh: std::sync::atomic::AtomicBool::new(false),
+            ssh_once: std::sync::atomic::AtomicBool::new(false),
             machine: Mutex::new(None),
             syncer: Mutex::new(None),
             held: RwLock::new(None),
@@ -431,6 +435,8 @@ impl Daemon {
         let was = wr(&self.held).take().is_some();
         if was {
             self.refresh_held(None);
+            self.ssh_once
+                .store(false, std::sync::atomic::Ordering::SeqCst);
             clip::clear_if_ours(self);
             crate::passkey::forget_used();
             self.session.clear_confirm();
@@ -441,7 +447,23 @@ impl Daemon {
         was
     }
 
+    /// A password the user typed: that was this power-on's one question, so
+    /// the SSH agent doesn't ask an Allow on top of it (`ssh_confirm = once`).
     pub fn unlock(&self, password: &Zeroizing<String>) -> Result<usize, Fail> {
+        // the test switch stands in for login unlock, which needs a real
+        // login keyring; set by accident it costs one more Allow, no more
+        self.open_held(
+            password,
+            std::env::var_os("EWE_SAFE_UNLOCK_UNTYPED").is_none(),
+        )
+    }
+
+    /// Unlock with no one having typed anything (login unlock).
+    pub fn unlock_quietly(&self, password: &Zeroizing<String>) -> Result<usize, Fail> {
+        self.open_held(password, false)
+    }
+
+    fn open_held(&self, password: &Zeroizing<String>, typed: bool) -> Result<usize, Fail> {
         if !self.is_set_up() {
             // a new machine: the master password opens the safe the account
             // already holds — the same as `open` with the offered place
@@ -463,6 +485,13 @@ impl Daemon {
             let mut held = wr(&self.held);
             *held = Some(Held { safe, key });
             self.refresh_held(held.as_ref());
+            // under the lock: only a real opening counts (a safe that is open
+            // already answers above, whatever password came), and a `lock`
+            // can only come after this and clear it
+            if typed {
+                self.ssh_once
+                    .store(true, std::sync::atomic::Ordering::SeqCst);
+            }
         }
         drop(sy);
         self.mark_use();
@@ -541,6 +570,8 @@ impl Daemon {
         self.mark_use();
         self.after_master_unlock(password);
         log(&format!("a new safe in {kind}"));
+        self.ssh_once
+            .store(true, std::sync::atomic::Ordering::SeqCst);
         self.emit(json!({"v": 1, "event": "unlocked"}));
         self.emit_sync();
         Ok(json!({"place": place_json(&place), "sync": sync_json(&rd(&self.snap))}))
@@ -595,6 +626,8 @@ impl Daemon {
         self.mark_use();
         self.after_master_unlock(password);
         log(&format!("opened a safe in {kind}"));
+        self.ssh_once
+            .store(true, std::sync::atomic::Ordering::SeqCst);
         self.emit(json!({"v": 1, "event": "unlocked"}));
         self.emit_sync();
         Ok(json!({"place": place_json(&place), "items": n}))
