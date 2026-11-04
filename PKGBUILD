@@ -11,8 +11,8 @@ pkgname=ewe-safe
 # -alpha/-beta, an Arch pkgver may not hold a hyphen; 0.1.0alpha sorts below
 # 0.1.0 under vercmp). The archive is addressed by the TAG, so the source URL
 # and the directory follow _tag, never pkgver.
-_tag=v0.4.0-beta
-pkgver=0.4.0beta
+_tag=v0.5.0-beta
+pkgver=0.5.0beta
 pkgrel=1
 pkgdesc="ewe Safe — the password manager: one KeePass file in a place you choose, filled with Super+P"
 arch=('x86_64' 'aarch64')
