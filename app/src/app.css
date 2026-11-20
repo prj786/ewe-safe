@@ -511,6 +511,11 @@ button.ewe-choice {
 .ewe-row.is-selected .safe-letter {
   color: var(--accent-text);
 }
+/* the tile wears surface-hover, which is the hovered row's own fill: one
+   step further keeps it from melting into the row (light and dark alike) */
+.ewe-row--interactive:hover:not(.is-selected) .safe-letter {
+  background: var(--surface-pressed);
+}
 .safe-letter--lg {
   width: calc(var(--control-xl) + var(--space-xs));
   height: calc(var(--control-xl) + var(--space-xs));
