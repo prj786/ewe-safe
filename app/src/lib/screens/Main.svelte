@@ -112,6 +112,11 @@
   const empty = $derived(
     !ui.editing && !shown.length && !(f.kind === "ssh-key" && !f.trash && !ui.query.trim())
   );
+  // nothing in the safe at all: the first-run empty state
+  const emptySafe = $derived(safe.items.length === 0 && !narrowed && !ui.editing && !ui.query.trim());
+  // an empty state with its own Add button holds the view's one primary
+  // action (Button: one primary per view), so New steps back to secondary
+  const emptyAdds = $derived(emptySafe || (empty && !ui.query.trim() && !f.trash && !!NONE[f.kind]));
 
   /** A list row's second line. */
   function desc(i) {
@@ -265,7 +270,7 @@
       <div class="safe-rel">
         <button
           type="button"
-          class="ewe-btn ewe-btn--primary"
+          class="ewe-btn {emptyAdds ? 'ewe-btn--secondary' : 'ewe-btn--primary'}"
           disabled={safe.readOnly || f.trash}
           title={f.trash ? "Items in Trash can only be restored" : "New (Ctrl+N)"}
           aria-haspopup={f.kind ? undefined : "menu"}
@@ -300,12 +305,12 @@
     </div>
   {/if}
 
-  {#if safe.items.length === 0 && !narrowed && !ui.editing && !ui.query.trim()}
+  {#if emptySafe}
     <div class="safe-stage">
       <div class="ewe-empty safe-col safe-col--narrow safe-col--center">
         <span class="ewe-empty__icon"><Icon name="vault" /></span>
         <div class="ewe-empty__title">Your safe is empty</div>
-        <div class="ewe-empty__desc">Add your first login, or bring your passwords over from another password manager.</div>
+        <div class="ewe-empty__desc">Add your first login, or import your passwords from another app.</div>
         <div class="ewe-empty__actions">
           <button type="button" class="ewe-btn ewe-btn--primary" disabled={safe.readOnly} onclick={() => newItem("login")}><Icon name="plus" />Add a login</button>
           <button type="button" class="ewe-btn ewe-btn--secondary" disabled={safe.readOnly} onclick={() => ui.go("import")}><Icon name="file-down" />Import…</button>
