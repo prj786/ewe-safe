@@ -23,7 +23,9 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = [] }
 tauri-plugin-single-instance = "2"
 # the file picker for an import or a .kdbx (the desktop portal)
-tauri-plugin-dialog = "2"
+# Open/Save through the portal, so ewe's file picker draws it (ewe RFC-011);
+# the default "gtk3" feature drew GTK's dialog inside this app instead
+tauri-plugin-dialog = { version = "2", default-features = false, features = ["xdg-portal"] }
 # only to name the process (the Wayland app_id) before GTK starts; the
 # version Tauri itself links
 gtk = "0.18"
