@@ -31,6 +31,7 @@
 //!   `EWE_SAFE_APPROVE_APP` and `EWE_SAFE_APPROVE_KEY`; the exit code is the
 //!   answer (0 allow, 1 deny).
 
+mod crash;
 mod keyring;
 mod pointer;
 mod ssh;
@@ -689,6 +690,7 @@ fn forward_events(app: AppHandle) {
 }
 
 pub fn run() {
+    crash::log_panics();
     let launch = Launch::parse(std::env::args());
     // The Wayland app_id is GTK's program name, set before GTK starts:
     // `ewe-safe` (ewe-safe.desktop) for the window, `ewe-safe-unlock` for
