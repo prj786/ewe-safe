@@ -32,6 +32,7 @@
 //!   answer (0 allow, 1 deny).
 
 mod keyring;
+mod pointer;
 mod ssh;
 mod tools;
 
@@ -754,7 +755,9 @@ pub fn run() {
                     .decorations(false)
                     .center()
             };
-            w.build()?;
+            // every window, the prompts too: a lit button after the pointer
+            // left is the same bug
+            pointer::forget_hover_on_leave(&w.build()?);
             let handle = app.handle().clone();
             std::thread::Builder::new()
                 .name("safe-events".into())
