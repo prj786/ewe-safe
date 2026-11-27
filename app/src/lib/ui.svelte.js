@@ -9,6 +9,9 @@ class Ui {
   // tag, a folder, or the trash
   filter = $state({ kind: "", tag: "", folder: "", trash: false });
   selected = $state(null);
+  // a narrow window shows the list or the item, never both: true once an
+  // item was opened from the list (an open editor counts as well)
+  detail = $state(false);
   query = $state("");
   // null, or {mode: "new" | "edit", id?, kind}; a new "ssh-key" is
   // SshKeyNew (make one, or add a file: `way: "file"`)
@@ -39,6 +42,7 @@ class Ui {
     this.view = "items";
     this.editing = null;
     this.selected = null;
+    this.detail = false;
     this.connect = null;
     this.takeover = false;
   }

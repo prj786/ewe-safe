@@ -678,10 +678,18 @@ impl Agent {
         ));
         // the prompt the CLI opens, and the test switches it honours
         let mut env = display_env(&self.d.paths);
+        let has_display = !env.is_empty() || has_own_display();
         for k in ["EWE_SAFE_ASK_CMD", "EWE_SAFE_SOCKET"] {
             if let Ok(v) = std::env::var(k) {
                 env.push((k.to_string(), v));
             }
+        }
+        // at login the SSH agent can be asked before the compositor is up:
+        // there is no screen to ask on, and the window would only abort. It
+        // is the same as a prompt nobody answered.
+        if !can_show_prompt(has_display, std::env::var_os("EWE_SAFE_ASK_CMD").is_some()) {
+            log("ssh agent: no display to open the unlock prompt on yet");
+            return self.unanswered(peer);
         }
         let mut child = match prompt(cli().as_os_str(), &["unlock", "--ask"], &env)
             .stdout(Stdio::null())
@@ -710,22 +718,28 @@ impl Agent {
                 break false;
             }
         };
+        if opened {
+            *lk(&self.cooldown) = (None, COOLDOWN, false);
+            return true;
+        }
+        self.unanswered(peer)
+    }
+
+    /// The unlock prompt was not answered (or could not be shown): no
+    /// signature, and no new prompt for a while, longer each time.
+    fn unanswered(&self, peer: &Peer) -> bool {
         let mut cd = lk(&self.cooldown);
-        *cd = if opened {
-            (None, COOLDOWN, false)
-        } else {
-            log(&format!(
-                "ssh agent: still locked, no signature for {} (no new prompt for {} s)",
-                peer.label,
-                cd.1.as_secs()
-            ));
-            (
-                Some(Instant::now() + cd.1),
-                (cd.1 * 2).min(COOLDOWN_MAX),
-                false,
-            )
-        };
-        opened
+        log(&format!(
+            "ssh agent: still locked, no signature for {} (no new prompt for {} s)",
+            peer.label,
+            cd.1.as_secs()
+        ));
+        *cd = (
+            Some(Instant::now() + cd.1),
+            (cd.1 * 2).min(COOLDOWN_MAX),
+            false,
+        );
+        false
     }
 
     /// `[safe] ssh_confirm`: `never` asks nothing, `every-time` asks every
@@ -1044,6 +1058,21 @@ pub(crate) fn display_env(paths: &Paths) -> Vec<(String, String)> {
     found
         .map(|n| vec![("WAYLAND_DISPLAY".to_string(), n)])
         .unwrap_or_default()
+}
+
+/// The daemon itself was started with a display (a Wayland socket it was
+/// handed, or an X11 one): a prompt it opens inherits it.
+fn has_own_display() -> bool {
+    ["WAYLAND_DISPLAY", "DISPLAY"]
+        .iter()
+        .any(|k| std::env::var_os(k).is_some())
+}
+
+/// Whether a window prompt can be opened now. `has_display`: the daemon
+/// found or was given a display. `own_command`: `EWE_SAFE_ASK_CMD` names the
+/// prompt (a test, or a user's own), which may need no display at all.
+fn can_show_prompt(has_display: bool, own_command: bool) -> bool {
+    has_display || own_command
 }
 
 /// A prompt's command, `env` added. Under systemd (`INVOCATION_ID`) the
@@ -1417,6 +1446,13 @@ mod tests {
         put_string(&mut m, &sig);
         m.push(u8::from(forwarding));
         m
+    }
+
+    #[test]
+    fn a_prompt_needs_a_display_unless_the_command_is_the_users_own() {
+        assert!(can_show_prompt(true, false));
+        assert!(can_show_prompt(false, true));
+        assert!(!can_show_prompt(false, false));
     }
 
     #[test]

@@ -28,6 +28,7 @@
     if (a.show) {
       ui.pick({});
       ui.selected = a.show;
+      ui.detail = true;
     }
     if (a.new) {
       ui.go("items");

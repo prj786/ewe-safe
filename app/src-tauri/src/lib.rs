@@ -31,7 +31,9 @@
 //!   `EWE_SAFE_APPROVE_APP` and `EWE_SAFE_APPROVE_KEY`; the exit code is the
 //!   answer (0 allow, 1 deny).
 
+mod crash;
 mod keyring;
+mod pointer;
 mod ssh;
 mod tools;
 
@@ -688,6 +690,7 @@ fn forward_events(app: AppHandle) {
 }
 
 pub fn run() {
+    crash::log_panics();
     let launch = Launch::parse(std::env::args());
     // The Wayland app_id is GTK's program name, set before GTK starts:
     // `ewe-safe` (ewe-safe.desktop) for the window, `ewe-safe-unlock` for
@@ -741,14 +744,22 @@ pub fn run() {
                     .decorations(false)
                     .center()
             } else {
+                // No minimum size: Hyprland gives a tiled window the size of
+                // its tile whatever the window asks for, and a window that
+                // insists on more is drawn squeezed into the tile (cropped
+                // on a scale-1 screen) while the pointer is not, so every
+                // hover and click lands beside what is drawn. The page takes
+                // any size. (The prompts above are floated at their own
+                // fixed size and keep it.)
                 WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
                     .title("ewe Safe")
                     .inner_size(1040.0, 680.0)
-                    .min_inner_size(760.0, 520.0)
                     .decorations(false)
                     .center()
             };
-            w.build()?;
+            // every window, the prompts too: a lit button after the pointer
+            // left is the same bug
+            pointer::forget_hover_on_leave(&w.build()?);
             let handle = app.handle().clone();
             std::thread::Builder::new()
                 .name("safe-events".into())
