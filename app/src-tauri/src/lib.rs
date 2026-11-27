@@ -741,10 +741,16 @@ pub fn run() {
                     .decorations(false)
                     .center()
             } else {
+                // No minimum size: Hyprland gives a tiled window the size of
+                // its tile whatever the window asks for, and a window that
+                // insists on more is drawn squeezed into the tile (cropped
+                // on a scale-1 screen) while the pointer is not, so every
+                // hover and click lands beside what is drawn. The page takes
+                // any size. (The prompts above are floated at their own
+                // fixed size and keep it.)
                 WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
                     .title("ewe Safe")
                     .inner_size(1040.0, 680.0)
-                    .min_inner_size(760.0, 520.0)
                     .decorations(false)
                     .center()
             };

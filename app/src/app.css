@@ -478,6 +478,13 @@ button.ewe-choice {
   gap: var(--space-md);
   position: relative;
 }
+/* A narrow tile (a window of 640px or less): the header wraps, and the list
+   and the item take turns instead of sharing the width. */
+.safe-back {
+  display: none;
+  align-self: flex-start;
+  flex: none;
+}
 .safe-dhead {
   display: flex;
   align-items: center;
@@ -970,6 +977,9 @@ button.ewe-choice {
   z-index: 40;
   background: var(--scrim);
   display: grid;
+  /* the column may be narrower than the sheet's longest line: a sheet is
+     never wider than the window */
+  grid-template-columns: minmax(0, 1fr);
   place-items: center;
   padding: var(--space-md);
   animation: safe-fade var(--dur-base) var(--ease-out);
@@ -1253,6 +1263,84 @@ button.ewe-check:focus-visible {
 button.ewe-check:focus-visible .ewe-check__box {
   outline: var(--focus-width) solid var(--focus-ring);
   outline-offset: var(--border-width-1);
+}
+
+@media (max-width: 640px) {
+  .safe-appbar {
+    flex-wrap: wrap;
+    height: auto;
+    min-height: var(--control-2xl);
+    padding-block: var(--space-s);
+  }
+  .safe-appbar .ewe-headerbar__titles {
+    flex-basis: calc(5 * var(--control-md));
+  }
+  .safe-appbar .ewe-headerbar__actions {
+    flex: 1 1 100%;
+    min-width: 0;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+  .safe-search {
+    flex: 1 1 calc(5 * var(--control-md));
+    width: auto;
+    min-width: 0;
+  }
+  .safe-search .ewe-kbd {
+    display: none;
+  }
+  .safe-listcol {
+    flex: 1;
+    width: auto;
+    min-width: 0;
+    border-right: 0;
+  }
+  .safe-detail {
+    display: none;
+    padding-inline: var(--space-md);
+  }
+  .safe-split.is-detail .safe-listcol {
+    display: none;
+  }
+  .safe-split.is-detail .safe-detail {
+    display: flex;
+  }
+  .safe-back {
+    display: inline-flex;
+  }
+  /* a segmented control with long labels takes a second line instead of
+     running out of the window */
+  .ewe-seg {
+    flex-wrap: wrap;
+    height: auto;
+    max-width: 100%;
+  }
+  .ewe-seg__item {
+    height: calc(var(--control-md) - 2 * (var(--space-xxs) + var(--border-width-1)));
+  }
+  /* the SSH page: two services to a line, and a key's or host's buttons
+     under its text instead of squeezing it to a word a line */
+  .safe-services {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .ewe-section {
+    flex-wrap: wrap;
+  }
+  .ewe-section__text {
+    flex-basis: calc(5 * var(--control-md));
+  }
+  .safe-section__actions {
+    margin-left: auto;
+  }
+  .safe-row--top {
+    flex-wrap: wrap;
+  }
+  .safe-row--top .safe-rowtext {
+    flex-basis: calc(5 * var(--control-md));
+  }
+  .safe-row--top .ewe-row__trail {
+    margin-left: auto;
+  }
 }
 
 @media print {

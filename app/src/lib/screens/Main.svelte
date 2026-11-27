@@ -350,7 +350,7 @@
       </div>
     </div>
   {:else}
-    <div class="safe-split">
+    <div class="safe-split" class:is-detail={ui.detail || ui.editing}>
       <div class="safe-listcol" bind:this={listEl}>
         {#if shown.length}
           <div class="ewe-list ewe-list--flush" role="listbox" aria-label={title}>
@@ -369,6 +369,7 @@
                 onclick={() => {
                   ui.selected = i.id;
                   ui.editing = null;
+                  ui.detail = true;
                 }}
               >
                 <span class="ewe-row__lead ewe-row__lead--tile safe-letter">
@@ -390,6 +391,9 @@
         {/if}
       </div>
       <div class="safe-detail">
+        {#if !ui.editing}
+          <button type="button" class="ewe-btn ewe-btn--ghost ewe-btn--sm safe-back" onclick={() => (ui.detail = false)}><Icon name="arrow-left" />All items</button>
+        {/if}
         {#if ui.editing?.mode === "new" && ui.editing.kind === "ssh-key"}
           <SshKeyNew way={ui.editing.way ?? "new"} />
         {:else if ui.editing}
